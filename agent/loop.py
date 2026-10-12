@@ -1,4 +1,4 @@
-import time
+import threading
 from . import llm
 from .tools import schemas, call, TOOLS
 from .tools.memory import recent
@@ -36,11 +36,30 @@ def _trim(history, limit=180_000):
             m["content"] = m["content"][:300] + "\n...[old output trimmed]"
 
 
-def run(cfg, history, user_text, on_event=print):
+def cli_event(kind, text="", **extra):
+    """Default event printer for the terminal."""
+    if kind == "tool":
+        print(f"  → {extra.get('name')}({text[:120]})")
+    elif kind == "notice":
+        import sys
+        print(f"  ! {text}", file=sys.stderr)
+    elif kind == "assistant" and text.strip():
+        print(f"  · {text.strip()[:300]}")
+
+
+def run(cfg, history, user_text, on_event=cli_event, cancel=None):
+    """Run the tool loop. on_event(kind, text, **extra) kinds: notice, route, assistant, tool, tool_result."""
     history.append({"role": "user", "content": user_text})
+    last_route = None
     for turn in range(cfg.max_turns):
+        if cancel is not None and cancel.is_set():
+            return "(stopped by you)"
         _trim(history)
-        msg = llm.chat(cfg, history, schemas())
+        msg, route = llm.chat_ex(cfg, history, schemas(),
+                                 notify=lambda t: on_event("notice", t), cancel=cancel)
+        if route != last_route:
+            on_event("route", f"{route['provider']} · {route['model']}", **route)
+            last_route = route
         calls = msg.get("tool_calls") or []
         entry = {"role": "assistant", "content": msg.get("content") or ""}
         if calls:
@@ -52,9 +71,15 @@ def run(cfg, history, user_text, on_event=print):
         history.append(entry)
         if not calls:
             return entry["content"]
+        if entry["content"].strip():
+            on_event("assistant", entry["content"])
         for c in calls:
             fn = c["function"]
-            on_event(f"  \u2192 {fn['name']}({(fn.get('arguments') or '')[:120]})")
-            result = call(cfg, fn["name"], fn.get("arguments"))
+            on_event("tool", fn.get("arguments") or "", name=fn["name"], id=c["id"])
+            if cancel is not None and cancel.is_set():
+                result = "ERROR: stopped by user"
+            else:
+                result = call(cfg, fn["name"], fn.get("arguments"))
             history.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+            on_event("tool_result", result[:1500], name=fn["name"], id=c["id"], ok=not result.startswith("ERROR"))
     return "(stopped: reached max turns. Say 'continue' to go on.)"

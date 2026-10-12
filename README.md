@@ -1,75 +1,96 @@
-# Omni Agent — your own AI harness (no Docker)
+# Omni Agent: your own AI harness (no Docker)
 
-A working agent you control: it talks to **any OpenAI-compatible gateway** (OmniRoute → OpenRouter, or Ollama, OpenAI, etc.)
-and has tools to **read/write/edit code precisely, edit Word/Excel/PowerPoint, run shell commands, browse URLs,
-remember things, and run scheduled automations.** Core uses only the Python standard library.
+An agent you control. It talks to any OpenAI-compatible service (Gemini, OpenRouter, OpenAI, Groq, Ollama, OmniRoute...).
+It can read and edit code, edit Word/Excel/PowerPoint files, run shell commands, fetch web pages and remember things.
+It has a **web UI**, and it rotates API keys and falls back across models by itself. The core uses only the Python standard library.
 
-## 1. Install
-Linux/macOS/WSL: `./install.sh`   |   Windows: `install.bat`
-
-## 2. Start the gateway (OmniRoute) - or skip it, see "Low-end PC" below
+## 1. Quick start (Windows)
 ```
-npm install -g omniroute
-omniroute            # dashboard: http://localhost:20128
+install.bat          # once: creates .venv and installs python-docx / openpyxl / python-pptx
+omni-ui.bat          # starts the web UI and opens your browser
 ```
-In the dashboard: add provider **OpenRouter** (paste your OpenRouter key) → create an **API key** → note a model name/alias.
+(Linux/macOS/WSL: `./install.sh`, then `./omni-ui`.)
+If you unzipped over your old folder, your `.venv` is kept and `omni-ui.bat` works straight away.
 
-## 3. Configure
-Edit `.env` (copied from `.env.example`): `AGENT_BASE_URL`, `AGENT_API_KEY`, `AGENT_MODEL`.
-Test: `./omni check` (Windows: `omni.bat check`)
+Keep the link printed in the terminal private: it contains a random token and unlocks the agent.
 
-## 4. Use
+## 2. The web UI
+* **Chat**: tool calls appear as collapsible cards, and key or model switches appear as notices. Shell commands and writes outside the workspace pop up an **Allow / Deny** dialog. **Stop** cancels a run.
+* **Keys & models** (top right):
+  * Paste many keys at once, one per line. Test one key or all of them. Each key shows a health dot.
+  * Pick the model per service. **Apply** changes it for **all** keys of that service at once. **List...** loads the models the service really offers.
+  * Set fallback models, the rotation strategy and the service priority (▲▼).
+* **Files**: upload files into the workspace (📎 or drag and drop) and download what the agent made.
+* Chats are saved in `data/sessions/`. The ☰ list on the left switches between them.
+
+## 3. How keys, models and failover work
+Keys are grouped into **pools**: `gemini-1 ... gemini-37` form the pool `gemini`. The model is chosen **per pool**.
+For every request Omni tries, in this order:
+
+1. each usable key of the first pool with the chosen model (*round robin* spreads calls over all keys; *failover* always starts with the first key),
+2. the same keys with each **fallback model** (Gemini quotas are per model, so `gemini-2.5-flash-lite` still works when `gemini-2.5-flash` is used up),
+3. the next pool (for example `openrouter`).
+
+Every failure is classified, and only the right thing is put on cooldown:
+
+| Problem | Meaning | Cooldown |
+|---|---|---|
+| 429 per minute | key too fast | the service's `retryDelay` (min 10 s) |
+| 429 per day | daily quota used | until the quota resets (Google: midnight Pacific) |
+| 401 / 400 `API_KEY_INVALID` / leaked key | key is dead | 6 h, shown as **INVALID KEY** |
+| 402 or billing | no credits | 1 h |
+| 404 or "model not found" | the model is wrong for that service | 10 min, **whole pool** skipped at once (not 37 wasted calls) |
+| 5xx or network | service problem | 15-20 s, whole pool skipped |
+| other 400 (bad request) | the request itself is wrong | **no cooldown**: the error is shown instead of burning all your keys |
+
+If every key is only briefly rate-limited, Omni **waits** (up to `AGENT_MAX_WAIT`, default 90 s) instead of failing. Cooldowns are saved in `data/state.json`, so a used-up daily quota is remembered after a restart.
+
+Terminal equivalents (`omni` chat or `omni provider ...`):
+```
+/providers   /keys [pool]   /addkeys gemini KEY1 KEY2 ...   /addkeys gemini @keys.txt
+/model gemini-2.5-pro       /model openrouter anthropic/claude-sonnet-5.5     /models gemini flash
+/fallback gemini gemini-2.5-flash-lite,gemini-2.0-flash      /strategy round_robin|failover
+/use openrouter   /order gemini,openrouter   /test all   /revive   /remove NAME
+```
+`omni check` pings the primary pool and warns if its model is not in the service's list. `omni check --all` tests every key.
+
+### Tips for many free Gemini keys
+* Google's free quotas are per **project**, not per key. Keys created in the same Google Cloud project share one quota. Create each key in a separate project (AI Studio → "Create API key in new project") for rotation to actually add capacity.
+* Set one or two fallback models (see above) so a used-up daily quota on one model does not stop you.
+* Free keys can use your prompts for training. Do not send confidential data through them.
+
+## 4. Configuration (`.env`)
+`AGENT_WORKSPACE` (folder the agent may touch), `AGENT_ALLOW_OUTSIDE`, `AGENT_AUTO_APPROVE`, `AGENT_MAX_TURNS`, `AGENT_TEMPERATURE`, `AGENT_TIMEOUT`, `AGENT_STRATEGY`, `AGENT_MAX_WAIT`.
+Keys live in `data/providers.json` (plain text, git-ignored). Treat that folder, `.env` and **this zip** as secrets.
+
+## 5. Other commands
 | Goal | Command |
 |---|---|
-| Interactive chat | `./omni` |
-| One-shot task | `./omni run "In report.docx replace 'Q2' with 'Q3' everywhere"` |
-| Task from file | `./omni run -f workflows/review_code.md` |
-| Automation loop | `./omni schedule -f workflows/daily_notes_cleanup.md --every 86400` |
-| Real cron | `0 9 * * * cd /path/omni-agent && AGENT_AUTO_APPROVE=1 ./omni run -f workflows/daily_notes_cleanup.md` |
+| Web UI | `omni-ui.bat` or `omni.bat ui` (`--port 9000`, `--no-browser`) |
+| Terminal chat | `omni.bat` |
+| One-shot task | `omni.bat run "In report.docx replace 'Q2' with 'Q3'"` |
+| Task from file | `omni.bat run -f workflows/review_code.md` |
+| Repeat on a timer | `omni.bat schedule -f workflows/daily_notes_cleanup.md --every 86400` |
 
-Put files in `workspace/` (or change `AGENT_WORKSPACE`). The agent cannot touch anything outside it unless `AGENT_ALLOW_OUTSIDE=1`.
-Shell commands and outside-workspace access ask for your approval unless `AGENT_AUTO_APPROVE=1` (needed for unattended cron runs — use only in folders you trust).
+## 6. Hermes: what it is, and why it is not the UI here
+[Hermes Agent](https://hermes-agent.nousresearch.com) is a **separate, full agent** with its own dashboard (`hermes dashboard`). That dashboard manages Hermes (its config, keys, sessions), not Omni. Its Chat tab embeds Hermes' terminal UI and needs Linux/macOS/WSL2. On native Windows only the admin pages work. So it cannot be a front end for Omni, and the Omni UI above replaces it for this project.
+You can still run Hermes next to Omni (`config/hermes-config.yaml`, `scripts/setup_hermes.py`). Hermes keeps its own key pools (`hermes auth add ...`), separate from Omni's.
 
-## Providers, keys, models and automatic failover
-Everything can be changed from inside the chat, no file editing needed:
+## 7. Safety
+The UI listens on `127.0.0.1` only. It needs the per-start token and checks the `Host` header, and API keys are never sent to the browser. Only use `--host 0.0.0.0` on a network you trust, because anyone with the link can run commands as you. **auto-approve** (UI toggle or `AGENT_AUTO_APPROVE=1`) skips all confirmation dialogs, so use it only in a workspace you trust.
+
+## 8. Extending
+Add a function with `@tool(...)` in `agent/tools/` (see `files.py`) and import it in `agent/tools/__init__.py`. The model sees it automatically.
+
+## 9. Tests (offline, mock gateways; they never touch your `data/`)
 ```
-/add openrouter sk-or-...        # presets: openrouter gemini omniroute openai groq deepseek ollama
-/add gemini AIza...
-/add mine KEY my-model https://host/v1     # any OpenAI-compatible endpoint
-/providers                       # list; first = primary, the rest = fallbacks in order
-/key openrouter                  # change a key (hidden prompt)
-/model gemini-2.5-pro            # change primary's model   (or: /model gemini <model>)
-/use gemini   /order gemini,openrouter   /remove name   /test [name]
+python tests/test_failover.py     # rotation, quotas, model fallback, waiting, persistence
+python tests/test_agent.py        # tool loop, workspace guard, approvals
+python tests/test_web.py          # UI server: auth, chat + approvals, key/model endpoints
 ```
-If the primary fails (rate limit 429, bad/expired key 401/403, server error, timeout, unknown model) the agent automatically
-tries the next provider and prints a notice. A failed provider is skipped for a while (60s for rate limits,
-10 min for bad keys), then the primary is used again. Same works non-interactively: `./omni provider list`, `./omni provider add gemini KEY`.
-To rotate several keys of the same service, add them under different names (`/add openrouter-2 KEY2`).
-Keys are saved in `data/providers.json` (permissions 600, plain text, git-ignored) - keep that folder private.
 
-## 5. VS Code
-`python scripts/setup_continue.py` writes `~/.continue/config.yaml` from your `.env`. Install the **Continue** extension, then Ctrl+L to chat/edit.
-(Back up is made automatically if you already have a config.)
-
-## 6. Optional: Hermes
-`config/hermes-config.yaml` + `python scripts/setup_hermes.py` point Hermes at the same gateway.
-Install Hermes with its official installer; check its docs for the exact env-var name for custom endpoints.
-
-## Tools the agent has
-`read_file write_file edit_file list_dir search_files run_shell web_fetch memory_save memory_search
-docx_read docx_edit_paragraph docx_replace_text docx_insert_paragraph docx_create xlsx_read xlsx_set_cell pptx_read`
-
-## Extending
-Add a function with `@tool(...)` in `agent/tools/` (see `files.py`), import it in `agent/tools/__init__.py`. That's all — the model sees it automatically.
-
-## Tests
-`python tests/test_agent.py` runs the full tool loop against a mock server, offline.
-
-## Tips for best results
-Pick a strong tool-calling model (Claude Sonnet-class or similar) in OmniRoute; small local models often fail at tool use.
-
-## Low-end PC (no Docker, light on resources)
-- Nothing here needs Docker. The models run in the cloud (OpenRouter), not on your machine.
-- Lightest setup: skip OmniRoute entirely and set in `.env`:
-  `AGENT_BASE_URL=https://openrouter.ai/api/v1`, `AGENT_API_KEY=<your OpenRouter key>`, `AGENT_MODEL=anthropic/claude-sonnet-4.5` (or any model id from openrouter.ai/models).
-- Add OmniRoute later only if you want its routing features; it is a plain Node.js process (`npm install -g omniroute`).
+## 10. Troubleshooting
+* **"All keys/providers failed"**: the message says why per service (invalid, quota, model name...). Open Keys & models → *Test all*.
+* **Model not available / 404**: click **List...** next to the model and pick one from the list. A ⚠ appears when the model is not in the service's list.
+* **`providers.json` edited by hand on Windows**: Notepad/PowerShell add a BOM. Older versions silently ignored the whole file (all keys "missing"). It is now read correctly and rewritten without the BOM.
+* **No browser opens**: copy the `http://localhost:8765/?token=...` link from the terminal.

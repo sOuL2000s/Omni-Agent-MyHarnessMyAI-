@@ -4,3 +4,7 @@ data/memory.jsonl
 .venv/
 __pycache__/
 combined_project_files.txt
+data/state.json
+data/sessions/
+data/*.corrupt-*
+data/*.tmp

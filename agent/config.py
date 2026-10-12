@@ -56,5 +56,10 @@ def load() -> Config:
     )
     from .providers import Manager, Provider
     default = Provider("default", cfg.base_url, cfg.api_key, cfg.model)
-    cfg.providers = Manager(data / "providers.json", default)
+    cfg.providers = Manager(data / "providers.json", default,
+                            state_path=data / "state.json", settings_path=data / "settings.json")
+    if g("AGENT_MAX_WAIT"):
+        cfg.providers.settings["max_wait"] = int(g("AGENT_MAX_WAIT"))
+    if g("AGENT_STRATEGY") in ("round_robin", "failover"):
+        cfg.providers.settings["strategy"] = g("AGENT_STRATEGY")
     return cfg

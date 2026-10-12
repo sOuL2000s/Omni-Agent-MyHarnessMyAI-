@@ -5,9 +5,13 @@ from . import config, loop, llm, commands
 
 
 def chat_repl(cfg):
-    p0 = cfg.providers.items[0].name if cfg.providers.items else "none"
-    print(f"Omni agent  |  primary={p0}  |  providers={len(cfg.providers.items)}\nworkspace={cfg.workspace}\n"
-          "Type /help for provider/key/model commands (failover is automatic).\n")
+    pm = cfg.providers
+    pools = pm.pool_names()
+    print(f"Omni agent  |  primary pool={pools[0] if pools else 'none'}  |  keys={len(pm.items)}  |  strategy={pm.strategy}\n"
+          f"workspace={cfg.workspace}\n"
+          "Type /help for key/model commands (key rotation + failover is automatic).  Prefer a browser?  run:  omni ui\n")
+    if pm.load_error:
+        print("WARNING:", pm.load_error, "\n")
     hist = loop.new_history(cfg)
     while True:
         try:
@@ -30,32 +34,53 @@ def chat_repl(cfg):
             print("\n" + loop.run(cfg, hist, q) + "\n")
         except llm.LLMError as e:
             print(f"[gateway error] {e}")
+        except KeyboardInterrupt:
+            print("\n(interrupted)")
 
 
 def main():
     ap = argparse.ArgumentParser(prog="omni-agent")
     sub = ap.add_subparsers(dest="cmd")
-    sub.add_parser("chat", help="interactive session (default)")
+    sub.add_parser("chat", help="interactive terminal session (default)")
+    u = sub.add_parser("ui", help="open the web UI (chat + keys + models)")
+    u.add_argument("--host", default="127.0.0.1", help="keep 127.0.0.1 unless you know why not")
+    u.add_argument("--port", type=int, default=8765)
+    u.add_argument("--no-browser", action="store_true")
     r = sub.add_parser("run", help="one-shot task, then exit")
     r.add_argument("prompt", nargs="?")
     r.add_argument("-f", "--file", help="read the task from a file (e.g. workflows/daily.md)")
     s = sub.add_parser("schedule", help="repeat a task on an interval")
     s.add_argument("-f", "--file", required=True)
     s.add_argument("--every", type=int, required=True, help="seconds between runs")
-    sub.add_parser("check", help="test the primary provider")
-    pv = sub.add_parser("provider", help="manage providers: list | add | key | model | use | order | remove | test")
+    c = sub.add_parser("check", help="test the primary pool (--all = every key)")
+    c.add_argument("--all", action="store_true")
+    m = sub.add_parser("models", help="list models a pool offers: omni models [pool] [filter]")
+    m.add_argument("rest", nargs="*")
+    pv = sub.add_parser("provider", help="manage keys: list | add | addkeys | model | models | fallback | strategy | use | order | remove | test | revive")
     pv.add_argument("rest", nargs="*")
     a = ap.parse_args()
     cfg = config.load()
 
+    if cfg.providers.load_error:
+        print("WARNING:", cfg.providers.load_error, file=sys.stderr)
+
     if a.cmd in (None, "chat"):
         return chat_repl(cfg)
+    if a.cmd == "ui":
+        from .web.server import serve
+        return serve(cfg, a.host, a.port, open_browser=not a.no_browser)
     if a.cmd == "check":
-        try:
-            print("OK:", llm.chat(cfg, [{"role": "user", "content": "Reply with the word pong."}]).get("content"))
-        except llm.LLMError as e:
-            print("FAILED:", e)
+        out = commands.test(cfg, "all" if a.all else None)
+        print(out)
+        for e in cfg.providers.summary()[:1] if not a.all else cfg.providers.summary():
+            ok = llm.model_listed(cfg, e["pool"], e["model"])
+            if ok is False:
+                print(f"WARNING: model '{e['model']}' is not in {e['pool']}'s model list. Run: omni models {e['pool']}")
+        if "FAILED" in out and not a.all:
             sys.exit(1)
+        return
+    if a.cmd == "models":
+        print(commands.handle(cfg, "/models " + " ".join(a.rest)))
         return
     if a.cmd == "provider":
         import shlex
@@ -66,7 +91,11 @@ def main():
         task = open(a.file, encoding="utf-8").read() if a.file else a.prompt
         if not task:
             ap.error("give a prompt or -f file")
-        print(loop.run(cfg, loop.new_history(cfg), task))
+        try:
+            print(loop.run(cfg, loop.new_history(cfg), task))
+        except llm.LLMError as e:
+            print(f"[gateway error] {e}", file=sys.stderr)
+            sys.exit(1)
         return
     if a.cmd == "schedule":
         task = open(a.file, encoding="utf-8").read()

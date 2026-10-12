@@ -14,7 +14,6 @@ else
   echo "Node.js not found - skip OmniRoute, or install Node and rerun."
 fi
 echo
-echo "Done. Next:"
-echo "  1) run 'omniroute' (dashboard http://localhost:20128), add OpenRouter key, create an API key"
-echo "  2) put that key + model in .env"
-echo "  3) ./omni check   then   ./omni"
+echo "Done. Next:  ./omni-ui   (web UI - add your API keys under 'Keys & models')"
+echo "Terminal chat: ./omni      Check keys: ./omni check --all"
+echo "(OmniRoute is optional - Omni now rotates keys and models itself.)"

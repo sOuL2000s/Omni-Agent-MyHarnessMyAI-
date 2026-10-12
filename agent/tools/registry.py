@@ -10,7 +10,8 @@ def tool(name, desc, props, required=()):
             "fn": fn,
             "schema": {"type": "function", "function": {
                 "name": name, "description": desc,
-                "parameters": {"type": "object", "properties": props, "required": list(required)}}},
+                "parameters": {"type": "object", "properties": props,
+                              **({"required": list(required)} if required else {})}}},
         }
         return fn
     return deco

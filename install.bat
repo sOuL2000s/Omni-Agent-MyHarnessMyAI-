@@ -4,4 +4,6 @@ python -m venv .venv
 call .venv\Scripts\activate
 pip install -r requirements.txt
 if not exist .env copy .env.example .env
-echo Done. Install OmniRoute with: npm install -g omniroute   then edit .env and run omni.bat check
+echo.
+echo Done. Start the web UI with:  omni-ui.bat     (terminal chat: omni.bat)
+echo Add your API keys in the UI under "Keys & models", or edit .env.
