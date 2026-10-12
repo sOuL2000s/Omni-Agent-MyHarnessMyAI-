@@ -3,3 +3,4 @@ data/memory.jsonl
 .env
 .venv/
 __pycache__/
+combined_project_files.txt
