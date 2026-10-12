@@ -1,0 +1,9 @@
+# Copy to ~/.hermes/config.yaml  (key goes in ~/.hermes/.env, see README)
+model:
+  provider: custom
+  base_url: "http://localhost:20128/v1"
+  default: "auto/best-coding"
+terminal:
+  backend: local
+approvals:
+  mode: manual

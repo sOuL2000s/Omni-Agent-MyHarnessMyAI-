@@ -1,0 +1,26 @@
+name: OmniRoute
+version: 1.0.0
+schema: v1
+
+models:
+  - name: OmniRoute Main
+    provider: openai
+    model: __MODEL__
+    apiBase: __BASE_URL__
+    apiKey: __API_KEY__
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+      - apply
+  - name: OmniRoute Autocomplete
+    provider: openai
+    model: __MODEL__
+    apiBase: __BASE_URL__
+    apiKey: __API_KEY__
+    roles:
+      - autocomplete
+    autocompleteOptions:
+      debounceDelay: 250
+      maxPromptTokens: 1024
