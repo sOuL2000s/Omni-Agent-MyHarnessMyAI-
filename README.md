@@ -7,7 +7,7 @@ remember things, and run scheduled automations.** Core uses only the Python stan
 ## 1. Install
 Linux/macOS/WSL: `./install.sh`   |   Windows: `install.bat`
 
-## 2. Start the gateway (OmniRoute)
+## 2. Start the gateway (OmniRoute) - or skip it, see "Low-end PC" below
 ```
 npm install -g omniroute
 omniroute            # dashboard: http://localhost:20128
@@ -50,3 +50,9 @@ Add a function with `@tool(...)` in `agent/tools/` (see `files.py`), import it i
 
 ## Tips for best results
 Pick a strong tool-calling model (Claude Sonnet-class or similar) in OmniRoute; small local models often fail at tool use.
+
+## Low-end PC (no Docker, light on resources)
+- Nothing here needs Docker. The models run in the cloud (OpenRouter), not on your machine.
+- Lightest setup: skip OmniRoute entirely and set in `.env`:
+  `AGENT_BASE_URL=https://openrouter.ai/api/v1`, `AGENT_API_KEY=<your OpenRouter key>`, `AGENT_MODEL=anthropic/claude-sonnet-4.5` (or any model id from openrouter.ai/models).
+- Add OmniRoute later only if you want its routing features; it is a plain Node.js process (`npm install -g omniroute`).

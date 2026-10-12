@@ -1,7 +1,0 @@
-# OPTIONAL: only if you decide to run OmniRoute in Docker later. Not required.
-services:
-  omniroute:
-    image: diegosouzapw/omniroute:latest   # pin an exact version for real use
-    ports: ["20128:20128"]
-    volumes: ["./omniroute-data:/app/data"]
-    restart: unless-stopped
