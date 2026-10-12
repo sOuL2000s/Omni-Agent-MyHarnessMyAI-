@@ -1,0 +1,5 @@
+data/providers.json
+data/memory.jsonl
+.env
+.venv/
+__pycache__/

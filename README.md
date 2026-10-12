@@ -30,6 +30,23 @@ Test: `./omni check` (Windows: `omni.bat check`)
 Put files in `workspace/` (or change `AGENT_WORKSPACE`). The agent cannot touch anything outside it unless `AGENT_ALLOW_OUTSIDE=1`.
 Shell commands and outside-workspace access ask for your approval unless `AGENT_AUTO_APPROVE=1` (needed for unattended cron runs — use only in folders you trust).
 
+## Providers, keys, models and automatic failover
+Everything can be changed from inside the chat, no file editing needed:
+```
+/add openrouter sk-or-...        # presets: openrouter gemini omniroute openai groq deepseek ollama
+/add gemini AIza...
+/add mine KEY my-model https://host/v1     # any OpenAI-compatible endpoint
+/providers                       # list; first = primary, the rest = fallbacks in order
+/key openrouter                  # change a key (hidden prompt)
+/model gemini-2.5-pro            # change primary's model   (or: /model gemini <model>)
+/use gemini   /order gemini,openrouter   /remove name   /test [name]
+```
+If the primary fails (rate limit 429, bad/expired key 401/403, server error, timeout, unknown model) the agent automatically
+tries the next provider and prints a notice. A failed provider is skipped for a while (60s for rate limits,
+10 min for bad keys), then the primary is used again. Same works non-interactively: `./omni provider list`, `./omni provider add gemini KEY`.
+To rotate several keys of the same service, add them under different names (`/add openrouter-2 KEY2`).
+Keys are saved in `data/providers.json` (permissions 600, plain text, git-ignored) - keep that folder private.
+
 ## 5. VS Code
 `python scripts/setup_continue.py` writes `~/.continue/config.yaml` from your `.env`. Install the **Continue** extension, then Ctrl+L to chat/edit.
 (Back up is made automatically if you already have a config.)

@@ -30,6 +30,7 @@ class Config:
     temperature: float
     timeout: int
     data_dir: Path
+    providers: object = None
 
 
 def load() -> Config:
@@ -41,7 +42,7 @@ def load() -> Config:
     ws.mkdir(parents=True, exist_ok=True)
     data = ROOT / "data"
     data.mkdir(exist_ok=True)
-    return Config(
+    cfg = Config(
         base_url=g("AGENT_BASE_URL", "http://localhost:20128/v1").rstrip("/"),
         api_key=g("AGENT_API_KEY", ""),
         model=g("AGENT_MODEL", "auto"),
@@ -53,3 +54,7 @@ def load() -> Config:
         timeout=int(g("AGENT_TIMEOUT", "180")),
         data_dir=data,
     )
+    from .providers import Manager, Provider
+    default = Provider("default", cfg.base_url, cfg.api_key, cfg.model)
+    cfg.providers = Manager(data / "providers.json", default)
+    return cfg

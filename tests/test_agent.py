@@ -29,7 +29,9 @@ class H(BaseHTTPRequestHandler):
 srv = HTTPServer(("127.0.0.1", 0), H)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 cfg = config.load()
-cfg.base_url = f"http://127.0.0.1:{srv.server_port}/v1"
+from agent.providers import Provider
+cfg.providers.items = [Provider("mock", f"http://127.0.0.1:{srv.server_port}/v1", "k", "m")]
+cfg.providers.path = Path(tempfile.mkdtemp()) / "p.json"
 cfg.workspace = Path(tempfile.mkdtemp()).resolve()
 cfg.auto_approve = True
 h = loop.new_history(cfg)
@@ -42,4 +44,26 @@ print(call(cfg, "docx_create", {"path": "a.docx", "blocks": [{"type": "heading",
 print(call(cfg, "docx_replace_text", {"path": "a.docx", "find": "draft", "replace": "final"}))
 print(call(cfg, "docx_read", {"path": "a.docx"}))
 print(call(cfg, "read_file", {"path": "../../etc/passwd"}))
+
+# ---- failover: first provider always 429, second works
+class Bad(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(429); self.end_headers(); self.wfile.write(b"rate limited")
+bad = HTTPServer(("127.0.0.1", 0), Bad)
+threading.Thread(target=bad.serve_forever, daemon=True).start()
+STEP["n"] = 2  # mock replies "done"
+from agent import commands, llm
+good_url = f"http://127.0.0.1:{srv.server_port}/v1"
+cfg.providers.items = []
+print(commands.handle(cfg, f"/add bad KEY m http://127.0.0.1:{bad.server_port}/v1"))
+print(commands.handle(cfg, f"/add good KEY m {good_url}"))
+print(commands.handle(cfg, "/providers"))
+out = llm.chat(cfg, [{"role": "user", "content": "hi"}])
+assert out["content"] == "done", out
+assert "cooling" in cfg.providers.status(cfg.providers.get("bad"))
+print(commands.handle(cfg, "/use good"))
+print(commands.handle(cfg, "/model good new-model"))
+assert cfg.providers.items[0].name == "good" and cfg.providers.items[0].model == "new-model"
 print("ALL OK")

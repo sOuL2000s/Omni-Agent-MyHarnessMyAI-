@@ -1,12 +1,13 @@
 import argparse
 import sys
 import time
-from . import config, loop, llm
+from . import config, loop, llm, commands
 
 
 def chat_repl(cfg):
-    print(f"Omni agent  |  model={cfg.model}  |  gateway={cfg.base_url}\nworkspace={cfg.workspace}\n"
-          "Commands: /reset  /exit  /model <name>\n")
+    p0 = cfg.providers.items[0].name if cfg.providers.items else "none"
+    print(f"Omni agent  |  primary={p0}  |  providers={len(cfg.providers.items)}\nworkspace={cfg.workspace}\n"
+          "Type /help for provider/key/model commands (failover is automatic).\n")
     hist = loop.new_history(cfg)
     while True:
         try:
@@ -22,9 +23,8 @@ def chat_repl(cfg):
             hist = loop.new_history(cfg)
             print("history cleared")
             continue
-        if q.startswith("/model "):
-            cfg.model = q.split(None, 1)[1]
-            print("model ->", cfg.model)
+        if q.startswith("/"):
+            print(commands.handle(cfg, q))
             continue
         try:
             print("\n" + loop.run(cfg, hist, q) + "\n")
@@ -42,7 +42,9 @@ def main():
     s = sub.add_parser("schedule", help="repeat a task on an interval")
     s.add_argument("-f", "--file", required=True)
     s.add_argument("--every", type=int, required=True, help="seconds between runs")
-    sub.add_parser("check", help="test gateway connection")
+    sub.add_parser("check", help="test the primary provider")
+    pv = sub.add_parser("provider", help="manage providers: list | add | key | model | use | order | remove | test")
+    pv.add_argument("rest", nargs="*")
     a = ap.parse_args()
     cfg = config.load()
 
@@ -54,6 +56,11 @@ def main():
         except llm.LLMError as e:
             print("FAILED:", e)
             sys.exit(1)
+        return
+    if a.cmd == "provider":
+        import shlex
+        r = a.rest or ["list"]
+        print(commands.handle(cfg, "/" + " ".join(shlex.quote(x) for x in r)))
         return
     if a.cmd == "run":
         task = open(a.file, encoding="utf-8").read() if a.file else a.prompt

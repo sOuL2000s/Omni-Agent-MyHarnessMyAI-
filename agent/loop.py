@@ -44,6 +44,10 @@ def run(cfg, history, user_text, on_event=print):
         calls = msg.get("tool_calls") or []
         entry = {"role": "assistant", "content": msg.get("content") or ""}
         if calls:
+            for i, c in enumerate(calls):
+                c.setdefault("type", "function")
+                if not c.get("id"):
+                    c["id"] = f"call_{turn}_{i}"
             entry["tool_calls"] = calls
         history.append(entry)
         if not calls:
