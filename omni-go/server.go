@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -241,7 +242,7 @@ func (a *WebApp) handleListDir(w http.ResponseWriter, r *http.Request) {
 	fullPath := filepath.Join(a.cfg.Workspace, filepath.Clean("/"+reqPath))
 
 	// Security check: ensure the path is within the workspace
-	rel, err := filepath.Rel(a.cfg.Workspace, full)
+	rel, err := filepath.Rel(a.cfg.Workspace, fullPath)
 	if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, ".."+string(filepath.Separator)) {
 		http.Error(w, `{"error":"forbidden"}`, 403)
 		return
@@ -331,6 +332,8 @@ func (a *WebApp) stateJSON() map[string]interface{} {
 	return map[string]interface{}{
 		"workspace":    a.cfg.Workspace,
 		"strategy":     pm.Strategy,
+		"strategies":   []string{"round_robin", "failover"},
+		"max_wait":     pm.MaxWait,
 		"pools":        pools,
 		"presets":      presetList(),
 		"auto_approve": a.cfg.AutoApprove,
@@ -610,7 +613,7 @@ func (a *WebApp) handleApprove(w http.ResponseWriter, r *http.Request) {
 
 // -------------------------------------------------------------------- files
 
-func (a *WebApp) handleUploadFiles(w http.ResponseWriter, r *http.Request) {
+func (a *WebApp) handleFiles(w http.ResponseWriter, r *http.Request) {
 	root := a.cfg.Workspace
 	entries := []map[string]interface{}{}
 	walkFiles(root, root, &entries, 500)
