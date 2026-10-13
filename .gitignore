@@ -8,3 +8,4 @@ data/state.json
 data/sessions/
 data/*.corrupt-*
 data/*.tmp
+settings.json
