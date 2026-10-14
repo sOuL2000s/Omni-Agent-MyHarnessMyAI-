@@ -68,6 +68,9 @@ label.tog.on{color:var(--bad);font-weight:600}
 .tool pre{margin:0;padding:8px 12px;border-top:1px solid var(--line);overflow:auto;max-height:260px;white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,Consolas,monospace}
 .note{margin:6px 0;font-size:12.5px;color:var(--warn);padding-left:4px}
 .note.err{color:var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent);border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);padding:8px 12px;border-radius:10px;white-space:pre-wrap}
+.note.verify{color:#b7791f;background:color-mix(in srgb,#b7791f 8%,transparent);
+  border:1px solid color-mix(in srgb,#b7791f 30%,transparent);
+  padding:8px 12px;border-radius:10px;white-space:pre-wrap;margin:6px 0}
 .empty{max-width:560px;margin:12vh auto 0;text-align:center;color:var(--muted)} .empty h2{color:var(--ink);margin:0 0 6px}
 .empty .ex{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
 #composer{padding:10px 0 16px;background:linear-gradient(transparent,var(--bg) 30%)}
@@ -90,6 +93,7 @@ label.tog.on{color:var(--bad);font-weight:600}
 .k .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok)} .k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn)} .k .dot.quota{background:#e8590c} .k .dot.auth,.k .dot.billing{background:var(--bad)}
 .k .nm{width:84px;font-weight:600} .k .mk{width:84px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px} .k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .k button{padding:0 6px;font-size:12px}
+.k select{padding:2px 6px;font-size:12px;max-width:200px}
 textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,monospace}
 .files a{color:var(--accent);text-decoration:none} .files .f{display:flex;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:13px} .files .f span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* modal & toast */
@@ -98,6 +102,12 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
 #modal pre{background:var(--code);color:var(--code-ink);padding:10px 12px;border-radius:10px;overflow:auto;max-height:40vh;white-space:pre-wrap;word-break:break-all;font:12.5px ui-monospace,Menlo,Consolas,monospace}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90vw}
 #toast.on{opacity:1}
+/* full-PC browser */
+#browse .dlg{max-width:760px}
+#browse .listing{max-height:52vh;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px}
+#browse .listing .f{display:flex;gap:8px;padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px;align-items:center}
+#browse .listing .f:hover{background:var(--bg)}
+#browse .listing .f .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:900px){
   #app,#app.rightopen{grid-template-columns:0 minmax(0,1fr) 0}
   #left{position:fixed;inset:0 auto 0 0;width:260px;z-index:10;transform:translateX(-100%);transition:transform .2s} #app.leftopen #left{transform:none;box-shadow:var(--shadow)}
@@ -117,9 +127,10 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
   <main>
     <header>
       <button class="ghost only-small" id="menuBtn" title="Chats">☰</button>
-      <span class="chip" id="wsChip" title="Folder the agent may read and write"></span>
+      <span class="chip" id="wsChip" title="Click to change the agent's workspace (browse your whole PC)"></span>
       <span class="chip" id="routeChip" title="Key and model that answered last">no request yet</span>
       <span class="sp"></span>
+      <label class="tog" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
       <label class="tog" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
       <button id="keysBtn">Keys &amp; models</button>
     </header>
@@ -229,8 +240,8 @@ function clearEmpty() { const e = $("#emptyState"); if (e) e.remove(); }
 function showEmpty() {
   msgs.append(h("div", { class: "empty", id: "emptyState" },
     h("h2", { text: "What should Omni work on?" }),
-    h("div", { text: "It can read and edit code and Word/Excel/PowerPoint files, run commands, browse pages and remember things. Files live in your workspace." }),
-    h("div", { class: "ex" }, ...["Summarise the files in my workspace", "Review the code here and write REVIEW.md", "Create a Word report from my notes"].map(t =>
+    h("div", { text: "It can read and edit code and Word/Excel/PowerPoint files, run commands, browse pages and remember things. It has full read/write access to your PC (with approval)." }),
+    h("div", { class: "ex" }, ...["Summarise the files in my Documents folder", "Review the code here and write REVIEW.md", "Create a Word report from my notes"].map(t =>
       h("button", { text: t, onclick: () => { $("#inp").value = t; $("#inp").focus(); } })))));
 }
 function render(ev) {
@@ -250,6 +261,7 @@ function render(ev) {
       d.append(h("pre", { text: ev.text })); return;
     }
     case "notice": return add(h("div", { class: "note", text: "↪ " + ev.text }));
+    case "verify": return add(h("div", { class: "note verify", text: ev.text }));
     case "route": { const c = $("#routeChip"); c.replaceChildren("answering: ", h("b", { text: ev.text })); return; }
     case "error": return add(h("div", { class: "note err", text: ev.text }));
     case "approval": return askApproval(ev);
@@ -292,6 +304,7 @@ async function loadChat() {
     const d = await api(`/api/history?session=${sid}`);
     d.items.forEach(render); if (!d.items.length) showEmpty();
     cursor = d.cursor; $("#autoBox").checked = d.auto; $("#autoTog").classList.toggle("on", d.auto);
+    if (typeof d.strict === "boolean") { $("#strictBox").checked = d.strict; $("#strictTog").classList.toggle("on", d.strict); }
     d.pending.forEach(p => askApproval({ id: p.id, text: p.action }));
     if (d.busy) { setBusy(true); poll(); } else setBusy(false);
     logEl.scrollTop = logEl.scrollHeight;
@@ -338,6 +351,15 @@ function renderKeys() {
         ...S.strategies.map(s => h("option", { value: s, selected: s === S.strategy, text: s === "round_robin" ? "round robin - spread calls over all keys" : "failover - use keys in order" }))),
     ),
     h("div", { class: "small", text: "If a key is rate-limited, out of quota or invalid, Omni switches to the next key by itself, then to the model fallbacks, then to the next service. Short limits are waited out (up to " + S.max_wait + "s)." })));
+  pane.append(h("div", { class: "card" },
+    h("h3", { text: "Models" }),
+    h("div", { class: "row" },
+      h("button", { class: "primary", text: "↻ Refresh all model lists",
+        onclick: e => { const t = e.target; t.textContent = "fetching…"; t.disabled = true;
+          act(() => api("/api/refresh_all", {}),
+              r => `Refreshed ${Object.keys(r.refreshed).length} keys`).finally(() => {
+            t.textContent = "↻ Refresh all model lists"; t.disabled = false; }); } }),
+      h("span", { class: "small", text: "Each key's available models are fetched from its provider and shown in the dropdown next to it." }))));
   S.pools.forEach((p, i) => pane.append(poolCard(p, i, openKeys.has(p.pool))));
   pane.append(addServiceCard());
   pane.scrollTop = scroll;
@@ -361,6 +383,28 @@ function poolCard(p, idx, open) {
     h("div", { class: "keys" }, ...p.keys.map(k => h("div", { class: "k" },
       h("span", { class: "dot " + k.status, title: k.status }), h("span", { class: "nm", text: k.name }), h("span", { class: "mk", text: k.masked }),
       h("span", { class: "info", title: k.reason || k.last_error, text: k.status === "ready" ? `ok ${k.ok} · fail ${k.fail}` : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " - " + k.reason : ""}` }),
+      (() => {
+        const sel = h("select", { title: "Model for this key",
+          onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }), "Model set for " + k.name) });
+        const cached = (k.models && k.models.length)
+          ? k.models
+          : (k.model ? [k.model] : []);
+        sel.replaceChildren(...(cached.length
+          ? cached.map(m => h("option", { value: m, text: m, selected: m === k.model }))
+          : [h("option", { value: "", text: "(no models cached)" })]));
+        if (!k.models || !k.models.length) {
+          api(`/api/key/models?name=${encodeURIComponent(k.name)}`).then(d => {
+            if (d.models && d.models.length) {
+              sel.replaceChildren(...d.models.map(m => h("option", { value: m, text: m, selected: m === (d.current || k.model) })));
+            }
+          }).catch(() => {});
+        }
+        return sel;
+      })(),
+      h("button", { text: "↻", title: "Refresh this key's model list",
+        onclick: e => { e.target.textContent = "…";
+          act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`),
+              "Refreshed " + k.name).finally(() => e.target.textContent = "↻"); } }),
       h("button", { text: "test", title: "Send a real tiny request with this key", onclick: ev => { ev.target.textContent = "…"; act(async () => (await api("/api/keys/test", { name: k.name })).results[0], r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120)); } }),
       h("button", { class: "danger", text: "✕", title: "Remove this key", onclick: () => { if (confirm("Remove " + k.name + "?")) act(() => api("/api/keys/remove", { name: k.name }), "Removed"); } })))));
   const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service - one per line", spellcheck: false });
@@ -413,6 +457,41 @@ async function upload(files) {
   loadFiles();
 }
 
+/* ---------- full-PC directory browser ---------- */
+function openBrowser(startPath, cb) {
+  const overlay = h("div", { id: "browse", style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
+  const pathIn = h("input", { value: startPath || "", style: "flex:1" });
+  const listing = h("div", { class: "listing" });
+  const drivesBox = h("div", { class: "row" });
+  async function go(p) {
+    try {
+      const d = await api(`/api/browse?path=${encodeURIComponent(p || "")}`);
+      pathIn.value = d.path;
+      listing.replaceChildren(...d.entries.map(en => h("div", { class: "f",
+        onclick: () => { if (en.dir) go(en.path); } },
+        h("span", { text: en.dir ? "📁" : "📄" }),
+        h("span", { class: "nm", text: en.name }),
+        en.dir ? null : h("span", { class: "small", text: Math.max(1, Math.round(en.size / 1024)) + " KB" }))));
+      drivesBox.replaceChildren(...(d.drives || []).map(dr =>
+        h("button", { text: dr, onclick: () => go(dr) })));
+    } catch (e) { toast(e.message); }
+  }
+  const dlg = h("div", { class: "dlg", style: "background:var(--panel);border-radius:14px;border:1px solid var(--line);padding:18px;width:100%;max-width:760px;box-shadow:var(--shadow)" },
+    h("h3", { style: "margin:0 0 8px", text: "Browse your PC" }),
+    h("div", { class: "row" }, h("button", { text: "⬆ Up",
+      onclick: () => go((pathIn.value || "").replace(/[\\/][^\\/]*$/, "") || "/") }), pathIn,
+      h("button", { text: "Go", onclick: () => go(pathIn.value) })),
+    drivesBox, listing,
+    h("div", { class: "row", style: "justify-content:flex-end;margin-top:12px" },
+      h("button", { text: "Cancel", onclick: () => overlay.remove() }),
+      h("button", { class: "primary", text: "Use this folder",
+        onclick: async () => { if (cb) await cb(pathIn.value); overlay.remove(); } })));
+  overlay.append(dlg);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+  go(startPath || "");
+}
+
 /* ---------- wiring ---------- */
 $("#send").onclick = send; $("#stop").onclick = () => api("/api/stop", { session: sid });
 $("#inp").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
@@ -420,6 +499,7 @@ $("#inp").addEventListener("input", autoGrow);
 $("#newChat").onclick = newChat; $("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
 $("#allow").onclick = () => answer(true); $("#deny").onclick = () => answer(false);
 $("#autoBox").onchange = async e => { if (e.target.checked && !confirm("Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust. Turn on?")) { e.target.checked = false; return; } const d = await api("/api/auto", { session: sid, on: e.target.checked }); $("#autoTog").classList.toggle("on", d.auto); };
+$("#strictBox").onchange = async e => { const d = await api("/api/strict", { on: e.target.checked }); $("#strictTog").classList.toggle("on", d.strict); toast("Strict mode " + (d.strict ? "ON" : "OFF")); };
 $("#attach").onclick = () => $("#fileIn").click(); $("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = ""; };
 logEl.addEventListener("dragover", e => e.preventDefault()); logEl.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
 function openRight(tab) { $("#app").classList.add("rightopen"); document.querySelectorAll(".tabs [data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab)); document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + tab)); if (tab === "files") loadFiles(); else refreshKeys(true); }
@@ -428,8 +508,20 @@ $("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
 document.querySelectorAll(".tabs [data-tab]").forEach(b => b.onclick = () => openRight(b.dataset.tab));
 setInterval(() => { if ($("#app").classList.contains("rightopen") && $("#pane-keys").classList.contains("on")) refreshKeys(); }, 4000);
 
+/* workspace chip click opens the browser */
+$("#wsChip").style.cursor = "pointer";
+$("#wsChip").title = "Click to change the agent's workspace (browse your whole PC)";
+$("#wsChip").addEventListener("click", () => {
+  openBrowser((S && S.workspace) || "", async (p) => {
+    const r = await api("/api/workspace/set", { path: p });
+    toast("Workspace changed to " + r.workspace);
+    refreshKeys(true);
+  });
+});
+
 (async function init() {
   await refreshKeys(true); await loadChat(); loadSessions();
+  if (S) { $("#strictBox").checked = !!S.strict; $("#strictTog").classList.toggle("on", !!S.strict); }
   if (S && !S.pools.length) { openRight("keys"); toast("Add your first API key to start"); }
 })();
 </script>

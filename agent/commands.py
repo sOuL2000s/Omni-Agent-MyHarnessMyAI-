@@ -3,7 +3,7 @@ import getpass
 import shlex
 from pathlib import Path
 from . import llm
-from .providers import PRESETS, STRATEGIES
+from .providers import PRESETS, STRATEGIES, detect_provider
 
 HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini". The model is chosen per pool.
   /providers                         overview: one line per pool (model, fallbacks, ready/cooling/invalid keys)
@@ -18,6 +18,9 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /use <pool|key>                    make it the primary     /order a,b,c   pool priority
   /remove <key>   /removepool <pool>
   /test [key|pool|all]               real test call(s)      /revive   clear all cooldowns
+  /refresh [key|pool|all]            re-fetch the model list for a key/pool/everything
+  /keymodel <key-name> <model>       set the model for ONE key (overrides the pool default)
+  /autodetect <key>                  guess the provider from the key format
   /reset  /exit  /help"""
 
 
@@ -55,10 +58,19 @@ def handle(cfg, line):
                                 + (f"  ({k['remaining']}s) {k['reason'][:70]}" if k["status"] != "ready" else ""))
             return "\n".join(rows) or "no keys"
         if c == "add":
-            if len(args) < 2:
-                return "usage: /add <name> <key> [model] [base_url]"
-            pm.add(args[0], args[1], args[2] if len(args) > 2 else None, args[3] if len(args) > 3 else None)
-            return f"added '{args[0]}' to pool '{pm.get(args[0]).pool}'. /test {args[0]} to check it."
+            if not args:
+                return "usage: /add [name] <key> [model] [base_url]   (name is optional; auto-detected)"
+            if len(args) == 1:
+                key = args[0]
+                det = detect_provider(key) or "custom"
+                args = [det, key]
+            pm.add(args[0], args[1],
+                   args[2] if len(args) > 2 else None,
+                   args[3] if len(args) > 3 else None)
+            p = pm.get(args[0])
+            return (f"added '{p.name}' to pool '{p.pool}'. "
+                    f"{len(p.models)} models cached, using {p.model}. "
+                    f"/test {p.name} to verify.")
         if c in ("addkeys", "keysadd"):
             if len(args) < 2:
                 return "usage: /addkeys <pool> <key> <key> ...   or   /addkeys <pool> @keys.txt"
@@ -125,6 +137,36 @@ def handle(cfg, line):
             return test(cfg, args[0] if args else None)
         if c == "help":
             return HELP
+        if c in ("refresh", "refetch"):
+            target = args[0] if args else "all"
+            if target == "all":
+                out = pm.refresh_all_models()
+                lines = []
+                for k, v in out.items():
+                    lines.append(f"{k}: {len(v)} models" if isinstance(v, list) else f"{k}: {v}")
+                return "\n".join(lines) or "no keys"
+            if target in pm.pool_names():
+                names = [p.name for p in pm.providers_in(target)]
+            else:
+                names = [target]
+            lines = []
+            for n in names:
+                try:
+                    ids = pm.refresh_models(n)
+                    lines.append(f"{n}: {len(ids)} models")
+                except Exception as e:
+                    lines.append(f"{n}: ERROR {e}")
+            return "\n".join(lines)
+        if c == "autodetect":
+            if not args:
+                return "usage: /autodetect <key>   — guesses the provider from the key format"
+            name = detect_provider(args[0])
+            return f"detected: {name}" if name else "could not detect (unknown key format)"
+        if c == "keymodel":
+            if len(args) < 2:
+                return "usage: /keymodel <key-name> <model>   — set the model for one key only"
+            pm.set_model_for_key(args[0], " ".join(args[1:]))
+            return f"{args[0]} now uses {pm.get(args[0]).model}"
         return "unknown command. /help"
     except (ValueError, IndexError, OSError, llm.LLMError) as e:
         return f"error: {e}"

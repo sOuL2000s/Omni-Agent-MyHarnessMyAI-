@@ -22,7 +22,19 @@ from urllib.parse import urlparse, parse_qs, quote
 from .. import loop, llm, safety, commands
 from ..providers import PRESETS, STRATEGIES
 
-INDEX = Path(__file__).with_name("index.html")
+
+def _find_index() -> Path:
+    p = Path(__file__).with_name("index.html")
+    if p.exists():
+        return p
+    base = Path(os.environ.get("OMNI_ROOT", Path.cwd()))
+    for cand in (base / "agent" / "web" / "index.html", base / "index.html"):
+        if cand.exists():
+            return cand
+    return p
+
+
+INDEX = _find_index()
 SID_RE = re.compile(r"^[a-f0-9]{8,32}$")
 MAX_JSON = 5 * 1024 * 1024
 MAX_UPLOAD = 50 * 1024 * 1024
@@ -155,10 +167,17 @@ class App:
     # ---- helpers for the keys panel
     def state(self):
         pm = self.cfg.providers
-        return {"workspace": str(self.cfg.workspace), "strategy": pm.strategy, "strategies": list(STRATEGIES),
-                "max_wait": pm.max_wait, "pools": pm.summary(), "load_error": pm.load_error,
-                "presets": [{"name": k, "base_url": v[0], "model": v[1]} for k, v in PRESETS.items()],
-                "auto_approve_env": self.cfg.auto_approve}
+        return {
+            "workspace": str(self.cfg.workspace),
+            "strategy": pm.strategy,
+            "strategies": list(STRATEGIES),
+            "max_wait": pm.max_wait,
+            "pools": pm.summary(),
+            "load_error": pm.load_error,
+            "presets": [{"name": k, "base_url": v[0], "model": v[1]} for k, v in PRESETS.items()],
+            "auto_approve_env": self.cfg.auto_approve,
+            "strict": self.cfg.strict,
+        }
 
     def probe(self, names):
         pm, out = self.cfg.providers, []
@@ -289,7 +308,7 @@ def make_handler(app):
             s = app.session(q.get("session", ""))
             pending = [{"id": k, "action": v["action"]} for k, v in s.approvals.items()]
             self._send(200, {"items": s.render(), "cursor": len(s.events), "busy": s.busy,
-                             "pending": pending, "auto": s.auto})
+                             "pending": pending, "auto": s.auto, "strict": app.cfg.strict})
         api_history.method = "GET"
 
         def api_sessions(self, q):
@@ -417,7 +436,10 @@ def make_handler(app):
             if not keys:
                 raise ValueError("paste at least one key")
             pool = (b.get("pool") or "").strip()
-            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]*", pool):
+            if not pool:
+                from ..providers import detect_provider
+                pool = detect_provider(keys[0]) or ""
+            if pool and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.\-]*", pool):
                 raise ValueError("pool name: letters/digits only, e.g. gemini, openrouter, mygateway")
             added, dup = app.cfg.providers.add_keys(pool, keys, (b.get("base_url") or None), (b.get("model") or None))
             self._send(200, {"added": len(added), "duplicates": dup})
@@ -441,6 +463,93 @@ def make_handler(app):
             else:
                 raise ValueError("name or pool required")
             self._send(200, {"results": app.probe(names)})
+
+        # -- v2: per-key models, PC browser, runtime workspace change
+        def api_key_models(self, q):
+            """Cached model list for one key (fetched if stale)."""
+            name = q.get("name", "")
+            pm = app.cfg.providers
+            p = pm.get(name)
+            fresh = (time.time() - (p.models_fetched or 0)) < 600
+            if q.get("refresh") == "1" or not p.models or not fresh:
+                try:
+                    pm.refresh_models(name, force=True)
+                except Exception as e:
+                    return self._send(200, {"models": p.models or [], "current": p.model,
+                                            "error": str(e), "fetched": p.models_fetched})
+            self._send(200, {"models": p.models or [], "current": p.model,
+                             "fetched": p.models_fetched})
+        api_key_models.method = "GET"
+
+        def api_refresh_all(self, q):
+            out = app.cfg.providers.refresh_all_models()
+            summary = {k: (len(v) if isinstance(v, list) else str(v)) for k, v in out.items()}
+            self._send(200, {"refreshed": summary})
+
+        def api_key_model(self, q):
+            b = self._json_body()
+            app.cfg.providers.set_model_for_key(b["name"], b["model"])
+            self._send(200, {"ok": True})
+
+        def api_detect(self, q):
+            from ..providers import detect_provider
+            key = self._json_body().get("key", "")
+            self._send(200, {"provider": detect_provider(key)})
+
+        def api_browse(self, q):
+            """List any directory on the PC. Used by the folder-picker modal."""
+            import string
+            path = q.get("path") or str(app.cfg.workspace)
+            p = Path(path).expanduser()
+            try:
+                p = p.resolve()
+            except OSError:
+                p = Path.home()
+            if p.is_file():
+                p = p.parent
+            if not p.is_dir():
+                p = Path.home()
+            entries = []
+            try:
+                for c in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                    if c.name.startswith(".") and q.get("hidden") != "1":
+                        continue
+                    try:
+                        st = c.stat()
+                        entries.append({"name": c.name, "path": str(c),
+                                        "dir": c.is_dir(), "size": st.st_size,
+                                        "mtime": int(st.st_mtime)})
+                    except OSError:
+                        continue
+            except PermissionError:
+                return self._err(403, "permission denied")
+            drives = []
+            if os.name == "nt":
+                for d in string.ascii_uppercase:
+                    if Path(f"{d}:\\").exists():
+                        drives.append(f"{d}:\\")
+            else:
+                drives = ["/", str(Path.home())]
+            self._send(200, {
+                "path": str(p),
+                "parent": str(p.parent) if p.parent != p else None,
+                "entries": entries[:2000],
+                "drives": drives,
+            })
+        api_browse.method = "GET"
+
+        def api_workspace_set(self, q):
+            b = self._json_body()
+            new_ws = Path(b.get("path", "")).expanduser().resolve()
+            if not new_ws.is_dir():
+                raise ValueError(f"not a directory: {new_ws}")
+            app.cfg.workspace = new_ws
+            self._send(200, {"workspace": str(new_ws)})
+
+        def api_strict(self, q):
+            b = self._json_body()
+            app.cfg.strict = bool(b.get("on"))
+            self._send(200, {"strict": app.cfg.strict})
 
     return H
 

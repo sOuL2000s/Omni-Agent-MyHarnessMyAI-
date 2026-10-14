@@ -41,7 +41,7 @@ def chat_repl(cfg):
 def main():
     ap = argparse.ArgumentParser(prog="omni-agent")
     sub = ap.add_subparsers(dest="cmd")
-    sub.add_parser("chat", help="interactive terminal session (default)")
+    sub.add_parser("chat", help="interactive terminal session (default when no GUI)")
     u = sub.add_parser("ui", help="open the web UI (chat + keys + models)")
     u.add_argument("--host", default="127.0.0.1", help="keep 127.0.0.1 unless you know why not")
     u.add_argument("--port", type=int, default=8765)
@@ -58,13 +58,30 @@ def main():
     m.add_argument("rest", nargs="*")
     pv = sub.add_parser("provider", help="manage keys: list | add | addkeys | model | models | fallback | strategy | use | order | remove | test | revive")
     pv.add_argument("rest", nargs="*")
+    # Launcher controls (only meaningful when no subcommand is given)
+    ap.add_argument("--terminal", action="store_true",
+                    help="skip the launcher and go straight to the terminal chat")
+    ap.add_argument("--no-gui", action="store_true",
+                    help="same as --terminal (alias, for scripts)")
     a = ap.parse_args()
     cfg = config.load()
 
     if cfg.providers.load_error:
         print("WARNING:", cfg.providers.load_error, file=sys.stderr)
 
-    if a.cmd in (None, "chat"):
+    # No subcommand → show the launcher (or fall back to the terminal if asked / if tkinter is missing)
+    if a.cmd is None:
+        if a.terminal or a.no_gui or not _tk_available():
+            return chat_repl(cfg)
+        try:
+            from .launcher import run_launcher
+            return run_launcher(cfg)
+        except Exception as e:
+            # Launcher failed for any reason — never leave the user stranded.
+            print(f"[launcher unavailable: {e}] falling back to terminal chat\n", file=sys.stderr)
+            return chat_repl(cfg)
+
+    if a.cmd == "chat":
         return chat_repl(cfg)
     if a.cmd == "ui":
         from .web.server import serve
@@ -106,6 +123,15 @@ def main():
             except Exception as e:
                 print("run failed:", e)
             time.sleep(a.every)
+
+
+def _tk_available() -> bool:
+    """True if we can import tkinter (bundled by Nuitka when the build includes it)."""
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":

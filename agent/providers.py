@@ -1,14 +1,10 @@
+# agent/providers.py
 """Providers (= API keys), pools (= keys of one service) and key health.
 
-Data model
-----------
-* A **provider** is one API key: name, base_url, api_key, model.   (data/providers.json)
-* A **pool** is every provider whose name is `<pool>-<number>` (gemini-1 ... gemini-37 -> pool "gemini").
-  A provider without a number is its own pool.  The model is chosen per pool, so changing the model
-  changes it for all keys at once.
-* Settings (strategy, fallback models, max wait) live in data/settings.json.
-* Health (which key/model is cooling down and why) lives in data/state.json, so a daily quota
-  that was hit is still remembered after a restart.
+v2 changes:
+  * Provider now carries a per-key `models` list, fetched from the service.
+  * Key-format detection picks the provider automatically.
+  * New keys get a sensible default model chosen from the fetched list.
 """
 import json
 import os
@@ -16,32 +12,60 @@ import re
 import shutil
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
-# Convenience defaults only - model names change often, choose yours with /model or in the UI.
 PRESETS = {
-    "openrouter": ("https://openrouter.ai/api/v1", "anthropic/claude-sonnet-5.5"),
+    "openrouter": ("https://openrouter.ai/api/v1", "anthropic/claude-sonnet-4.5"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
     "omniroute": ("http://localhost:20128/v1", "auto"),
     "openai": ("https://api.openai.com/v1", "gpt-4o"),
     "groq": ("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+    "anthropic": ("https://api.anthropic.com/v1", "claude-sonnet-4-5"),
     "ollama": ("http://localhost:11434/v1", "qwen2.5-coder:7b"),
 }
 
 STRATEGIES = ("round_robin", "failover")
 DEFAULT_SETTINGS = {"strategy": "round_robin", "fallbacks": {}, "max_wait": 90}
 
+# model-name hints used to pick a default when a fresh model list arrives
+PREFERRED_MODEL_HINTS = {
+    "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
+    "openrouter": ["anthropic/claude-sonnet-4.5", "anthropic/claude-3.5-sonnet",
+                   "openai/gpt-4o", "google/gemini-2.5-flash",
+                   "meta-llama/llama-3.3-70b-instruct"],
+    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+    "groq": ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768"],
+    "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+    "anthropic": ["claude-sonnet-4-5", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
+    "ollama": ["qwen2.5-coder:7b", "llama3.1:8b", "deepseek-coder-v2"],
+}
+
+KEY_PATTERNS = [
+    (r"^AIza[0-9A-Za-z_\-]{30,}$", "gemini"),
+    (r"^sk-or-v1-[0-9a-f]{40,}$", "openrouter"),
+    (r"^sk-ant-[A-Za-z0-9_\-]{40,}$", "anthropic"),
+    (r"^sk-proj-[A-Za-z0-9_\-]{30,}$", "openai"),
+    (r"^sk-[A-Za-z0-9]{20,}$", "openai"),
+    (r"^gsk_[A-Za-z0-9]{40,}$", "groq"),
+    (r"^sk-[a-f0-9]{32}$", "deepseek"),
+]
+
+
+def detect_provider(key: str):
+    key = (key or "").strip()
+    for pattern, name in KEY_PATTERNS:
+        if re.match(pattern, key):
+            return name
+    return None
+
 
 def pool_of(name: str) -> str:
-    """gemini-12 -> gemini, key_3 -> key, openrouter -> openrouter"""
     m = re.match(r"^(.*?)[-_ ]?\d+$", name)
     return m.group(1) if m and m.group(1) else name
 
 
 def read_json(path, default):
-    """Read JSON tolerant of a UTF-8 BOM (Windows PowerShell/Notepad write one).
-    A corrupt file is copied aside (never silently dropped). Returns (data, error_or_None)."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
@@ -58,7 +82,6 @@ def read_json(path, default):
 
 
 def write_json(path, data, private=False):
-    """Atomic write, UTF-8 *without* BOM."""
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
     if private:
@@ -75,6 +98,8 @@ class Provider:
     base_url: str
     api_key: str
     model: str
+    models: list = field(default_factory=list)
+    models_fetched: float = 0.0
 
     @property
     def pool(self):
@@ -85,14 +110,8 @@ class Provider:
         return (k[:4] + "..." + k[-3:]) if len(k) > 10 else ("(none)" if not k else "***")
 
 
-# ---------------------------------------------------------------- health
 class Health:
-    """Cooldowns with three scopes:
-       key        - the key itself is bad (invalid / revoked / billing)         -> all models blocked for it
-       key_model  - this key hit a rate/quota limit on this model              -> other models still usable
-       pool_model - the model/server is failing for the whole service           -> skip all keys of the pool
-    """
-    TRANSIENT = ("rate", "server", "network")   # worth waiting for
+    TRANSIENT = ("rate", "server", "network")
 
     def __init__(self, path=None):
         self.path = path
@@ -122,7 +141,6 @@ class Health:
             pass
 
     def state(self, p, model):
-        """None if usable, else {kind, reason, remaining, scope}."""
         with self.lock:
             now = time.time()
             for scope, table, k in (("key", self.key, p.name),
@@ -172,20 +190,20 @@ class Health:
             self.save()
 
 
-# ---------------------------------------------------------------- manager
 class Manager:
-    """items order = priority. Pools are ordered by their first key; within a pool the strategy decides."""
-
     def __init__(self, path, default=None, state_path=None, settings_path=None):
         self.path = path
         self.lock = threading.RLock()
         self.load_error = None
         self.items = []
-        self.rr = {}                      # pool -> name of the key used last (round robin)
+        self.rr = {}
         data, err = read_json(path, [])
         self.load_error = err
         try:
-            self.items = [Provider(**{k: d[k] for k in ("name", "base_url", "api_key", "model")}) for d in data]
+            self.items = [Provider(**{k: d[k] for k in ("name", "base_url", "api_key", "model")},
+                                   models=d.get("models", []),
+                                   models_fetched=d.get("models_fetched", 0.0))
+                          for d in data]
         except Exception as e:
             self.items = []
             self.load_error = f"{path.name} has an unexpected format ({e})"
@@ -216,7 +234,6 @@ class Manager:
         raise ValueError(f"No key named '{name}'. See /keys")
 
     def pools(self):
-        """[(pool, [providers])] in priority order."""
         with self.lock:
             out = {}
             for p in self.items:
@@ -230,7 +247,6 @@ class Manager:
         return [p for p in self.items if p.pool == pool]
 
     def resolve_pool(self, ident):
-        """Accepts a pool name or a key name."""
         if ident in self.pool_names():
             return ident
         return self.get(ident).pool
@@ -283,7 +299,6 @@ class Manager:
         return int(self.settings.get("max_wait", 90))
 
     def pick_order(self, pool, model):
-        """Keys of the pool in the order they should be tried right now (usable ones only)."""
         with self.lock:
             ps = list(self.providers_in(pool))
             if self.strategy == "round_robin" and len(ps) > 1:
@@ -300,6 +315,11 @@ class Manager:
     # ---- editing
     def add(self, name, key, model=None, base_url=None):
         pool = pool_of(name)
+        detected = detect_provider(key)
+        # if the user gave a generic placeholder name, replace it with the detected service
+        if detected and (pool in ("default", "new", "custom") or not name):
+            name = f"{detected}-{len(self.providers_in(detected)) + 1}"
+            pool = detected
         pre = PRESETS.get(pool) or PRESETS.get(name.split("-")[0].split("_")[0])
         existing = self.providers_in(pool)
         base_url = base_url or (existing[0].base_url if existing else (pre[0] if pre else None))
@@ -309,7 +329,7 @@ class Manager:
         key = clean_key(key)
         with self.lock:
             new = Provider(name, base_url.rstrip("/"), key, model)
-            for i, p in enumerate(self.items):          # replace in place keeps its priority
+            for i, p in enumerate(self.items):
                 if p.name == name:
                     self.items[i] = new
                     break
@@ -317,10 +337,19 @@ class Manager:
                 self.items.append(new)
             self.health.clear(name=name)
             self.save()
+        # best-effort model fetch (never fatal)
+        try:
+            self.refresh_models(name)
+        except Exception:
+            pass
 
     def add_keys(self, pool, keys, base_url=None, model=None):
-        """Bulk add keys to a pool (auto-numbered). Returns (added_names, skipped_duplicates)."""
         pool = pool.strip()
+        # detect from the first key if the pool isn't a known preset
+        if pool not in PRESETS and keys:
+            det = detect_provider(keys[0])
+            if det:
+                pool = det
         existing = self.providers_in(pool)
         pre = PRESETS.get(pool)
         base_url = base_url or (existing[0].base_url if existing else (pre[0] if pre else None))
@@ -351,12 +380,50 @@ class Manager:
                 added.append(name)
             if added:
                 self.save()
+        # fire off model fetches (best-effort, one thread per key)
+        for nm in added:
+            threading.Thread(target=self._safe_refresh, args=(nm,), daemon=True).start()
         return added, dup
+
+    def _safe_refresh(self, name):
+        try:
+            self.refresh_models(name)
+        except Exception:
+            pass
+
+    def refresh_models(self, name, force=True):
+        from . import llm
+        p = self.get(name)
+        ids = llm.list_models_for_provider(p, force=force)
+        with self.lock:
+            p.models = ids
+            p.models_fetched = time.time()
+            if ids and p.model not in ids:
+                preferred = _pick_default_model(p.pool, ids)
+                if preferred:
+                    p.model = preferred
+            self.save()
+        return ids
+
+    def refresh_all_models(self):
+        out = {}
+        for p in list(self.items):
+            try:
+                out[p.name] = self.refresh_models(p.name)
+            except Exception as e:
+                out[p.name] = f"error: {e}"
+        return out
 
     def set_key(self, name, key):
         with self.lock:
             self.get(name).api_key = clean_key(key)
             self.health.clear(name=name)
+            self.save()
+
+    def set_model_for_key(self, name, model):
+        with self.lock:
+            p = self.get(name)
+            p.model = model.strip()
             self.save()
 
     def remove(self, name):
@@ -374,7 +441,6 @@ class Manager:
             self.save_settings()
 
     def use(self, ident):
-        """Make a pool (or the pool of a key, and that key first) the primary."""
         with self.lock:
             pool = self.resolve_pool(ident)
             first = [p for p in self.items if p.pool == pool]
@@ -396,7 +462,7 @@ class Manager:
             self.items = [p for n in pools + rest for p in self.providers_in(n)]
             self.save()
 
-    order_by = order_pools   # backwards compatible name
+    order_by = order_pools
 
     # ---- display helpers
     def status(self, p, model=None):
@@ -410,7 +476,6 @@ class Manager:
         return f"cooling {st['remaining']}s ({st['kind']})"
 
     def summary(self):
-        """JSON-able overview for the UI."""
         out = []
         for pool, ps in self.pools():
             model = self.model_of(pool)
@@ -424,13 +489,33 @@ class Manager:
                     counts["invalid"] += 1
                 else:
                     counts["cooling"] += 1
-                keys.append({"name": p.name, "masked": p.masked(), "status": st["kind"] if st else "ready",
-                             "reason": st["reason"] if st else "", "remaining": st["remaining"] if st else 0,
-                             "ok": stats.get("ok", 0), "fail": stats.get("fail", 0),
-                             "last_error": stats.get("last_error", "")})
+                keys.append({
+                    "name": p.name, "masked": p.masked(),
+                    "status": st["kind"] if st else "ready",
+                    "reason": st["reason"] if st else "",
+                    "remaining": st["remaining"] if st else 0,
+                    "ok": stats.get("ok", 0), "fail": stats.get("fail", 0),
+                    "last_error": stats.get("last_error", ""),
+                    "model": p.model,
+                    "models": p.models,
+                    "models_fetched": p.models_fetched,
+                })
             out.append({"pool": pool, "model": model, "fallbacks": self.fallbacks(pool),
                         "base_url": ps[0].base_url, "counts": counts, "keys": keys})
         return out
+
+
+def _pick_default_model(pool, ids):
+    for hint in PREFERRED_MODEL_HINTS.get(pool, []):
+        for mid in ids:
+            if mid == hint or mid.endswith("/" + hint) or hint in mid:
+                return mid
+    for mid in ids:
+        low = mid.lower()
+        if any(x in low for x in ("embed", "whisper", "tts", "dall-e", "moderation", "image")):
+            continue
+        return mid
+    return ids[0] if ids else None
 
 
 def clean_key(k):

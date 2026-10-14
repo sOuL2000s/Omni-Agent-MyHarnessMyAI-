@@ -360,3 +360,60 @@ def model_listed(cfg, pool, model):
         return model in list_models(cfg, pool)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------- v2 additions
+def list_models_for_provider(p, force=False):
+    """Model ids a single key can see (GET /models with that key). Cached 10 min per key."""
+    key = f"prov:{p.name}:{p.base_url}"
+    hit = _MODEL_CACHE.get(key)
+    if hit and not force and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        d = _get_json(p.base_url + "/models", _headers(p))
+    except Exception as e:
+        raise LLMError(f"could not list models for {p.name}: {e}")
+    items = d.get("data") or d.get("models") or []
+    ids = []
+    for m in items:
+        i = m.get("id") or m.get("name") if isinstance(m, dict) else m
+        if isinstance(i, str):
+            i = i[7:] if i.startswith("models/") else i
+            if not re.search(r"embed|aqa|imagen|veo|tts|whisper|moderation|dall-e|image-gen",
+                             i, re.I):
+                ids.append(i)
+    ids = sorted(set(ids))
+    _MODEL_CACHE[key] = (time.time(), ids)
+    return ids
+
+
+def verify(cfg, messages, final_answer):
+    """Ask the model to flag claims it did NOT verify with a tool call.
+    Returns a list of {claim, verified, note}. Best-effort; returns [] on any failure."""
+    if not final_answer or len(final_answer) < 80:
+        return []
+    prompt = (
+        "You are a strict fact-checker reviewing a draft answer against the conversation that "
+        "produced it. For each factual claim the draft makes about the user's files, commands, "
+        "system, or external facts, decide whether the conversation contains a TOOL CALL that "
+        "actually verified it (a read_file, list_dir, run_shell, web_fetch, search_files, etc. "
+        "whose result supports the claim). If a claim was NOT backed by an observed tool result, "
+        "mark verified=false.\n\n"
+        "Reply with ONLY a JSON object of this exact shape, no prose:\n"
+        '{"claims":[{"claim":"...","verified":true,"note":"..."}]}\n\n'
+        "If the draft contains no factual claims at all, reply {\"claims\":[]}.\n\n"
+        "DRAFT ANSWER:\n" + final_answer
+    )
+    msgs = list(messages) + [{"role": "user", "content": prompt}]
+    try:
+        msg, _ = chat_ex(cfg, msgs, tools=None)
+        txt = (msg.get("content") or "").strip()
+        # tolerate code fences around the JSON
+        m = re.search(r"\{.*\}", txt, re.S)
+        if not m:
+            return []
+        data = json.loads(m.group(0))
+        claims = data.get("claims", [])
+        return [c for c in claims if isinstance(c, dict) and c.get("claim")]
+    except Exception:
+        return []

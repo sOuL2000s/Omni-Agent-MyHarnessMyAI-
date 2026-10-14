@@ -1,96 +1,1082 @@
-# Omni Agent: your own AI harness (no Docker)
+# Omni Agent
 
-An agent you control. It talks to any OpenAI-compatible service (Gemini, OpenRouter, OpenAI, Groq, Ollama, OmniRoute...).
-It can read and edit code, edit Word/Excel/PowerPoint files, run shell commands, fetch web pages and remember things.
-It has a **web UI**, and it rotates API keys and falls back across models by itself. The core uses only the Python standard library.
+**Your own AI harness — on your own machine, with your own keys, on your own terms.**
 
-## 1. Quick start (Windows)
-```
-install.bat          # once: creates .venv and installs python-docx / openpyxl / python-pptx
-omni-ui.bat          # starts the web UI and opens your browser
-```
-(Linux/macOS/WSL: `./install.sh`, then `./omni-ui`.)
-If you unzipped over your old folder, your `.venv` is kept and `omni-ui.bat` works straight away.
+Omni is a self-hosted AI agent that runs as a single `.exe` (no Python needed for
+end users) and talks to **any OpenAI-compatible service** — Google Gemini,
+OpenRouter, OpenAI, Anthropic, Groq, DeepSeek, Ollama, LM Studio, OmniRoute, or
+your own gateway. It reads and edits code, edits Word/Excel/PowerPoint files,
+runs shell commands, browses the web, browses **your entire PC**, and remembers
+things across sessions. It rotates API keys and falls back across models by
+itself, so one dead key or exhausted free quota never stops your work.
 
-Keep the link printed in the terminal private: it contains a random token and unlocks the agent.
+---
 
-## 2. The web UI
-* **Chat**: tool calls appear as collapsible cards, and key or model switches appear as notices. Shell commands and writes outside the workspace pop up an **Allow / Deny** dialog. **Stop** cancels a run.
-* **Keys & models** (top right):
-  * Paste many keys at once, one per line. Test one key or all of them. Each key shows a health dot.
-  * Pick the model per service. **Apply** changes it for **all** keys of that service at once. **List...** loads the models the service really offers.
-  * Set fallback models, the rotation strategy and the service priority (▲▼).
-* **Files**: upload files into the workspace (📎 or drag and drop) and download what the agent made.
-* Chats are saved in `data/sessions/`. The ☰ list on the left switches between them.
+## Table of contents
 
-## 3. How keys, models and failover work
-Keys are grouped into **pools**: `gemini-1 ... gemini-37` form the pool `gemini`. The model is chosen **per pool**.
-For every request Omni tries, in this order:
+1. [What it is (and what it is not)](#1-what-it-is-and-what-it-is-not)
+2. [Feature tour](#2-feature-tour)
+3. [Quick start — the 5-minute path](#3-quick-start--the-5-minute-path)
+4. [Getting an API key](#4-getting-an-api-key)
+5. [Running it — every mode explained](#5-running-it--every-mode-explained)
+6. [The web UI, in detail](#6-the-web-ui-in-detail)
+7. [The terminal, in detail](#7-the-terminal-in-detail)
+8. [How keys, pools, models and failover work](#8-how-keys-pools-models-and-failover-work)
+9. [Building the standalone .exe](#9-building-the-standalone-exe)
+10. [Configuration reference (`.env`)](#10-configuration-reference-env)
+11. [Safety model](#11-safety-model)
+12. [Reducing hallucination (strict mode)](#12-reducing-hallucination-strict-mode)
+13. [Extending Omni — adding your own tools](#13-extending-omni--adding-your-own-tools)
+14. [Running the tests](#14-running-the-tests)
+15. [Troubleshooting](#15-troubleshooting)
+16. [FAQ](#16-faq)
+17. [Design notes & limitations (read this)](#17-design-notes--limitations-read-this)
 
-1. each usable key of the first pool with the chosen model (*round robin* spreads calls over all keys; *failover* always starts with the first key),
-2. the same keys with each **fallback model** (Gemini quotas are per model, so `gemini-2.5-flash-lite` still works when `gemini-2.5-flash` is used up),
-3. the next pool (for example `openrouter`).
+---
 
-Every failure is classified, and only the right thing is put on cooldown:
+## 1. What it is (and what it is not)
 
-| Problem | Meaning | Cooldown |
-|---|---|---|
-| 429 per minute | key too fast | the service's `retryDelay` (min 10 s) |
-| 429 per day | daily quota used | until the quota resets (Google: midnight Pacific) |
-| 401 / 400 `API_KEY_INVALID` / leaked key | key is dead | 6 h, shown as **INVALID KEY** |
-| 402 or billing | no credits | 1 h |
-| 404 or "model not found" | the model is wrong for that service | 10 min, **whole pool** skipped at once (not 37 wasted calls) |
-| 5xx or network | service problem | 15-20 s, whole pool skipped |
-| other 400 (bad request) | the request itself is wrong | **no cooldown**: the error is shown instead of burning all your keys |
+### What Omni is
 
-If every key is only briefly rate-limited, Omni **waits** (up to `AGENT_MAX_WAIT`, default 90 s) instead of failing. Cooldowns are saved in `data/state.json`, so a used-up daily quota is remembered after a restart.
+- A **local agent runtime**. The brain is a remote LLM you already have access
+  to; Omni is the harness that lets that LLM read files, run commands, and
+  produce results on *your* computer.
+- **Multi-provider by design.** One config, many services. Free Gemini keys,
+  a paid Claude key, a local Ollama model — Omni picks whichever is available
+  right now and rotates between them automatically.
+- **A GUI-first desktop app** (built on tkinter, bundled into one `.exe`) with
+  a **full web UI** for chat, key management, and file handling.
+- **Standard-library core.** The agent itself uses only Python's standard
+  library. The extra pip packages (`python-docx`, `openpyxl`, `python-pptx`)
+  are only for Word/Excel/PowerPoint editing — you can ignore them and still
+  use the agent for everything else.
 
-Terminal equivalents (`omni` chat or `omni provider ...`):
-```
-/providers   /keys [pool]   /addkeys gemini KEY1 KEY2 ...   /addkeys gemini @keys.txt
-/model gemini-2.5-pro       /model openrouter anthropic/claude-sonnet-5.5     /models gemini flash
-/fallback gemini gemini-2.5-flash-lite,gemini-2.0-flash      /strategy round_robin|failover
-/use openrouter   /order gemini,openrouter   /test all   /revive   /remove NAME
-```
-`omni check` pings the primary pool and warns if its model is not in the service's list. `omni check --all` tests every key.
+### What Omni is not
 
-### Tips for many free Gemini keys
-* Google's free quotas are per **project**, not per key. Keys created in the same Google Cloud project share one quota. Create each key in a separate project (AI Studio → "Create API key in new project") for rotation to actually add capacity.
-* Set one or two fallback models (see above) so a used-up daily quota on one model does not stop you.
-* Free keys can use your prompts for training. Do not send confidential data through them.
+- **Not a hosted service.** Nothing is sent anywhere except the LLM calls you
+  make. Your keys, files, and history live in a `data/` folder next to the exe.
+- **Not a wrapper around someone else's agent.** No LangChain, no AutoGen, no
+  framework. It's a small, readable, auditable codebase.
+- **Not immune to hallucination.** No LLM is. Omni forces the model to call a
+  tool before asserting facts about your machine, and strict mode flags
+  unverified claims in the answer — but see [§17](#17-design-notes--limitations-read-this).
+- **Not a magic replacement for judgment.** If you enable auto-approve and let
+  it run shell commands unreviewed, it can delete your files. See [§11](#11-safety-model).
 
-## 4. Configuration (`.env`)
-`AGENT_WORKSPACE` (folder the agent may touch), `AGENT_ALLOW_OUTSIDE`, `AGENT_AUTO_APPROVE`, `AGENT_MAX_TURNS`, `AGENT_TEMPERATURE`, `AGENT_TIMEOUT`, `AGENT_STRATEGY`, `AGENT_MAX_WAIT`.
-Keys live in `data/providers.json` (plain text, git-ignored). Treat that folder, `.env` and **this zip** as secrets.
+---
 
-## 5. Other commands
-| Goal | Command |
+## 2. Feature tour
+
+**Every feature that matters, in plain language:**
+
+| Feature | What it means for you |
 |---|---|
-| Web UI | `omni-ui.bat` or `omni.bat ui` (`--port 9000`, `--no-browser`) |
-| Terminal chat | `omni.bat` |
-| One-shot task | `omni.bat run "In report.docx replace 'Q2' with 'Q3'"` |
-| Task from file | `omni.bat run -f workflows/review_code.md` |
-| Repeat on a timer | `omni.bat schedule -f workflows/daily_notes_cleanup.md --every 86400` |
+| **Runs anywhere** | One `.exe` (Windows), one folder (macOS/Linux). No Python, no Docker, no dependencies. |
+| **Any LLM** | Gemini, OpenRouter, OpenAI, Anthropic, Groq, DeepSeek, Ollama, LM Studio, OmniRoute, or any OpenAI-compatible URL. |
+| **Multi-key rotation** | Add 30 Gemini keys; Omni round-robins between them and cools down the one that just hit a quota. |
+| **Model fallback** | If `gemini-2.5-pro` runs out of quota, it tries `gemini-2.5-flash` on the *same key* automatically. |
+| **Provider failover** | If Gemini is entirely down, it moves on to your OpenRouter pool, then your Groq pool. |
+| **Auto key detection** | Paste `AIza...` — Omni knows that's Gemini. `sk-or-v1-...` — OpenRouter. `gsk_...` — Groq. |
+| **Auto model discovery** | Every key fetches its available model list from the provider. You pick from a dropdown. |
+| **Full filesystem access** | Reads and writes *anywhere on your PC*, with a confirmation prompt outside the workspace. |
+| **Word / Excel / PowerPoint** | Edits `.docx`, `.xlsx`, `.pptx` while preserving formatting. |
+| **Shell** | Runs commands in a shell, with a blocklist for catastrophic ones (`rm -rf /`, `mkfs`, fork bombs). |
+| **Web fetch** | Reads any URL, strips HTML, returns plain text. |
+| **Long-term memory** | Save facts, preferences, notes; they come back in every future session. |
+| **Chat history** | Every session is persisted in `data/sessions/`; the sidebar switches between them. |
+| **Strict mode** | After a tool-using answer, a second model call verifies factual claims and flags unverified ones. |
+| **Approval flow** | Shell commands and writes outside the workspace pop up an Allow/Deny dialog. |
+| **Auto-approve** | One toggle (or env var) skips all prompts. For sandboxes and trusted workspaces. |
+| **Workspace picker** | Click the workspace chip in the header to browse your entire PC and change the root on the fly. |
+| **Stop button** | Cancels a running task mid-flight, releases pending approvals. |
+| **Zero-config start** | Install, add one key, start working. Everything else is optional. |
 
-## 6. Hermes: what it is, and why it is not the UI here
-[Hermes Agent](https://hermes-agent.nousresearch.com) is a **separate, full agent** with its own dashboard (`hermes dashboard`). That dashboard manages Hermes (its config, keys, sessions), not Omni. Its Chat tab embeds Hermes' terminal UI and needs Linux/macOS/WSL2. On native Windows only the admin pages work. So it cannot be a front end for Omni, and the Omni UI above replaces it for this project.
-You can still run Hermes next to Omni (`config/hermes-config.yaml`, `scripts/setup_hermes.py`). Hermes keeps its own key pools (`hermes auth add ...`), separate from Omni's.
+---
 
-## 7. Safety
-The UI listens on `127.0.0.1` only. It needs the per-start token and checks the `Host` header, and API keys are never sent to the browser. Only use `--host 0.0.0.0` on a network you trust, because anyone with the link can run commands as you. **auto-approve** (UI toggle or `AGENT_AUTO_APPROVE=1`) skips all confirmation dialogs, so use it only in a workspace you trust.
+## 3. Quick start — the 5-minute path
 
-## 8. Extending
-Add a function with `@tool(...)` in `agent/tools/` (see `files.py`) and import it in `agent/tools/__init__.py`. The model sees it automatically.
+### For end users (with the pre-built `.exe`)
 
-## 9. Tests (offline, mock gateways; they never touch your `data/`)
+If someone gave you a `omni.dist` folder or a single `omni.exe`:
+
+**Windows**
+1. Unzip if needed.
+2. Double-click `omni.exe`.
+3. A small launcher window opens with two buttons: **Terminal chat** and **Web UI**.
+4. Click **Web UI**. Your browser opens.
+5. Click **Keys & models** (top right) → **Add a service** → pick a preset (e.g. `gemini`) → paste your API key → click **Add**.
+6. Click **Test one** to confirm the key works. The dot next to the key turns green.
+7. Close the panel. Start chatting.
+
+**macOS / Linux**
+1. Unzip if needed.
+2. `cd` into the folder and run `./omni` (opens the launcher GUI on systems with a display).
+3. Same as above from step 3.
+
+You do **not** need Python, pip, Node.js, Docker, or anything else installed.
+
+### For developers (running from source)
+
+If you have the source folder and want to run/modify it:
+
 ```
-python tests/test_failover.py     # rotation, quotas, model fallback, waiting, persistence
+# Windows
+install.bat
+
+# macOS / Linux / WSL
+./install.sh
+```
+
+Then:
+
+```
+# Windows
+.venv\Scripts\activate
+python -m agent           # launcher GUI
+python -m agent ui        # web UI directly
+python -m agent chat      # terminal chat directly
+
+# macOS / Linux
+source .venv/bin/activate
+python -m agent
+python -m agent ui
+python -m agent chat
+```
+
+Add your first key either through the UI, or from the terminal:
+
+```
+/add AIzaSy...your-real-gemini-key...
+```
+
+That's it. The agent is ready.
+
+### For builders (producing the `.exe`)
+
+See [§9 Building the standalone .exe](#9-building-the-standalone-exe). TL;DR:
+`install.bat`, `python -m pip install nuitka ordered-set zstandard`,
+`build.bat`, then `dist\omni.dist\omni.exe`.
+
+---
+
+## 4. Getting an API key
+
+You need at least one. All of these have a **free tier** (or free models):
+
+### Google Gemini — recommended for beginners
+
+- **Where:** https://aistudio.google.com/apikey
+- **Key looks like:** `AIzaSy...` (39 characters, starts with `AIza`)
+- **Free tier:** yes, generous, but **quotas are per Google Cloud project, not
+  per key**. If you create all your keys in the same project, they share one
+  quota and rotation doesn't add capacity. Create each key in its own project
+  (AI Studio → *Create API key in new project*) for real rotation.
+- **Privacy note:** free-tier prompts may be used by Google for training.
+  Don't send confidential data through free Gemini keys.
+- **What Omni does with it:** auto-detects the provider as `gemini`, pulls the
+  model list, and defaults to `gemini-2.5-flash`.
+
+### OpenRouter — the "everything" aggregator
+
+- **Where:** https://openrouter.ai/keys
+- **Key looks like:** `sk-or-v1-...`
+- **Free tier:** a rotating set of free models (models with `:free` suffix).
+- **What Omni does:** auto-detects `openrouter`, pulls the (long) model list,
+  defaults to `anthropic/claude-sonnet-4.5` if you have credit, or you can
+  switch to a free model.
+
+### Groq — the fastest free option
+
+- **Where:** https://console.groq.com/keys
+- **Key looks like:** `gsk_...`
+- **Free tier:** yes, very fast inference on Llama/Mixtral.
+- **What Omni does:** auto-detects `groq`, defaults to `llama-3.3-70b-versatile`.
+
+### OpenAI / Anthropic — paid, strongest models
+
+- **OpenAI:** https://platform.openai.com/api-keys, key `sk-proj-...` or `sk-...`
+- **Anthropic:** https://console.anthropic.com/settings/keys, key `sk-ant-...`
+- **What Omni does:** auto-detects, defaults to `gpt-4o` / `claude-sonnet-4-5`.
+
+### Ollama / LM Studio — local, private, free
+
+- Install Ollama (https://ollama.com) or LM Studio, start the server.
+- Ollama listens on `http://localhost:11434/v1` by default.
+- **What Omni does:** no key needed; add a pool named `ollama` with any
+  placeholder string as the key, and it works.
+
+### Which one should I pick?
+
+- **Want zero cost, decent quality:** Gemini free tier.
+- **Want the best quality, don't mind paying:** Anthropic or OpenAI.
+- **Want privacy (nothing leaves your machine):** Ollama or LM Studio.
+- **Want everything at once:** OpenRouter (one key, many models).
+- **Want speed:** Groq.
+
+You can add **all of them** and Omni will pick whichever is healthiest.
+That's the whole point.
+
+---
+
+## 5. Running it — every mode explained
+
+There are three ways to launch Omni, and each supports several subcommands.
+Everything below works the same whether you run from source (`python -m agent`)
+or from the exe (`omni.exe`).
+
+### 5.1 The launcher GUI (default when you double-click)
+
+```
+omni.exe               (no arguments)
+```
+
+Shows a small native window:
+
+```
+┌──────────────────────────────────────┐
+│           Omni Agent                 │
+│         Choose how to start          │
+│                                      │
+│  ┌────────────────┐ ┌──────────────┐ │
+│  │  Terminal chat │ │    Web UI    │ │
+│  └────────────────┘ └──────────────┘ │
+│ ──────────────────────────────────── │
+│               [ Quit ]               │
+│                                      │
+│ Workspace: C:\Users\you              │
+└──────────────────────────────────────┘
+```
+
+- **Terminal chat** → opens a new terminal window running the CLI chat. The
+  launcher stays open (you can launch a second one, or the web UI, without
+  restarting).
+- **Web UI** → starts the server in the background and opens your browser. The
+  status line shows the URL; closing the launcher stops the server.
+- **Quit** → closes everything.
+
+To skip the launcher and go straight to the terminal, either run
+`omni.exe chat`, or set `OMNI_NO_GUI=1` in your environment.
+
+### 5.2 Subcommands
+
+Every subcommand is available in both the source build and the exe. Replace
+`omni.exe` with `python -m agent` if you're running from source.
+
+| Command | What it does |
+|---|---|
+| `omni.exe` | Launcher GUI (or terminal chat if no GUI available) |
+| `omni.exe chat` | Interactive terminal session (the REPL) |
+| `omni.exe ui` | Web UI on `http://localhost:8765`, opens browser |
+| `omni.exe ui --port 9000` | Web UI on a custom port |
+| `omni.exe ui --no-browser` | Web UI without auto-opening the browser |
+| `omni.exe ui --host 0.0.0.0` | **⚠ Exposes to your whole network.** Read §11 first. |
+| `omni.exe run "task"` | One-shot task: does it, prints the result, exits |
+| `omni.exe run -f workflows/review_code.md` | One-shot from a task file |
+| `omni.exe schedule -f task.md --every 86400` | Repeats a task on an interval (seconds) |
+| `omni.exe check` | Tests one key from the primary pool |
+| `omni.exe check --all` | Tests every key |
+| `omni.exe models gemini` | Lists the models Gemini offers |
+| `omni.exe models gemini flash` | Lists Gemini models matching "flash" |
+| `omni.exe provider list` | Shows every pool and key |
+| `omni.exe provider add gemini AIza...` | Adds a key from the CLI |
+| `omni.exe provider addkeys gemini K1 K2 K3` | Adds many keys at once |
+| `omni.exe provider model gemini gemini-2.5-pro` | Changes the pool's model |
+| `omni.exe provider fallback gemini gemini-2.5-flash-lite` | Sets fallback models |
+| `omni.exe provider strategy round_robin` | Rotation strategy |
+| `omni.exe provider use openrouter` | Makes a pool primary |
+| `omni.exe provider remove gemini-3` | Removes one key |
+| `omni.exe provider revive` | Clears all cooldowns (retry immediately) |
+
+### 5.3 The wrapper scripts (source tree only)
+
+If you installed from source, the short scripts in the project root do the
+same thing with less typing:
+
+| Windows | macOS / Linux | Same as |
+|---|---|---|
+| `omni.bat` | `./omni` | `python -m agent` |
+| `omni-ui.bat` | `./omni-ui` | `python -m agent ui` |
+| `build.bat` | (use `python build.py`) | `python build.py` |
+
+They activate the virtualenv automatically.
+
+### 5.4 Where does Omni store its stuff?
+
+Everything lives in `data/`, next to the exe (or in the project root for a
+source install):
+
+```
+data/
+├── providers.json   ← your API keys (plain text, chmod 600 on Unix)
+├── settings.json    ← strategy, fallbacks, max_wait
+├── state.json       ← cooldowns (so a daily quota hit is remembered after restart)
+├── memory.jsonl     ← long-term memory (what you told it to remember)
+└── sessions/
+    ├── <id>.json    ← one file per chat
+    └── ...
+```
+
+**Treat `data/` as a secret.** `providers.json` contains your keys in plain
+text. If you back up your PC, exclude this folder or encrypt it. The
+`.gitignore` already excludes it from version control.
+
+---
+
+## 6. The web UI, in detail
+
+The web UI is Omni's primary interface. Everything you can do in the terminal
+you can do here, plus file uploads and a live keys panel.
+
+### 6.1 Layout
+
+```
+┌───────────┬──────────────────────────────────────────┬──────────────┐
+│           │  workspace chip    answering: gemini ·   │              │
+│  + New    │                    gemini-2.5-flash     │  Keys &      │
+│  chat     │                          strict  auto   │  models      │
+│           ├──────────────────────────────────────────┤              │
+│  session  │                                          │  Rotation    │
+│  list     │  Chat messages and tool cards appear      │  ────────    │
+│           │  here                                     │  gemini  ★   │
+│           │                                          │  [model]     │
+│           │                                          │  [fallback]  │
+│           │                                          │  keys...     │
+│           ├──────────────────────────────────────────┤              │
+│           │  📎  [type here…]           Send / Stop   │  Files       │
+└───────────┴──────────────────────────────────────────┴──────────────┘
+```
+
+- **Left sidebar** — your chat sessions. `✕` deletes one.
+- **Header** — workspace chip (click to browse your PC and change the root),
+  a chip showing which key/model answered last, the **strict** toggle, the
+  **auto-approve** toggle, and the **Keys & models** button.
+- **Center** — the conversation. Tool calls show as collapsible cards. Shell
+  commands and outside-workspace writes pop up an Allow/Deny dialog.
+- **Right panel** — keys, models, files. Opens with the **Keys & models**
+  button.
+
+### 6.2 Chat
+
+Type in the box, press Enter (Shift+Enter for a newline). Everything else is
+automatic:
+
+- The model decides to call a tool (e.g. `read_file`). You see a card with the
+  tool name and arguments. Expand it to see the raw arguments.
+- The tool runs. The card gets a green dot (success) or red dot (error), and
+  the output appears inside it.
+- The model continues with the result. You see its reasoning as a dimmed
+  "working" message, then the final answer.
+- If the model switched keys or models mid-answer (because of a quota hit),
+  you see an amber `↪ using fallback …` notice.
+- If strict mode is on and the answer contains claims the model didn't
+  actually verify with a tool, an amber `⚠ Unverified claim(s)…` banner
+  appears under the answer.
+
+### 6.3 The **Keys & models** panel
+
+**Rotation card** — choose `round_robin` (spread calls over all keys) or
+`failover` (always start with the first key, use the rest only when it fails).
+See [§8](#8-how-keys-pools-models-and-failover-work).
+
+**Models card** — a single **↻ Refresh all model lists** button. It pings
+every provider with every key and re-populates the dropdowns. Only needed if a
+provider added new models since you last used it.
+
+**One card per service** (pool):
+
+- **Header** — pool name, badges showing ready / cooling / invalid key counts,
+  and ▲▼ buttons to change the pool's priority relative to other pools.
+- **Base URL** — the service endpoint.
+- **Model row** — the pool's default model (used when a key has no override),
+  an **Apply** button (changes the model for all keys of the pool at once),
+  and a **List…** button (fetches the live model list).
+- **Fallback row** — comma-separated list of models to try when the chosen
+  one hits a quota. **Quotas are per model** — if `gemini-2.5-pro` is used up,
+  `gemini-2.5-flash-lite` on the *same key* still works. Set one or two.
+- **Key list** — every key with a health dot, its masked form, its stats, a
+  **model dropdown per key** (choose a different model for a specific key),
+  a ↻ button to refresh that one key's models, a **test** button, and ✕ to
+  remove it.
+- **Add keys to <pool>** — paste more keys, one per line.
+- **Test one / Test all** — real API calls. Shows which keys work.
+- **Reset cooldowns** — clears health state for the pool.
+- **Remove service** — deletes the pool and all its keys.
+
+**Add a service card** (bottom) — the fast path. Pick a preset (`gemini`,
+`openrouter`, `openai`, `groq`, `deepseek`, `anthropic`, `ollama`, or
+*Custom*), paste one or more keys, click **Add**. Omni detects the provider
+from the key format if you leave the name blank, fetches the model list, and
+picks a sensible default.
+
+### 6.4 The **Files** panel
+
+- **Upload…** or drag-and-drop files anywhere on the chat area to upload them
+  into the workspace.
+- The list shows every file in the workspace with size and a download link.
+- Uploaded files appear in the chat box as `[file in workspace: name.docx]`
+  so you can immediately ask Omni to work on them.
+
+### 6.5 The workspace picker
+
+Click the **workspace chip** in the header. A modal opens showing your whole
+PC:
+
+- **⬆ Up** to go to the parent directory.
+- **Drive buttons** on Windows to jump between `C:\`, `D:\`, etc.
+- Click a folder to enter it.
+- Click **Use this folder** to make it Omni's new root. Relative paths in the
+  agent's tools resolve against this folder; outside-workspace paths still
+  trigger an approval prompt.
+
+### 6.6 Strict mode and auto-approve toggles
+
+- **strict** (on by default) — after a tool-using answer, a second model call
+  checks every factual claim against the tool outputs. Unverified ones are
+  flagged. Costs a small amount of extra tokens per answer. Turn it off for
+  speed, on for accuracy. See [§12](#12-reducing-hallucination-strict-mode).
+- **auto-approve** (off by default) — skips all Allow/Deny dialogs. **Only
+  enable in a workspace you trust.** See [§11](#11-safety-model).
+
+---
+
+## 7. The terminal, in detail
+
+The terminal chat is a REPL. Type a task, get a result. Type `/` commands to
+manage keys and models without leaving the session.
+
+### 7.1 Slash commands
+
+```
+/help                              list every command
+/providers                         one line per pool (model, fallbacks, key health)
+/keys [pool]                       every key with its health
+/add [name] <key> [model] [url]    add a key; name is optional (auto-detected)
+/addkeys <pool> <key> <key> ...    bulk add (or:  /addkeys gemini @keys.txt)
+/key <name> [new_key]              change one key (prompted if omitted)
+/model <model>                     set the model for the primary pool
+/model <pool> <model>              set it for a specific pool
+/models [pool] [filter]            list the models the service offers
+/fallback <pool> m1,m2 | clear     set/try-clear fallback models
+/strategy round_robin|failover     rotation strategy
+/use <pool|key>                    make it primary
+/order a,b,c                       pool priority order
+/remove <key>                      remove one key
+/removepool <pool>                 remove a whole pool
+/test [key|pool|all]               real ping(s)
+/revive                            clear all cooldowns
+/refresh [key|pool|all]            re-fetch model lists
+/keymodel <key> <model>            set the model for ONE key
+/autodetect <key>                  guess the provider from key format
+/reset                             clear chat history
+/exit                              quit
+```
+
+### 7.2 Example session
+
+```
+you> /add AIzaSyABC...your-gemini-key
+added 'gemini-1' to pool 'gemini'. 47 models cached, using gemini-2.5-flash. /test gemini-1 to verify.
+
+you> /test gemini-1
+gemini-1 OK (gemini-2.5-flash): 'pong'
+
+you> Summarise the Python files in my project and write a summary.md
+  → list_dir(path=".", depth=2)
+  → search_files(pattern=".*", glob="*.py")
+  → read_file(path="main.py")
+  → read_file(path="utils.py")
+  → write_file(path="summary.md", content="...")
+Wrote 1234 chars to /home/you/project/summary.md
+Done. I read 4 Python files and wrote summary.md with a short overview of each.
+
+you> /exit
+```
+
+### 7.3 One-shot mode
+
+```
+omni.exe run "In report.docx replace 'Q2' with 'Q3' and save as report_q3.docx"
+```
+
+Runs the task, prints the answer, exits. Useful in scripts, cron jobs, CI.
+Combine with `AGENT_AUTO_APPROVE=1` in `.env` for fully unattended runs —
+see the warning in [§11](#11-safety-model).
+
+### 7.4 Scheduled mode
+
+```
+omni.exe schedule -f workflows/daily_notes_cleanup.md --every 86400
+```
+
+Runs the task file every 86400 seconds (24h). Stays alive until you Ctrl+C.
+For real scheduling, use your OS's task scheduler (Windows Task Scheduler,
+`cron`, `launchd`) and call `omni.exe run -f ...` — that's cleaner than
+keeping a long-lived process.
+
+### 7.5 Task files (workflows)
+
+Anything you'd type can live in a Markdown file. Two examples ship in
+`workflows/`:
+
+- `review_code.md` — "Review the project, write REVIEW.md, don't edit sources."
+- `daily_notes_cleanup.md` — "Fix spelling in `notes/`, append a summary."
+
+Write your own. Reference paths, use imperative verbs, be specific about
+outputs.
+
+---
+
+## 8. How keys, pools, models and failover work
+
+This is the heart of Omni. Understanding it turns a fragile single-key setup
+into a robust multi-provider one.
+
+### 8.1 Pools
+
+A **pool** is a group of keys for the same service. Keys named `gemini-1`,
+`gemini-2`, ..., `gemini-37` all belong to pool `gemini`. A key with no
+number (`openrouter`) is its own pool.
+
+Pools have a **priority order** (set with ▲▼ in the UI or `/order`). The first
+pool is *primary*; the others are used only when the primary can't serve the
+request.
+
+### 8.2 The request chain
+
+For every request, Omni tries, in order:
+
+```
+for each pool (primary first):
+    for each model in [chosen model, fallback models…]:
+        for each usable key in the pool:
+            try the request
+              success → return
+              failure → classify, cooldown the right thing, continue
+```
+
+Meaning: your first 30 Gemini keys are tried round-robin; if they all hit a
+`gemini-2.5-pro` daily quota, Omni moves to `gemini-2.5-flash-lite` on the
+same keys; if Gemini is down entirely, it moves to OpenRouter.
+
+### 8.3 Strategies
+
+- **`round_robin`** — spread calls evenly across all healthy keys. Best for
+  free-tier stacks where you want to use every key's quota equally.
+- **`failover`** — always start with the first key; use the next only when the
+  first fails. Best when you have one paid key and several backups.
+
+### 8.4 What gets cooled down (and for how long)
+
+| Response | Meaning | Scope | Cooldown |
+|---|---|---|---|
+| 429 (per minute) | key is too fast | this key + this model | `retryDelay` from the body (min 10 s) |
+| 429 (per day) | daily quota used | this key + this model | until midnight Pacific (Google's reset) |
+| 401 or `API_KEY_INVALID` | dead key | the key, all models | 6 h, shown as **INVALID KEY** |
+| 402 / billing | no credits | the key, all models | 1 h |
+| 404 / model not found | wrong model for the service | the pool + this model | 10 min (**whole pool skipped at once**, so 20 keys ≠ 20 wasted calls) |
+| 5xx / network | service problem | the pool + this model | 15–20 s |
+| Other 400 | bad request (your fault) | nothing | **0** — the error is shown, keys untouched |
+
+If every key is only briefly rate-limited, Omni **waits** (up to
+`AGENT_MAX_WAIT`, default 90 s) for the first one to free up instead of
+failing. Cooldowns are saved in `data/state.json`, so a daily quota hit is
+remembered after a restart.
+
+### 8.5 Auto-detection of providers
+
+When you paste a key, Omni matches it against known patterns:
+
+| Pattern | Detected as |
+|---|---|
+| `AIza...` | gemini |
+| `sk-or-v1-...` | openrouter |
+| `sk-ant-...` | anthropic |
+| `sk-proj-...` or `sk-...` | openai |
+| `gsk_...` | groq |
+| `sk-` + 32 hex | deepseek |
+
+If nothing matches, the key goes into a pool called `custom`. You can always
+override by naming the pool explicitly: `/add mypool KEY`.
+
+### 8.6 Model discovery
+
+Every key is asked for its `/models` endpoint when added. The results are
+cached on the key and shown in the UI's per-key dropdown. Click **↻ Refresh
+all model lists** if a provider adds models. The pool's default model (top of
+the card) applies to any key without an override.
+
+---
+
+## 9. Building the standalone .exe
+
+This section is for the person producing the `.exe` — the end user never
+touches it.
+
+### 9.1 Prerequisites (build machine only)
+
+- **Python 3.9+** — https://python.org/downloads (tick "Add to PATH" on Windows).
+- **A C compiler:**
+  - **Windows:** [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022), tick **"Desktop development with C++"**. Reboot after.
+  - **macOS:** `xcode-select --install`
+  - **Linux:** `sudo apt install build-essential`
+- **Nuitka and its helpers:**
+  ```
+  python -m pip install nuitka ordered-set zstandard
+  ```
+
+Verify the compiler is reachable:
+- Windows: open the **"x64 Native Tools Command Prompt for VS 2022"** from the
+  Start menu, run `where cl` — you should see a path.
+- macOS/Linux: `which gcc` or `which clang`.
+
+### 9.2 Build
+
+```
+# From the project root, in the venv
+install.bat               (Windows)   or   ./install.sh   (macOS/Linux)
+build.bat                 (Windows)   or   python build.py (all platforms)
+```
+
+**Two output modes:**
+
+- **Default (recommended)** — `python build.py` → a **folder** at
+  `dist/omni.dist/` containing `omni.exe` and all its dependencies. **Fast
+  startup** (<1 s). Ship the whole folder as a zip.
+- **Single file** — `python build.py --onefile` → a single `dist/omni.exe`.
+  Slower startup (3–8 s, it unpacks to a temp dir on every launch). Ship
+  just that file.
+
+Both are fully self-contained — the end user does **not** need Python.
+
+**Clean rebuild** if something gets stuck:
+
+```
+python build.py --clean
+python build.py
+```
+
+The first build takes 5–10 minutes (Nuitka compiles every module to C). Later
+builds are 2–3 minutes.
+
+### 9.3 What's inside the build
+
+- All of `agent/` (agent code, tools, web UI).
+- `agent/web/index.html` (the web UI).
+- `config/`, `workflows/` (data files).
+- `tkinter`, `tkinter.ttk`, `_tkinter` (for the launcher GUI).
+- `docx`, `openpyxl`, `pptx`, `lxml` (for Office files).
+- `tzdata` (for the Pacific-midnight quota reset logic on Windows).
+
+### 9.4 Testing the build
+
+1. Move `dist/omni.dist/` (or `dist/omni.exe`) to a **machine without Python**.
+2. Double-click `omni.exe` → launcher window should appear.
+3. Click **Web UI** → browser opens.
+4. Add a key, chat.
+5. Click **Terminal chat** → a new terminal window opens with the REPL.
+6. Close both.
+
+If all six steps work on a clean machine, the build is good.
+
+### 9.5 Windows SmartScreen warning
+
+Unsigned `.exe` files trigger SmartScreen. The user sees "Windows protected
+your PC" and has to click **More info → Run anyway**. To avoid this, code-sign
+the exe (needs an EV code-signing certificate, ~$300/year). For personal or
+team use, just explain the warning to your users.
+
+### 9.6 Linux headless build
+
+On a machine without a display, the launcher GUI cannot start. Omni detects
+this and falls back to the terminal REPL automatically. Users can force it
+with `OMNI_NO_GUI=1` or `omni.exe chat`.
+
+---
+
+## 10. Configuration reference (`.env`)
+
+All settings are optional. Copy `.env.example` to `.env` and edit. Omni reads
+it from the project root (source) or the folder next to the exe (frozen).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_BASE_URL` | `http://localhost:20128/v1` | Fallback gateway URL if you don't add keys through the UI |
+| `AGENT_API_KEY` | *(empty)* | Fallback API key |
+| `AGENT_MODEL` | `auto` | Fallback model |
+| `AGENT_WORKSPACE` | *(your home)* | Folder relative paths resolve against. Empty = home folder |
+| `AGENT_ALLOW_OUTSIDE` | `1` | `1` = allow read/write anywhere on the PC (still asks for approval) |
+| `AGENT_AUTO_APPROVE` | `0` | `1` = skip all prompts. **Dangerous.** See §11 |
+| `AGENT_STRICT` | `1` | `1` = verify factual claims in answers (see §12) |
+| `AGENT_MAX_TURNS` | `60` | Max tool-call rounds per task |
+| `AGENT_TEMPERATURE` | `0.2` | Model temperature. Lower = less creative, more factual |
+| `AGENT_TIMEOUT` | `180` | Seconds per HTTP call to the LLM |
+| `AGENT_STRATEGY` | `round_robin` | `round_robin` or `failover` |
+| `AGENT_MAX_WAIT` | `90` | Seconds to wait for a rate-limited key before giving up |
+| `AGENT_UI_TOKEN` | *(random)* | Fixed token for the web UI link. Useful for bookmarks |
+| `OMNI_NO_GUI` | *(unset)* | `1` = skip the launcher and go straight to the terminal |
+
+Keys live in `data/providers.json`, not in `.env`. Add them via the UI or the
+CLI. Treat the whole `data/` folder as a secret.
+
+---
+
+## 11. Safety model
+
+Omni can run shell commands and write files **as your user account**. That is
+a real capability with real risks. Here's exactly how the safety layers work.
+
+### 11.1 Layers
+
+1. **Path resolution** (`agent/safety.py`) — relative paths are anchored at
+   the workspace (default: your home folder). Absolute paths anywhere on the
+   PC are allowed, but trigger a confirmation prompt unless auto-approve is on.
+2. **Approval prompts** — any shell command, and any write *outside* the
+   workspace, asks for Allow / Deny. In the terminal, it's a `y/N` prompt. In
+   the web UI, it's a modal.
+3. **Shell blocklist** — a small set of catastrophic patterns is refused
+   outright regardless of approval: `rm -rf /`, `mkfs`, fork bombs,
+   `dd if=...of=/dev/...`.
+4. **Web UI hardening** — binds to `127.0.0.1` only, requires a per-start
+   token, checks the `Host` header (blocks DNS rebinding), and never sends API
+   keys to the browser (only masked tails like `sk-...abc`).
+
+### 11.2 Auto-approve — read this before enabling
+
+`AGENT_AUTO_APPROVE=1` (or the UI toggle) **disables every confirmation
+prompt**. The agent can then:
+
+- Run any shell command, including `rm -rf ~/Documents`.
+- Write to any file on your PC.
+- Delete files via shell.
+
+**Only enable it if** you are (a) in a sandbox or VM, (b) in a throwaway
+workspace you can delete and recreate, or (c) genuinely comfortable with an
+LLM acting autonomously as your user.
+
+A middle ground: leave auto-approve off, but run `omni.exe ui` and click
+**Allow** on the prompts. It's one click per dangerous action.
+
+### 11.3 `--host 0.0.0.0`
+
+By default the UI listens only on `127.0.0.1`. Setting `--host 0.0.0.0` makes
+it reachable from your LAN. **Anyone with the link can run commands as you.**
+Only do this behind a VPN, or on a network you fully trust, and preferably
+with `AGENT_UI_TOKEN` set to a long random string.
+
+### 11.4 Where keys are stored
+
+`data/providers.json`, plain text, `chmod 600` on Unix. Back it up carefully
+or not at all. The `.gitignore` excludes it.
+
+---
+
+## 12. Reducing hallucination (strict mode)
+
+No prompt can eliminate hallucination — that's a property of the model, not
+the harness. But Omni gives you two concrete levers.
+
+### 12.1 Tool-grounding (always on)
+
+The system prompt forbids the model from asserting facts about your machine
+without calling a tool first. If it says "your project has 42 Python files",
+it should have called `search_files` to find out. If it can't verify something,
+it's told to say so explicitly.
+
+This works well for **file and command questions**. It doesn't help with
+general knowledge the model invents ("the capital of Australia is Sydney").
+
+### 12.2 Strict mode (on by default)
+
+After any tool-using answer longer than a sentence, Omni makes a **second**
+model call: a fact-checker that sees the whole conversation and the draft
+answer, and marks each factual claim about your files/system as verified or
+unverified.
+
+- Verified = there's a tool call in the conversation whose output supports it.
+- Unverified = the model asserted it without checking.
+
+Unverified claims appear as an amber **⚠ Unverified claim(s)** banner under
+the answer. The answer still shows; you just get the warning.
+
+Costs: one extra LLM call per tool-using answer (roughly +20% tokens on
+average). Turn it off in the header toggle if you're optimizing cost or speed.
+
+### 12.3 Practical tips
+
+- **Use a strong model.** `claude-sonnet-4.5`, `gemini-2.5-pro`, `gpt-4o`
+  hallucinate far less than small free models.
+- **Keep temperature low.** Omni defaults to 0.2; don't raise it for factual work.
+- **Ask narrow questions.** "How many functions are in `utils.py`?" is more
+  verifiable than "explain my codebase".
+- **Check the ⚠ banner.** If it fires, the answer probably needs a follow-up.
+- **Never trust the model on external facts.** If it answers a knowledge
+  question (not a file/tool question), verify it independently.
+
+---
+
+## 13. Extending Omni — adding your own tools
+
+Adding a tool takes two steps.
+
+### 13.1 Define it
+
+Create or edit a file under `agent/tools/` (see `files.py` for examples):
+
+```python
+from .registry import tool
+
+@tool(
+    "word_count",
+    "Count words in a text file.",
+    {"path": {"type": "string"}},
+    ["path"],
+)
+def word_count(cfg, path):
+    from ..safety import resolve
+    p = resolve(cfg, path)
+    return str(len(p.read_text().split()))
+```
+
+The decorator registers the tool. The function receives `cfg` plus the JSON
+arguments the model provides. Return a string.
+
+### 13.2 Import it
+
+Add your module to `agent/tools/__init__.py`:
+
+```python
+from . import files, shell, web, memory, office, your_module  # noqa: F401
+```
+
+That's it. The model sees the new tool in the next request automatically.
+
+### 13.3 Good tool design
+
+- **Name it clearly.** `word_count` not `wc2`. The model picks tools by name.
+- **Describe it in one sentence.** What it does, what it returns, when to use it.
+- **Use typed arguments.** `{"type": "string"}`, `{"type": "integer"}`,
+  `{"type": "boolean"}`.
+- **Return plain text.** The model reads it; keep it short unless output is the point.
+- **Raise on error.** The registry catches exceptions and returns them as
+  `ERROR: ...` — the model sees the error and can fix its call.
+
+---
+
+## 14. Running the tests
+
+Three offline test suites ship with Omni. They spin up mock LLM servers and
+never touch your real `data/` folder or make real API calls.
+
+```
+python tests/test_failover.py     # key rotation, quotas, model fallback, waiting, persistence
 python tests/test_agent.py        # tool loop, workspace guard, approvals
-python tests/test_web.py          # UI server: auth, chat + approvals, key/model endpoints
+python tests/test_web.py          # web server: auth, chat + approvals, key/model endpoints
 ```
 
-## 10. Troubleshooting
-* **"All keys/providers failed"**: the message says why per service (invalid, quota, model name...). Open Keys & models → *Test all*.
-* **Model not available / 404**: click **List...** next to the model and pick one from the list. A ⚠ appears when the model is not in the service's list.
-* **`providers.json` edited by hand on Windows**: Notepad/PowerShell add a BOM. Older versions silently ignored the whole file (all keys "missing"). It is now read correctly and rewritten without the BOM.
-* **No browser opens**: copy the `http://localhost:8765/?token=...` link from the terminal.
+Or all at once:
+
+```
+python -m unittest discover tests
+```
+
+The tests are a good way to see what Omni actually does when a key hits a
+quota, when a model doesn't exist, when the user denies approval, etc. Read
+them if you want to understand edge cases.
+
+---
+
+## 15. Troubleshooting
+
+### "All keys/providers failed"
+
+Read the message carefully — it says **why per service**. Examples:
+
+```
+All keys/providers failed:
+  - gemini / gemini-2.5-flash: 37x quota
+      quota: daily quota is used up - it resets by itself …
+```
+
+Fixes:
+1. Open **Keys & models** → **Test all**.
+2. If a key shows `INVALID KEY`, replace it.
+3. If a pool shows `daily quota used`, add fallback models or more keys from
+   other Google projects.
+4. If a pool shows `model not available`, click **List…** and pick a model
+   that exists.
+
+### "Model not available / 404"
+
+The chosen model doesn't exist for that service. Open **Keys & models**,
+click **List…** next to the pool's model, pick one from the dropdown, click
+**Apply**. A ⚠ appears next to the model box when the current model isn't in
+the service's list.
+
+### The launcher GUI doesn't appear
+
+- **On Windows:** tkinter ships with Python and with the Nuitka build. If the
+  launcher fails, it falls back to the terminal REPL and prints a message.
+- **On headless Linux:** there's no display, so the launcher can't run. Omni
+  detects this and goes straight to the terminal. Force it explicitly with
+  `OMNI_NO_GUI=1` or `omni.exe chat`.
+
+### "Approval required but no terminal available"
+
+You're running `omni run "..."` from a script or service that has no stdin.
+Either:
+- Add `AGENT_AUTO_APPROVE=1` to `.env` (dangerous), or
+- Restrict the task so it doesn't need approval (stay inside the workspace,
+  no shell).
+
+### `providers.json` was edited by hand and now Omni says "no keys"
+
+Old Notepad / PowerShell on Windows write a UTF-8 BOM. Omni reads
+BOM-prefixed JSON correctly, and rewrites the file without the BOM. If your
+version is older, upgrade.
+
+### No browser opens when you run `omni ui`
+
+Copy the printed URL (`http://localhost:8765/?token=...`) manually. If the
+token is stale, restart `omni ui` and use the fresh one.
+
+### The web UI says "not authorised"
+
+The cookie is stale (browser cleared, or the server restarted with a new
+token). Reopen the exact URL printed in the terminal. If you want a stable
+link across restarts, set `AGENT_UI_TOKEN` in `.env`.
+
+### Agent can't find a file
+
+Path resolution: relative paths are anchored at the workspace (default:
+your home folder). If you meant a file elsewhere, use an absolute path or
+click the **workspace chip** in the UI and change the root.
+
+### Every answer triggers a ⚠ strict warning
+
+The verifier is conservative. Two options:
+1. Turn **strict** off in the header for that session.
+2. Use a stronger model — small models often "verify" their own mistakes.
+
+### `omni.exe` is slow to start (single-file build)
+
+That's normal for `--onefile`: it unpacks ~60 MB to a temp folder on every
+launch. Build without `--onefile` for a folder build with fast startup.
+
+### Windows shows "Windows protected your PC"
+
+The exe is unsigned. Click **More info → Run anyway**. See §9.5.
+
+---
+
+## 16. FAQ
+
+**Do I need Python?**
+Only if you're building the exe or running from source. End users of the exe
+need nothing.
+
+**Does it work offline?**
+Only if you use a local model (Ollama / LM Studio). Otherwise the LLM calls
+need internet.
+
+**Where are my files sent?**
+Only to the LLM provider you configured, and only when the model calls a tool
+whose output it needs to see (`read_file` returns file contents, etc.). Nothing
+goes to Omni's authors. Your keys, files, and history stay on your PC.
+
+**Can I use it for work / proprietary code?**
+Yes, but read the provider's privacy policy. Free tiers often train on your
+data. Use a paid tier or a local model for confidential work.
+
+**Can it run code?**
+Yes, via `run_shell`. With approval prompts by default.
+
+**Can it edit Word / Excel / PowerPoint?**
+Yes, with formatting preserved where possible. It edits paragraphs / cells /
+slide text, not styles wholesale.
+
+**Can it browse the web?**
+Yes, via `web_fetch` (HTML stripped to plain text). It's read-only — it
+doesn't drive a browser or click buttons.
+
+**How many keys can I add?**
+No hard limit. People run 30–50 Gemini keys. Round-robin spreads the load.
+
+**Which model should I use?**
+Best quality per dollar: `claude-sonnet-4.5` (Anthropic), `gpt-4o` (OpenAI),
+`gemini-2.5-pro` (Google). Best free: `gemini-2.5-flash` or a Groq Llama.
+
+**Can I run two instances?**
+Yes — they'll use different ports (`8765`, `8766`, ...). Each has its own
+`data/` if you keep them in separate folders.
+
+**Can I run it on a server?**
+Yes, but read §11.3 first. Use `--host 0.0.0.0` only behind a VPN.
+
+**How do I uninstall?**
+Delete the folder. Nothing is installed system-wide except, optionally,
+Nuitka's C toolchain if you built it.
+
+---
+
+## 17. Design notes & limitations (read this)
+
+I want you to have accurate expectations.
+
+### 17.1 What "self-contained" means here
+
+The exe has **no Python dependency**, but it still talks to remote LLM
+services. If your internet is down or your provider is down, Omni can't
+think. That's true of every LLM tool that isn't running a local model.
+
+### 17.2 Hallucination is not solvable
+
+Strict mode **reduces** it and **surfaces** it. It cannot eliminate it. If
+your workflow is high-stakes (legal, medical, financial), verify every
+answer independently. Use strict mode, use a strong model, keep temperature
+low, and treat every factual claim as a draft until confirmed.
+
+### 17.3 Shell access is real
+
+An LLM with shell on your PC can do anything you can. The blocklist catches
+obvious catastrophes; it does not catch subtle ones (`mv ~/Documents /tmp/x`
+is not on the blocklist). Approval prompts are your real safety net. Auto-
+approve is for sandboxes.
+
+### 17.4 The build is unsigned
+
+Nuitka/PyInstaller exes are unsigned by default and trigger SmartScreen.
+Signing costs money. For personal/team use, explain the warning to users.
+
+### 17.5 Onefile startup is slow
+
+Packing 60 MB into one file means unpacking 60 MB to a temp folder every
+launch. Folder builds start in under a second. Prefer the folder build unless
+you specifically need a single file.
+
+### 17.6 Free-tier privacy
+
+Free Gemini / OpenRouter prompts can be used for training. For anything
+confidential: paid tier, or a local model.
+
+### 17.7 Antivirus false positives
+
+Unsigned Nuitka exes sometimes trip heuristics. If it happens, either code-
+sign, or add an exclusion. This is a known issue with any Python-to-exe
+tool.
+
+### 17.8 The core is small on purpose
+
+Roughly 3,500 lines of Python across the entire agent. No framework, no
+abstraction layer, no magic. You can read it in an afternoon and change
+anything. That's a feature.
+
+---
+
+## Credits and license
+
+Omni Agent is a personal project. Use it, modify it, ship it. No warranty,
+no support contract. If it breaks, read the code — it's short.
+
+Built with the Python standard library, Nuitka, and tkinter.
+
+Have fun. Be careful with auto-approve.
