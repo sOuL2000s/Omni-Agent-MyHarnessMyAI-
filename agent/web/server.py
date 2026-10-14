@@ -85,20 +85,21 @@ class Session:
     def render(self):
         """History as UI events."""
         out = []
-        for m in self.history[1:]:
+        for i, m in enumerate(self.history):
+            if i == 0: continue # skip system prompt
             r = m.get("role")
             if r == "user":
-                out.append({"type": "user", "text": m.get("content", "")})
+                out.append({"type": "user", "text": m.get("content", ""), "idx": i})
             elif r == "assistant":
                 calls = m.get("tool_calls") or []
                 if m.get("content"):
-                    out.append({"type": "assistant" if calls else "final", "text": m["content"]})
+                    out.append({"type": "assistant" if calls else "final", "text": m["content"], "idx": i})
                 for c in calls:
                     fn = c.get("function", {})
-                    out.append({"type": "tool", "name": fn.get("name"), "text": fn.get("arguments", ""), "id": c.get("id")})
+                    out.append({"type": "tool", "name": fn.get("name"), "text": fn.get("arguments", ""), "id": c.get("id"), "idx": i})
             elif r == "tool":
                 t = str(m.get("content", ""))
-                out.append({"type": "tool_result", "text": t[:1500], "id": m.get("tool_call_id"), "ok": not t.startswith("ERROR")})
+                out.append({"type": "tool_result", "text": t[:1500], "id": m.get("tool_call_id"), "ok": not t.startswith("ERROR"), "idx": i})
         return out
 
     def stop(self):
@@ -362,6 +363,35 @@ def make_handler(app):
             app.run_chat(s, text)
             self._send(200, {"ok": True, "cursor": len(s.events)})
 
+        def api_chat_retry(self, q):
+            b = self._json_body()
+            s = app.session(b.get("session", ""))
+            if s.busy: return self._err(409, "this chat is still working")
+            idx = -1
+            for i in range(len(s.history)-1, -1, -1):
+                if s.history[i].get("role") == "user":
+                    idx = i
+                    break
+            if idx == -1: return self._err(400, "nothing to retry")
+            text = s.history[idx]["content"]
+            s.history = s.history[:idx]
+            s.save()
+            s.emit("user", text)
+            app.run_chat(s, text)
+            self._send(200, {"ok": True, "cursor": len(s.events)})
+
+        def api_chat_edit(self, q):
+            b = self._json_body()
+            s = app.session(b.get("session", ""))
+            if s.busy: return self._err(409, "this chat is still working")
+            idx, text = b.get("index"), b.get("text")
+            if idx is None or idx >= len(s.history): return self._err(400, "invalid index")
+            s.history = s.history[:idx]
+            s.save()
+            s.emit("user", text)
+            app.run_chat(s, text)
+            self._send(200, {"ok": True, "cursor": len(s.events)})
+
         def api_stop(self, q):
             app.session(self._json_body().get("session", "")).stop()
             self._send(200, {"ok": True})
@@ -391,6 +421,21 @@ def make_handler(app):
             except FileNotFoundError:
                 pass
             self._send(200, {"ok": True})
+
+        def api_message_delete(self, q):
+            b = self._json_body()
+            s = app.session(b.get("session", ""))
+            idx = b.get("index")
+            if idx is not None and 0 <= idx < len(s.history):
+                # If it's a tool call, we might want to delete the result too
+                # but for simplicity let's just delete the one
+                s.history.pop(idx)
+                s.save()
+                # We also need to clear events and re-render or just tell the client to reload
+                # Simplest: client reloads history
+                self._send(200, {"ok": True})
+            else:
+                self._err(400, "invalid index")
 
         def api_upload(self, q):
             name = Path(q.get("name", "upload.bin")).name or "upload.bin"
@@ -432,7 +477,8 @@ def make_handler(app):
 
         def api_keys_add(self, q):
             b = self._json_body()
-            keys = [k for k in re.split(r"[\s,;]+", b.get("keys", "")) if k and not k.startswith("#")]
+            # Intelligent key extraction: handle spaces, commas, semicolons, and quotes
+            keys = [k.strip("'\" ") for k in re.split(r"[\s,;]+", b.get("keys", "")) if k.strip("'\" ") and not k.strip().startswith("#")]
             if not keys:
                 raise ValueError("paste at least one key")
             pool = (b.get("pool") or "").strip()
@@ -500,6 +546,7 @@ def make_handler(app):
             """List any directory on the PC. Used by the folder-picker modal."""
             import string
             path = q.get("path") or str(app.cfg.workspace)
+            search = q.get("search", "").strip()
             p = Path(path).expanduser()
             try:
                 p = p.resolve()
@@ -509,20 +556,38 @@ def make_handler(app):
                 p = p.parent
             if not p.is_dir():
                 p = Path.home()
+            
             entries = []
             try:
-                for c in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-                    if c.name.startswith(".") and q.get("hidden") != "1":
-                        continue
-                    try:
-                        st = c.stat()
-                        entries.append({"name": c.name, "path": str(c),
-                                        "dir": c.is_dir(), "size": st.st_size,
-                                        "mtime": int(st.st_mtime)})
-                    except OSError:
-                        continue
+                if search:
+                    # Recursive search for directories/files matching the pattern
+                    count = 0
+                    for c in p.rglob(f"*{search}*"):
+                        if count >= 200: break
+                        if c.name.startswith(".") and q.get("hidden") != "1":
+                            continue
+                        try:
+                            st = c.stat()
+                            entries.append({"name": str(c.relative_to(p)), "path": str(c),
+                                            "dir": c.is_dir(), "size": st.st_size,
+                                            "mtime": int(st.st_mtime)})
+                            count += 1
+                        except (OSError, ValueError):
+                            continue
+                else:
+                    for c in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                        if c.name.startswith(".") and q.get("hidden") != "1":
+                            continue
+                        try:
+                            st = c.stat()
+                            entries.append({"name": c.name, "path": str(c),
+                                            "dir": c.is_dir(), "size": st.st_size,
+                                            "mtime": int(st.st_mtime)})
+                        except OSError:
+                            continue
             except PermissionError:
                 return self._err(403, "permission denied")
+            
             drives = []
             if os.name == "nt":
                 for d in string.ascii_uppercase:

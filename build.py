@@ -69,6 +69,8 @@ def build(onefile=False):
         "--include-package=pptx",
         "--include-package=lxml",
         "--include-package=tzdata",
+        "--include-package=selenium",
+        "--include-package=webdriver_manager",
         # --- GUI launcher needs tkinter. Nuitka requires the plugin flag for
         #     tkinter to work at runtime; the --include-module lines are not enough.
         "--enable-plugin=tk-inter",

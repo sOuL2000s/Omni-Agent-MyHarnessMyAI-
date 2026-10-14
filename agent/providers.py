@@ -406,10 +406,14 @@ class Manager:
         return ids
 
     def refresh_all_models(self):
+        from . import llm
         out = {}
         for p in list(self.items):
             try:
-                out[p.name] = self.refresh_models(p.name)
+                ids = self.refresh_models(p.name)
+                out[p.name] = ids
+                # Also update the pool-level cache in llm.py
+                llm._MODEL_CACHE[p.pool] = (time.time(), ids)
             except Exception as e:
                 out[p.name] = f"error: {e}"
         return out

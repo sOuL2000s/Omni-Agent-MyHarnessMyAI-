@@ -27,9 +27,15 @@ button.ghost{border-color:transparent;background:transparent}
 button:disabled{opacity:.5;cursor:default}
 input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;min-width:0}
 input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);border-color:var(--accent)}
-#app{display:grid;grid-template-columns:240px minmax(0,1fr) 0;height:100%}
-#app.rightopen{grid-template-columns:240px minmax(0,1fr) 440px}
-aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#app{display:grid;grid-template-columns:240px minmax(0,1fr) 0;height:100%;transition:grid-template-columns .3s ease}
+#app.leftcollapsed{grid-template-columns:0 minmax(0,1fr) 0}
+#app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 400px}
+#app.rightopen{grid-template-columns:240px minmax(0,1fr) 400px}
+aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
+#left-toggle{position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;background:none;opacity:.5;cursor:pointer}
+#left-toggle:hover{opacity:1}
+#expand-left{position:fixed;top:14px;left:10px;z-index:5;display:none}
+#app.leftcollapsed #expand-left{display:block}
 #right{border-right:0;border-left:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:8px;padding:14px 14px 8px;font-weight:700;font-size:16px}
 .brand i{width:22px;height:22px;border-radius:7px;background:var(--accent);display:inline-block;position:relative}
@@ -39,10 +45,11 @@ aside{background:var(--panel);border-right:1px solid var(--line);display:flex;fl
 .sess:hover{background:var(--bg)} .sess.on{background:var(--user);color:var(--ink)}
 .sess span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sess button{opacity:0;padding:0 6px;border:0;background:none;color:var(--muted)} .sess:hover button{opacity:1}
-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+main{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
 header{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
 header .sp{flex:1}
-.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);background:var(--bg);white-space:nowrap;max-width:46vw;overflow:hidden;text-overflow:ellipsis}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);background:var(--bg);white-space:nowrap;max-width:300px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.chip:hover{border-color:var(--accent);color:var(--ink)}
 .chip b{color:var(--ink);font-weight:600}
 label.tog{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
 label.tog.on{color:var(--bad);font-weight:600}
@@ -78,6 +85,16 @@ label.tog.on{color:var(--bad);font-weight:600}
 .box textarea{flex:1;border:0;resize:none;max-height:200px;padding:6px;background:transparent} .box textarea:focus{outline:none}
 .working{font-size:12px;color:var(--muted);height:18px;margin:0 4px 4px}
 .dots:after{content:"";animation:d 1.2s steps(4) infinite} @keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+/* message actions */
+.msg-actions{display:flex;gap:8px;margin-top:4px;opacity:0;transition:opacity .2s}
+.msg:hover .msg-actions{opacity:1}
+.msg.user{flex-direction:column;align-items:flex-end}
+.msg.asst{flex-direction:column;align-items:flex-start}
+.msg-actions button{padding:3px 8px;font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:6px;cursor:pointer;transition:all .2s}
+.msg-actions button:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.copy-code{position:absolute;top:8px;right:8px;padding:2px 6px;font-size:11px;opacity:0;transition:opacity .2s;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--muted)}
+div:hover>.copy-code{opacity:1}
+.copy-code:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 /* right panel */
 .tabs{display:flex;border-bottom:1px solid var(--line)} .tabs button{flex:1;border:0;border-radius:0;background:none;padding:11px;color:var(--muted);border-bottom:2px solid transparent}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
@@ -119,12 +136,14 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
 <body>
 <div id="app">
   <aside id="left">
+    <button id="left-toggle" title="Collapse sidebar">◀</button>
     <div class="brand"><i></i> Omni</div>
     <div style="padding:0 12px 8px"><button class="primary" id="newChat" style="width:100%">+ New chat</button></div>
     <div id="sessions"></div>
   </aside>
 
   <main>
+    <button id="expand-left" class="ghost" title="Expand sidebar">☰</button>
     <header>
       <button class="ghost only-small" id="menuBtn" title="Chats">☰</button>
       <span class="chip" id="wsChip" title="Click to change the agent's workspace (browse your whole PC)"></span>
@@ -210,7 +229,14 @@ function md(src) {
   const root = document.createElement("div");
   const parts = String(src).split(/```/);
   parts.forEach((part, i) => {
-    if (i % 2) { const body = part.replace(/^[^\n]*\n/, ""); root.append(h("pre", {}, h("code", { text: body.replace(/\n$/, "") }))); return; }
+    if (i % 2) {
+      const body = part.replace(/^[^\n]*\n/, "");
+      const code = h("code", { text: body.replace(/\n$/, "") });
+      const pre = h("pre", {}, code);
+      const copyBtn = h("button", { class: "copy-code", text: "Copy", onclick: () => copyText(code.textContent) });
+      root.append(h("div", { style: "position:relative" }, pre, copyBtn));
+      return;
+    }
     let list = null;
     for (const para of part.split(/\n{2,}/)) {
       const lines = para.split("\n");
@@ -246,9 +272,9 @@ function showEmpty() {
 }
 function render(ev) {
   switch (ev.type) {
-    case "user": return add(h("div", { class: "msg user" }, h("div", { class: "bubble", text: ev.text })));
-    case "assistant": return add(h("div", { class: "msg asst mid" }, h("div", { class: "bubble" }, md(ev.text))));
-    case "final": return add(h("div", { class: "msg asst" }, h("div", { class: "bubble" }, md(ev.text))));
+    case "user": return add(h("div", { class: "msg user" }, h("div", { class: "bubble", text: ev.text }), h("div", { class: "msg-actions" }, h("button", { text: "Edit", onclick: (e) => editMsg(e, ev) }), h("button", { text: "Copy", onclick: () => copyText(ev.text) }), h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }))));
+    case "assistant": return add(h("div", { class: "msg asst mid" }, h("div", { class: "bubble" }, md(ev.text)), h("div", { class: "msg-actions" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }), h("button", { text: "Copy", onclick: () => copyText(ev.text) }), h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }))));
+    case "final": return add(h("div", { class: "msg asst" }, h("div", { class: "bubble" }, md(ev.text)), h("div", { class: "msg-actions" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }), h("button", { text: "Copy", onclick: () => copyText(ev.text) }), h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }))));
     case "tool": {
       let args = ev.text || ""; let pretty = args;
       try { const o = JSON.parse(args); pretty = JSON.stringify(o, null, 1); args = Object.entries(o).map(([k, v]) => k + "=" + (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ")).join("  "); } catch (_) {}
@@ -407,7 +433,7 @@ function poolCard(p, idx, open) {
               "Refreshed " + k.name).finally(() => e.target.textContent = "↻"); } }),
       h("button", { text: "test", title: "Send a real tiny request with this key", onclick: ev => { ev.target.textContent = "…"; act(async () => (await api("/api/keys/test", { name: k.name })).results[0], r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120)); } }),
       h("button", { class: "danger", text: "✕", title: "Remove this key", onclick: () => { if (confirm("Remove " + k.name + "?")) act(() => api("/api/keys/remove", { name: k.name }), "Removed"); } })))));
-  const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service - one per line", spellcheck: false });
+  const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service - one per line or comma separated", spellcheck: false });
   return h("div", { class: "card" },
     h("h3", {}, (idx === 0 ? "★ " : "") + p.pool, badge(c.ready + " ready", c.ready ? "g" : "r"), c.cooling ? badge(c.cooling + " cooling", "w") : null, c.invalid ? badge(c.invalid + " invalid", "r") : null,
       h("span", { style: "flex:1" }),
@@ -431,7 +457,7 @@ function poolCard(p, idx, open) {
 function addServiceCard() {
   const preset = h("select", {}, h("option", { value: "", text: "Custom / other…" }), ...S.presets.map(p => h("option", { value: p.name, text: p.name })));
   const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false }), url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)", spellcheck: false }), model = h("input", { placeholder: "model id", spellcheck: false });
-  const keys = h("textarea", { class: "keysbox", placeholder: "API key(s) - one per line", spellcheck: false });
+  const keys = h("textarea", { class: "keysbox", placeholder: "API key(s) - one per line or comma separated", spellcheck: false });
   preset.addEventListener("change", () => { const p = S.presets.find(x => x.name === preset.value); if (p) { name.value = p.name; url.value = p.base_url; model.value = p.model; } });
   return h("div", { class: "card" }, h("h3", { text: "Add a service" }),
     h("div", { class: "row" }, preset, name), h("div", { class: "row" }, url), h("div", { class: "row" }, model), keys,
@@ -457,30 +483,76 @@ async function upload(files) {
   loadFiles();
 }
 
+function copyText(t) { navigator.clipboard.writeText(t); toast("Copied to clipboard"); }
+async function retryMsg(e, ev) {
+  e.stopPropagation();
+  if (busy) return toast("Agent is busy");
+  try {
+    const r = await api("/api/chat/retry", { session: sid });
+    cursor = r.cursor; setBusy(true); poll();
+  } catch (e) { toast(e.message); }
+}
+async function editMsg(e, ev) {
+  e.stopPropagation();
+  if (busy) return toast("Agent is busy");
+  const newText = prompt("Edit message:", ev.text);
+  if (newText === null || newText.trim() === ev.text) return;
+  try {
+    const r = await api("/api/chat/edit", { session: sid, index: ev.idx, text: newText.trim() });
+    cursor = r.cursor; setBusy(true); poll();
+  } catch (e) { toast(e.message); }
+}
+async function deleteMsg(e, ev) {
+  e.stopPropagation();
+  if (!confirm("Delete this message?")) return;
+  try {
+    await api("/api/message/delete", { session: sid, index: ev.idx });
+    loadChat();
+  } catch (e) { toast(e.message); }
+}
+
 /* ---------- full-PC directory browser ---------- */
 function openBrowser(startPath, cb) {
   const overlay = h("div", { id: "browse", style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
   const pathIn = h("input", { value: startPath || "", style: "flex:1" });
+  const filterIn = h("input", { placeholder: "Filter current view...", style: "flex:1" });
+  const searchBtn = h("button", { text: "Deep Search", title: "Search recursively in this folder", onclick: () => go(pathIn.value, filterIn.value) });
   const listing = h("div", { class: "listing" });
   const drivesBox = h("div", { class: "row" });
-  async function go(p) {
+  let allEntries = [];
+
+  function renderEntries() {
+    const f = filterIn.value.toLowerCase();
+    // Only filter locally if we didn't just do a deep search
+    const filtered = allEntries.filter(en => en.name.toLowerCase().includes(f));
+    listing.replaceChildren(...filtered.map(en => h("div", { class: "f",
+      onclick: () => { if (en.dir) go(en.path); } },
+      h("span", { text: en.dir ? "📁" : "📄" }),
+      h("span", { class: "nm", text: en.name }),
+      en.dir ? null : h("span", { class: "small", text: Math.max(1, Math.round(en.size / 1024)) + " KB" }))));
+  }
+
+  filterIn.oninput = renderEntries;
+
+  async function go(p, search = "") {
+    const oldText = searchBtn.textContent;
+    if (search) { searchBtn.textContent = "Searching..."; searchBtn.disabled = true; }
     try {
-      const d = await api(`/api/browse?path=${encodeURIComponent(p || "")}`);
+      const d = await api(`/api/browse?path=${encodeURIComponent(p || "")}${search ? "&search=" + encodeURIComponent(search) : ""}`);
       pathIn.value = d.path;
-      listing.replaceChildren(...d.entries.map(en => h("div", { class: "f",
-        onclick: () => { if (en.dir) go(en.path); } },
-        h("span", { text: en.dir ? "📁" : "📄" }),
-        h("span", { class: "nm", text: en.name }),
-        en.dir ? null : h("span", { class: "small", text: Math.max(1, Math.round(en.size / 1024)) + " KB" }))));
+      allEntries = d.entries;
+      renderEntries();
       drivesBox.replaceChildren(...(d.drives || []).map(dr =>
         h("button", { text: dr, onclick: () => go(dr) })));
     } catch (e) { toast(e.message); }
+    finally { searchBtn.textContent = oldText; searchBtn.disabled = false; }
   }
   const dlg = h("div", { class: "dlg", style: "background:var(--panel);border-radius:14px;border:1px solid var(--line);padding:18px;width:100%;max-width:760px;box-shadow:var(--shadow)" },
     h("h3", { style: "margin:0 0 8px", text: "Browse your PC" }),
     h("div", { class: "row" }, h("button", { text: "⬆ Up",
       onclick: () => go((pathIn.value || "").replace(/[\\/][^\\/]*$/, "") || "/") }), pathIn,
       h("button", { text: "Go", onclick: () => go(pathIn.value) })),
+    h("div", { class: "row", style: "margin-top:8px" }, filterIn, searchBtn),
     drivesBox, listing,
     h("div", { class: "row", style: "justify-content:flex-end;margin-top:12px" },
       h("button", { text: "Cancel", onclick: () => overlay.remove() }),
@@ -497,6 +569,8 @@ $("#send").onclick = send; $("#stop").onclick = () => api("/api/stop", { session
 $("#inp").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 $("#inp").addEventListener("input", autoGrow);
 $("#newChat").onclick = newChat; $("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
+$("#left-toggle").onclick = () => $("#app").classList.add("leftcollapsed");
+$("#expand-left").onclick = () => $("#app").classList.remove("leftcollapsed");
 $("#allow").onclick = () => answer(true); $("#deny").onclick = () => answer(false);
 $("#autoBox").onchange = async e => { if (e.target.checked && !confirm("Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust. Turn on?")) { e.target.checked = false; return; } const d = await api("/api/auto", { session: sid, on: e.target.checked }); $("#autoTog").classList.toggle("on", d.auto); };
 $("#strictBox").onchange = async e => { const d = await api("/api/strict", { on: e.target.checked }); $("#strictTog").classList.toggle("on", d.strict); toast("Strict mode " + (d.strict ? "ON" : "OFF")); };
