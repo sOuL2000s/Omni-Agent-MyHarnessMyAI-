@@ -69,7 +69,9 @@ def build(onefile=False):
         "--include-package=pptx",
         "--include-package=lxml",
         "--include-package=tzdata",
-        # --- GUI launcher needs tkinter; bundle it explicitly so Nuitka doesn't skip it
+        # --- GUI launcher needs tkinter. Nuitka requires the plugin flag for
+        #     tkinter to work at runtime; the --include-module lines are not enough.
+        "--enable-plugin=tk-inter",
         "--include-module=tkinter",
         "--include-module=tkinter.ttk",
         "--include-module=tkinter.font",
@@ -102,6 +104,22 @@ def build(onefile=False):
     print("\nNuitka command:\n  " + " ".join(cmd) + "\n")
     print("Building (this takes a few minutes)…\n")
     subprocess.check_call(cmd, cwd=ROOT)
+
+    # Nuitka names the .dist folder after the entry script (omni_entry.py).
+    # Rename both the folder and the exe inside it to something clean.
+    if not onefile:
+        old_dir = ROOT / "dist" / "omni_entry.dist"
+        new_dir = ROOT / "dist" / "omni.dist"
+        if old_dir.exists() and not new_dir.exists():
+            old_dir.rename(new_dir)
+        for old_exe in ("omni_entry.exe", "omni.exe"):
+            src = new_dir / old_exe
+            dst = new_dir / "omni.exe" if os.name == "nt" else new_dir / "omni"
+            if src.exists() and src != dst:
+                if dst.exists():
+                    dst.unlink()
+                src.rename(dst)
+                break
 
     if onefile:
         exe = ROOT / "dist" / ("omni.exe" if os.name == "nt" else "omni")
