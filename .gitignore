@@ -9,3 +9,36 @@ data/sessions/
 data/*.corrupt-*
 data/*.tmp
 settings.json
+
+# Build artifacts — do NOT commit these
+dist/
+*.dist/
+*.build/
+*.onefile-build/
+omni.build/
+omni.dist/
+omni.onefile-build/
+*.exe
+*.pyd
+*.dll
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Runtime data (already there, keep it)
+data/providers.json
+data/state.json
+data/memory.jsonl
+data/sessions/
+data/*.corrupt-*
+data/*.tmp
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
