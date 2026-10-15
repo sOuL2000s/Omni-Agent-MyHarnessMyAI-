@@ -355,13 +355,27 @@ function setBusy(b, reset = true) {
 function render(ev) {
   switch (ev.type) {
     case "user": return add(h("div", { class: "msg user" },
-      h("div", { class: "bubble", text: ev.text })));
+      h("div", { class: "bubble", text: ev.text }),
+      h("div", { class: "msg-actions" },
+        ev.idx !== undefined ? h("button", { text: "Edit",
+          onclick: (e) => editMsg(e, ev) }) : null,
+        h("button", { text: "Copy", onclick: () => copyText(ev.text) }),
+        ev.idx !== undefined ? h("button", { text: "Delete",
+          onclick: (e) => deleteMsg(e, ev) }) : null)));
+
     case "assistant": return add(h("div", { class: "msg asst mid" },
-      h("div", { class: "bubble" }, md(ev.text))));
+      h("div", { class: "bubble" }, md(ev.text)),
+      h("div", { class: "msg-actions" },
+        h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }),
+        h("button", { text: "Copy", onclick: () => copyText(ev.text) }))));
+
     case "final": return add(h("div", { class: "msg asst" },
       h("div", { class: "bubble" }, md(ev.text)),
       h("div", { class: "msg-actions" },
-        h("button", { text: "Copy", onclick: () => copyText(ev.text) }))));
+        h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }),
+        h("button", { text: "Copy", onclick: () => copyText(ev.text) }),
+        ev.idx !== undefined ? h("button", { text: "Delete",
+          onclick: (e) => deleteMsg(e, ev) }) : null)));
     case "tool": {
       let args = ev.text || "", pretty = args;
       try {
