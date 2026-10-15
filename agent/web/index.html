@@ -352,30 +352,42 @@ function setBusy(b, reset = true) {
   renderStatus();
 }
 
+/* Build the actions row for any message. Always shows Copy; Retry on
+   assistant/final; Edit and Delete on user/final when we know the index. */
+function actionsFor(kind, ev) {
+  const kids = [];
+  if (kind === "user") {
+    if (typeof ev.idx === "number")
+      kids.push(h("button", { text: "Edit", onclick: (e) => editMsg(e, ev) }));
+    kids.push(h("button", { text: "Copy", onclick: () => copyText(ev.text) }));
+    if (typeof ev.idx === "number")
+      kids.push(h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }));
+  } else if (kind === "assistant") {
+    kids.push(h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }));
+    kids.push(h("button", { text: "Copy", onclick: () => copyText(ev.text) }));
+  } else if (kind === "final") {
+    kids.push(h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }));
+    kids.push(h("button", { text: "Copy", onclick: () => copyText(ev.text) }));
+    if (typeof ev.idx === "number")
+      kids.push(h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }));
+  }
+  return h("div", { class: "msg-actions" }, ...kids);
+}
+
 function render(ev) {
   switch (ev.type) {
     case "user": return add(h("div", { class: "msg user" },
       h("div", { class: "bubble", text: ev.text }),
-      h("div", { class: "msg-actions" },
-        ev.idx !== undefined ? h("button", { text: "Edit",
-          onclick: (e) => editMsg(e, ev) }) : null,
-        h("button", { text: "Copy", onclick: () => copyText(ev.text) }),
-        ev.idx !== undefined ? h("button", { text: "Delete",
-          onclick: (e) => deleteMsg(e, ev) }) : null)));
+      actionsFor("user", ev)));
 
     case "assistant": return add(h("div", { class: "msg asst mid" },
       h("div", { class: "bubble" }, md(ev.text)),
-      h("div", { class: "msg-actions" },
-        h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }),
-        h("button", { text: "Copy", onclick: () => copyText(ev.text) }))));
+      actionsFor("assistant", ev)));
 
     case "final": return add(h("div", { class: "msg asst" },
       h("div", { class: "bubble" }, md(ev.text)),
-      h("div", { class: "msg-actions" },
-        h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }),
-        h("button", { text: "Copy", onclick: () => copyText(ev.text) }),
-        ev.idx !== undefined ? h("button", { text: "Delete",
-          onclick: (e) => deleteMsg(e, ev) }) : null)));
+      actionsFor("final", ev)));
+
     case "tool": {
       let args = ev.text || "", pretty = args;
       try {
@@ -441,7 +453,13 @@ async function poll() {
         if (ev.type === "user") continue;
         if (ev.type === "done") done = true; else render(ev);
       }
-      if (done || (!d.busy && !d.events.length)) { setBusy(false); refreshKeys(); loadSessions(); break; }
+      if (done || (!d.busy && !d.events.length)) {
+        setBusy(false); refreshKeys(); loadSessions();
+        // Re-hydrate from history so every message carries a stable `idx`
+        // and the full action row (Edit/Delete/Retry/Copy) is present.
+        loadChat();
+        break;
+      }
     }
   } finally { polling = false; }
 }
@@ -450,7 +468,10 @@ async function send() {
   const t = $("#inp").value.trim(); if (!t || busy) return;
   try {
     const r = await api("/api/chat", { session: sid, text: t });
-    render({ type: "user", text: t }); $("#inp").value = ""; autoGrow();
+    // Render the user bubble optimistically. It will be re-rendered from
+    // history when the run finishes, so it will gain Edit/Delete then.
+    render({ type: "user", text: t });
+    $("#inp").value = ""; autoGrow();
     cursor = r.cursor;
     statusState = { title: "Sending…" };
     setBusy(true, false);
@@ -539,23 +560,81 @@ function entrable(input, action) {
 }
 
 let S = null, modelCache = {};
-function badge(txt, cls) { return h("span", { class: "badge " + (cls || ""), text: txt }); }
-function fmtTime(s) {
-  return s >= 3600 ? Math.round(s / 3600) + "h"
-    : s >= 60 ? Math.round(s / 60) + "m" : s + "s";
-}
-async function act(fn, okMsg) {
+
+/* Key panel: mutate the DOM locally instead of rebuilding the whole pane
+   on every action. Only a full refresh when the shape of the panel changes
+   (add keys, remove key, add service, remove pool, model list refresh). */
+async function act(fn, okMsg, opts = {}) {
   try {
     const r = await fn();
     if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg);
-    await refreshKeys(true);
+    if (opts.refresh) {
+      await refreshKeys(true, opts.keepFocus !== false);
+    } else {
+      // Cheap background refresh: update S but only re-render if the
+      // shape of the data changed. We detect that by comparing pool names
+      // and key names; if they match, we just patch health/status in place.
+      const prev = S;
+      try { S = await api("/api/state"); } catch (_) { return r; }
+      if (opts.patch === false || !sameShape(prev, S)) renderKeys();
+      else patchKeysInPlace();
+    }
     return r;
   } catch (e) { toast(e.message, 6000); }
 }
-
-async function refreshKeys(force) {
+function sameShape(a, b) {
+  if (!a || !b) return false;
+  if (a.pools.length !== b.pools.length) return false;
+  for (let i = 0; i < a.pools.length; i++) {
+    const pa = a.pools[i], pb = b.pools[i];
+    if (pa.pool !== pb.pool) return false;
+    if (pa.keys.length !== pb.keys.length) return false;
+    for (let j = 0; j < pa.keys.length; j++) {
+      if (pa.keys[j].name !== pb.keys[j].name) return false;
+    }
+  }
+  return true;
+}
+function patchKeysInPlace() {
+  // Update the "ready / cooling / invalid" badges, the info line, and the
+  // status dot for each key, without touching the DOM structure.
   const pane = $("#pane-keys");
-  if (!force && pane.contains(document.activeElement) &&
+  if (!pane) return;
+  S.pools.forEach((p, i) => {
+    const card = pane.querySelectorAll(".card")[i + 2];   // skip rotation + models cards
+    if (!card) return;
+    const badges = card.querySelectorAll(".badge");
+    // The three badges are: ready, cooling (optional), invalid (optional).
+    // Rebuild their text in place if present, else leave the structure alone.
+    const counts = p.counts;
+    const have = [...badges].map(b => b.textContent);
+    const want = [];
+    want.push(counts.ready + " ready");
+    if (counts.cooling) want.push(counts.cooling + " cooling");
+    if (counts.invalid) want.push(counts.invalid + " invalid");
+    for (let k = 0; k < Math.min(have.length, want.length); k++) {
+      if (have[k] !== want[k]) badges[k].textContent = want[k];
+    }
+    // Key rows: patch dot class and info text
+    const rows = card.querySelectorAll(".keys .k");
+    p.keys.forEach((k, j) => {
+      const row = rows[j]; if (!row) return;
+      const dot = row.querySelector(".dot");
+      if (dot) dot.className = "dot " + k.status;
+      const info = row.querySelector(".info");
+      if (info) {
+        info.textContent = k.status === "ready"
+          ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
+          : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}`;
+        info.title = k.reason || k.last_error || "";
+      }
+    });
+  });
+}
+
+async function refreshKeys(force, keepFocus = true) {
+  const pane = $("#pane-keys");
+  if (!force && keepFocus && pane.contains(document.activeElement) &&
       /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   try { S = await api("/api/state"); } catch (e) { return; }
   $("#wsChip").replaceChildren("workspace: ", h("b", { text: S.workspace }));
@@ -565,7 +644,10 @@ async function refreshKeys(force) {
 function renderKeys() {
   const pane = $("#pane-keys");
   const openKeys = new Set([...pane.querySelectorAll("details.kl[open]")].map(d => d.dataset.pool));
-  const scroll = pane.scrollTop; pane.replaceChildren();
+  const savedScroll = pane.scrollTop;
+  const focusedName = document.activeElement && document.activeElement.dataset
+    ? document.activeElement.dataset.focusKey : null;
+  pane.replaceChildren();
   if (S.load_error) pane.append(h("div", { class: "note err", text: S.load_error }));
 
   pane.append(h("div", { class: "card" },
@@ -586,14 +668,22 @@ function renderKeys() {
         onclick: e => {
           const t = e.target; t.textContent = "fetching…"; t.disabled = true;
           act(() => api("/api/refresh_all", {}),
-              r => `Refreshed ${Object.keys(r.refreshed).length} keys`)
+              r => `Refreshed ${Object.keys(r.refreshed).length} keys`,
+              { refresh: true })
             .finally(() => { t.textContent = "↻ Refresh all model lists"; t.disabled = false; });
         } }),
       h("span", { class: "small", text: "Each key's available models are fetched from its provider and shown in the dropdown next to it." }))));
 
   S.pools.forEach((p, i) => pane.append(poolCard(p, i, openKeys.has(p.pool))));
   pane.append(addServiceCard());
-  pane.scrollTop = scroll;
+  // Defer scroll restore so the browser has laid out the new content first.
+  requestAnimationFrame(() => { pane.scrollTop = savedScroll; });
+}
+
+function badge(txt, cls) { return h("span", { class: "badge " + (cls || ""), text: txt }); }
+function fmtTime(s) {
+  return s >= 3600 ? Math.round(s / 3600) + "h"
+    : s >= 60 ? Math.round(s / 60) + "m" : s + "s";
 }
 
 function poolCard(p, idx, open) {
@@ -647,7 +737,7 @@ function poolCard(p, idx, open) {
       (() => {
         const sel = h("select", { title: "Model for this key",
           onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }),
-                             "Model set for " + k.name) });
+                             "Model set for " + k.name, { patch: true }) });
         const cached = (k.models && k.models.length) ? k.models : (k.model ? [k.model] : []);
         sel.replaceChildren(...(cached.length
           ? cached.map(m => h("option", { value: m, text: m, selected: m === k.model }))
@@ -666,19 +756,22 @@ function poolCard(p, idx, open) {
         onclick: e => {
           e.target.textContent = "…";
           act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`),
-              "Refreshed " + k.name).finally(() => e.target.textContent = "↻");
+              "Refreshed " + k.name, { patch: true })
+            .finally(() => e.target.textContent = "↻");
         } }),
       h("button", { text: "test", title: "Send a real tiny request with this key",
         onclick: ev => {
           ev.target.textContent = "…";
           act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
-              r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120))
+              r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120),
+              { patch: true })
             .finally(() => ev.target.textContent = "test");
         } }),
       h("button", { class: "danger", text: "✕", title: "Remove this key",
         onclick: () => {
           if (confirm("Remove " + k.name + "?"))
-            act(() => api("/api/keys/remove", { name: k.name }), "Removed");
+            act(() => api("/api/keys/remove", { name: k.name }), "Removed",
+                { refresh: true });
         } })))));
 
   const addBox = h("textarea", { class: "keysbox",
@@ -687,7 +780,8 @@ function poolCard(p, idx, open) {
   const addKeysBtn = h("button", { text: "Add keys to " + p.pool,
     onclick: () => addBox.value.trim() && act(
       () => api("/api/keys/add", { pool: p.pool, keys: addBox.value }),
-      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
+      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : ""),
+      { refresh: true }) });
   addBox.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addKeysBtn.click(); }
   });
@@ -704,13 +798,13 @@ function poolCard(p, idx, open) {
           const n = S.pools.map(x => x.pool);
           [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
           return api("/api/pool/order", { names: n });
-        }) }),
+        }, null, { refresh: true }) }),
       h("button", { class: "ghost", title: "Lower priority", text: "▼", disabled: idx === S.pools.length - 1,
         onclick: () => act(() => {
           const n = S.pools.map(x => x.pool);
           [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]];
           return api("/api/pool/order", { names: n });
-        }) })),
+        }, null, { refresh: true }) })),
     h("div", { class: "small", text: p.base_url }),
     h("div", { class: "row" },
       h("b", { text: "Model", style: "width:70px" }), mIn,
@@ -727,22 +821,26 @@ function poolCard(p, idx, open) {
       h("button", { text: "Test one", onclick: e => {
         e.target.textContent = "testing…";
         act(async () => (await api("/api/keys/test", { name: p.keys[0].name })).results,
-            rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140))
+            rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140),
+            { patch: true })
           .finally(() => e.target.textContent = "Test one");
       } }),
       p.keys.length > 1 ? h("button", { text: "Test all " + p.keys.length,
         onclick: e => {
           e.target.textContent = "testing…";
           act(async () => (await api("/api/keys/test", { pool: p.pool })).results,
-              rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work")
+              rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work",
+              { patch: true })
             .finally(() => e.target.textContent = "Test all " + p.keys.length);
         } }) : null,
       h("button", { text: "Reset cooldowns",
-        onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }), "Cooldowns cleared") }),
+        onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }),
+                            "Cooldowns cleared", { patch: true }) }),
       h("button", { class: "danger", text: "Remove service",
         onclick: () => {
           if (confirm("Remove " + p.pool + " and all its " + p.keys.length + " keys?"))
-            act(() => api("/api/pool/remove", { pool: p.pool }), "Removed");
+            act(() => api("/api/pool/remove", { pool: p.pool }), "Removed",
+                { refresh: true });
         } })),
     keysList,
     h("div", { class: "row" }, addBox),
@@ -765,7 +863,8 @@ function addServiceCard() {
   const addBtn = h("button", { class: "primary", text: "Add",
     onclick: () => act(() => api("/api/keys/add",
       { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }),
-      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
+      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : ""),
+      { refresh: true }) });
   [name, url, model].forEach(el => entrable(el, () => addBtn.click()));
   keys.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); }
@@ -802,11 +901,12 @@ function renderMcp() {
           badge(m.tools + " tools", m.ready ? "g" : "r"),
           m.error ? h("span", { class: "small", text: m.error }) : null,
           h("button", { text: "Restart",
-            onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => r.result) }),
+            onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => r.result, { refresh: true }) }),
           h("button", { text: "Stop",
-            onclick: () => act(() => api("/api/mcp/stop", { name: m.name }), "Stopped") }),
+            onclick: () => act(() => api("/api/mcp/stop", { name: m.name }), "Stopped", { refresh: true }) }),
           h("button", { class: "primary", text: "Start",
-            onclick: () => act(() => api("/api/mcp/start", { name: m.name }), r => `${m.name}: ${r.tools} tools`) })),
+            onclick: () => act(() => api("/api/mcp/start", { name: m.name }),
+                                r => `${m.name}: ${r.tools} tools`, { refresh: true }) })),
         h("div", { class: "small", text: m.command })));
     }
   }
@@ -816,7 +916,7 @@ function renderMcp() {
   const addBtn = h("button", { class: "primary", text: "Add & connect",
     onclick: () => act(() => api("/api/mcp/add", { name: name.value, command: cmd.value,
       args: args.value.split(/\s+/).filter(Boolean) }),
-      r => `Connected: ${r.tools} tools`) });
+      r => `Connected: ${r.tools} tools`, { refresh: true }) });
   [name, cmd, args].forEach(el => entrable(el, () => addBtn.click()));
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Add an MCP server" }),
@@ -1060,10 +1160,11 @@ $("#keysBtn").onclick = () =>
 $("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
 document.querySelectorAll(".tabs [data-tab]").forEach(b =>
   b.onclick = () => openRight(b.dataset.tab));
-setInterval(() => {
-  if ($("#app").classList.contains("rightopen") &&
-      $("#pane-keys").classList.contains("on")) refreshKeys();
-}, 5000);
+
+/* NOTE: the 5-second auto-refresh of the keys panel has been removed.
+   It was rebuilding the pane mid-interaction and clobbering the scroll
+   position. The panel now refreshes on open, on shape-changing actions,
+   and manually (via the Refresh all model lists button). */
 
 $("#wsChip").style.cursor = "pointer";
 $("#wsChip").addEventListener("click", () => {

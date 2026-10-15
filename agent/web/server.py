@@ -63,8 +63,18 @@ class Session:
         return d / f"{self.id}.json"
 
     def emit(self, kind, text="", **extra):
+        """Emit an event. For messages that will persist in history, attach
+        the current history index as `idx` so the client can offer Edit /
+        Delete even before the run finishes and history is re-fetched."""
         with self.cond:
-            self.events.append({"type": kind, "text": text, **extra})
+            payload = {"type": kind, "text": text}
+            # Attach idx for message-shaped events only.
+            if kind in ("assistant", "final") and "idx" not in extra:
+                # The assistant message that produced this event was just
+                # appended to history by loop.run; its index is len-1.
+                payload["idx"] = max(0, len(self.history) - 1)
+            payload.update(extra)
+            self.events.append(payload)
             self.cond.notify_all()
 
     def poll(self, after, wait):
@@ -176,7 +186,11 @@ class App:
             try:
                 final = loop.run(self.cfg, sess.history, text,
                                  on_event=sess.emit, cancel=sess.cancel)
-                sess.emit("final", final)
+                # loop.run has already appended the final assistant message
+                # to sess.history. Emit its index so the client can wire
+                # Delete on the live-rendered bubble.
+                final_idx = len(sess.history) - 1 if sess.history else None
+                sess.emit("final", final, idx=final_idx)
             except llm.LLMError as e:
                 sess.emit("error", str(e))
             except Exception as e:
@@ -401,8 +415,14 @@ def make_handler(app):
             if not app.cfg.providers.items:
                 raise ValueError("No API keys yet - open the Keys panel and add one.")
             s.emit("user", text)
+            # The user message is appended inside loop.run; the index it will
+            # have is len(history) after the append, i.e. current len. We
+            # emit `idx` here so the client's optimistic user bubble has it
+            # too. (The history is not yet appended when this fires, so we
+            # pass len(history) as a hint.)
+            user_idx = len(s.history)
             app.run_chat(s, text)
-            self._send(200, {"ok": True, "cursor": len(s.events)})
+            self._send(200, {"ok": True, "cursor": len(s.events), "user_idx": user_idx})
 
         def api_chat_retry(self, q):
             b = self._json_body()
@@ -419,7 +439,7 @@ def make_handler(app):
             text = s.history[idx]["content"]
             s.history = s.history[:idx]
             s.save()
-            s.emit("user", text)
+            s.emit("user", text, idx=idx)
             app.run_chat(s, text)
             self._send(200, {"ok": True, "cursor": len(s.events)})
 
@@ -433,7 +453,7 @@ def make_handler(app):
                 return self._err(400, "invalid index")
             s.history = s.history[:idx]
             s.save()
-            s.emit("user", text)
+            s.emit("user", text, idx=idx)
             app.run_chat(s, text)
             self._send(200, {"ok": True, "cursor": len(s.events)})
 
