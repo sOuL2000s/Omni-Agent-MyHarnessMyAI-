@@ -8,8 +8,11 @@ import tempfile
 import threading
 import time
 import unittest
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+os.environ["OMNI_NO_REFRESH"] = "1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agent import llm, commands                                    # noqa: E402
@@ -205,7 +208,7 @@ class FailoverTests(Base):
         with self.assertRaises(llm.LLMError) as cm:
             self.chat()
         self.assertIn("malformed", str(cm.exception))
-        self.assertEqual(len(g.calls), 1)                                      # stopped at the first key
+        self.assertEqual(len(g.calls), 2)                                      # stopped at the first key (1 retry)
         self.assertEqual(self.pm.summary()[0]["counts"]["ready"], 10)          # nothing was put on cooldown
 
     def test_daily_quota_cools_for_hours_and_uses_model_fallback_on_same_keys(self):

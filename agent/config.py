@@ -1,4 +1,5 @@
 # agent/config.py
+import json
 import os
 import re
 import sys as _sys
@@ -7,10 +8,8 @@ from pathlib import Path
 
 
 def _find_root() -> Path:
-    """Where the app lives. Handles: source tree, Nuitka --onefile, Nuitka --standalone."""
     if getattr(_sys, "frozen", False) or os.environ.get("OMNI_ROOT"):
-        base = Path(os.environ.get("OMNI_ROOT") or Path(_sys.executable).parent)
-        return base
+        return Path(os.environ.get("OMNI_ROOT") or Path(_sys.executable).parent)
     return Path(__file__).resolve().parent.parent
 
 
@@ -43,6 +42,7 @@ class Config:
     providers: object = None
     strict: bool = True
     home: Path = None
+    mcp: object = None
 
 
 def _default_workspace() -> Path:
@@ -85,4 +85,16 @@ def load() -> Config:
         cfg.providers.settings["max_wait"] = int(g("AGENT_MAX_WAIT"))
     if g("AGENT_STRATEGY") in ("round_robin", "failover"):
         cfg.providers.settings["strategy"] = g("AGENT_STRATEGY")
+
+    # ---- MCP servers (optional) ----------------------------------------
+    try:
+        from .mcp import MCPRegistry
+        mcp = MCPRegistry()
+        mcp.load(data / "mcp.json")
+        cfg.mcp = mcp
+        from .tools import mcp_bridge
+        mcp_bridge.register(cfg)
+    except Exception:
+        cfg.mcp = None
+
     return cfg

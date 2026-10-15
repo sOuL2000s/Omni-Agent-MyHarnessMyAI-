@@ -29,8 +29,8 @@ input,select,textarea{background:var(--panel);border:1px solid var(--line);borde
 input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);border-color:var(--accent)}
 #app{display:grid;grid-template-columns:240px minmax(0,1fr) 0;height:100%;transition:grid-template-columns .3s ease}
 #app.leftcollapsed{grid-template-columns:0 minmax(0,1fr) 0}
-#app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 400px}
-#app.rightopen{grid-template-columns:240px minmax(0,1fr) 400px}
+#app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 420px}
+#app.rightopen{grid-template-columns:240px minmax(0,1fr) 420px}
 aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
 #left-toggle{position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;background:none;opacity:.5;cursor:pointer}
 #left-toggle:hover{opacity:1}
@@ -44,17 +44,19 @@ aside{background:var(--panel);border-right:1px solid var(--line);display:flex;fl
 .sess{display:flex;align-items:center;gap:4px;border-radius:8px;padding:6px 8px;cursor:pointer;color:var(--muted)}
 .sess:hover{background:var(--bg)} .sess.on{background:var(--user);color:var(--ink)}
 .sess span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess .t{font-size:11px;color:var(--muted);margin-left:auto}
 .sess button{opacity:0;padding:0 6px;border:0;background:none;color:var(--muted)} .sess:hover button{opacity:1}
 main{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
 header{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
 header .sp{flex:1}
-.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);background:var(--bg);white-space:nowrap;max-width:300px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);background:var(--bg);white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .chip:hover{border-color:var(--accent);color:var(--ink)}
 .chip b{color:var(--ink);font-weight:600}
 label.tog{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
 label.tog.on{color:var(--bad);font-weight:600}
+label.tog.strict.on{color:var(--warn)}
 #log{flex:1;overflow:auto;padding:18px 0 8px}
-.col{max-width:820px;margin:0 auto;padding:0 18px}
+.col{max-width:860px;margin:0 auto;padding:0 18px}
 .msg{margin:10px 0;display:flex}
 .msg.user{justify-content:flex-end}
 .bubble{padding:9px 13px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word}
@@ -83,9 +85,14 @@ label.tog.on{color:var(--bad);font-weight:600}
 #composer{padding:10px 0 16px;background:linear-gradient(transparent,var(--bg) 30%)}
 .box{display:flex;gap:8px;align-items:flex-end;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px;box-shadow:var(--shadow)}
 .box textarea{flex:1;border:0;resize:none;max-height:200px;padding:6px;background:transparent} .box textarea:focus{outline:none}
-.working{font-size:12px;color:var(--muted);height:18px;margin:0 4px 4px}
-.dots:after{content:"";animation:d 1.2s steps(4) infinite} @keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
-/* message actions */
+.status{margin:0 0 6px}
+.status-card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow)}
+.status-card .title{display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:4px}
+.status-card .title .spin{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.status-card .detail{color:var(--muted);font-size:12.5px}
+.status-card ul{margin:6px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;max-height:100px;overflow:auto}
+.status-card .foot{display:flex;justify-content:flex-end;margin-top:6px}
 .msg-actions{display:flex;gap:8px;margin-top:4px;opacity:0;transition:opacity .2s}
 .msg:hover .msg-actions{opacity:1}
 .msg.user{flex-direction:column;align-items:flex-end}
@@ -95,7 +102,6 @@ label.tog.on{color:var(--bad);font-weight:600}
 .copy-code{position:absolute;top:8px;right:8px;padding:2px 6px;font-size:11px;opacity:0;transition:opacity .2s;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--muted)}
 div:hover>.copy-code{opacity:1}
 .copy-code:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-/* right panel */
 .tabs{display:flex;border-bottom:1px solid var(--line)} .tabs button{flex:1;border:0;border-radius:0;background:none;padding:11px;color:var(--muted);border-bottom:2px solid transparent}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
 .pane{overflow:auto;padding:12px;flex:1;display:none} .pane.on{display:block}
@@ -105,25 +111,30 @@ div:hover>.copy-code{opacity:1}
 .small{font-size:12px;color:var(--muted)}
 .badge{font-size:11px;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--muted)}
 .badge.g{color:var(--ok);border-color:currentColor} .badge.w{color:var(--warn);border-color:currentColor} .badge.r{color:var(--bad);border-color:currentColor}
-.keys{margin-top:6px;border-top:1px dashed var(--line);padding-top:6px;max-height:240px;overflow:auto}
+.keys{margin-top:6px;border-top:1px dashed var(--line);padding-top:6px;max-height:260px;overflow:auto}
 .k{display:flex;gap:8px;align-items:center;padding:3px 0;font-size:12.5px}
 .k .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok)} .k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn)} .k .dot.quota{background:#e8590c} .k .dot.auth,.k .dot.billing{background:var(--bad)}
-.k .nm{width:84px;font-weight:600} .k .mk{width:84px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px} .k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.k .nm{width:90px;font-weight:600} .k .mk{width:88px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px} .k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .k button{padding:0 6px;font-size:12px}
 .k select{padding:2px 6px;font-size:12px;max-width:200px}
 textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,monospace}
 .files a{color:var(--accent);text-decoration:none} .files .f{display:flex;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:13px} .files .f span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* modal & toast */
+.mcp-row{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}
+.mcp-row .nm{font-weight:600;flex:1}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:20;padding:16px} #modal.on{display:flex}
 #modal .dlg{background:var(--panel);border-radius:14px;max-width:640px;width:100%;padding:18px;box-shadow:var(--shadow);border:1px solid var(--line)}
 #modal pre{background:var(--code);color:var(--code-ink);padding:10px 12px;border-radius:10px;overflow:auto;max-height:40vh;white-space:pre-wrap;word-break:break-all;font:12.5px ui-monospace,Menlo,Consolas,monospace}
-#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90vw}
-#toast.on{opacity:1}
-/* full-PC browser */
-#browse .dlg{max-width:760px}
-#browse .listing{max-height:52vh;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px}
+#toasts{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;z-index:30;max-width:90vw;align-items:center}
+.toast{background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;opacity:0;transition:opacity .2s;max-width:90vw}
+.toast.on{opacity:1}
+#browse .dlg{max-width:800px}
+.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 0;font-size:12.5px}
+.crumbs .crumb{padding:1px 6px;border-radius:6px}
+.recent{display:flex;gap:6px;flex-wrap:wrap;padding:4px 0}
+#browse .listing{max-height:48vh;overflow:auto;margin-top:8px;border:1px solid var(--line);border-radius:10px}
 #browse .listing .f{display:flex;gap:8px;padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px;align-items:center}
 #browse .listing .f:hover{background:var(--bg)}
+#browse .listing .f.sel{background:var(--user)}
 #browse .listing .f .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:900px){
   #app,#app.rightopen{grid-template-columns:0 minmax(0,1fr) 0}
@@ -149,13 +160,13 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
       <span class="chip" id="wsChip" title="Click to change the agent's workspace (browse your whole PC)"></span>
       <span class="chip" id="routeChip" title="Key and model that answered last">no request yet</span>
       <span class="sp"></span>
-      <label class="tog" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
+      <label class="tog strict" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
       <label class="tog" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
       <button id="keysBtn">Keys &amp; models</button>
     </header>
     <div id="log"><div class="col" id="msgs"></div></div>
     <div id="composer"><div class="col">
-      <div class="working" id="working"></div>
+      <div id="working"></div>
       <div class="box">
         <button class="ghost" id="attach" title="Upload a file into the workspace">📎</button>
         <input type="file" id="fileIn" hidden multiple>
@@ -167,8 +178,14 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
   </main>
 
   <aside id="right">
-    <div class="tabs"><button class="on" data-tab="keys">Keys &amp; models</button><button data-tab="files">Files</button><button id="closeRight" style="flex:0 0 44px">✕</button></div>
+    <div class="tabs">
+      <button class="on" data-tab="keys">Keys</button>
+      <button data-tab="mcp">MCP</button>
+      <button data-tab="files">Files</button>
+      <button id="closeRight" style="flex:0 0 44px">✕</button>
+    </div>
     <div class="pane on" id="pane-keys"></div>
+    <div class="pane" id="pane-mcp"></div>
     <div class="pane" id="pane-files"></div>
   </aside>
 </div>
@@ -176,9 +193,15 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
 <div id="modal"><div class="dlg">
   <h3 style="margin:0 0 8px">Omni wants to do this</h3>
   <pre id="modalAction"></pre>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="deny" class="danger">Deny</button><button id="allow" class="primary">Allow</button></div>
+  <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--muted)">
+    <input type="checkbox" id="modalRemember"> Don't ask again for this tool this session
+  </label>
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button id="deny" class="danger">Deny</button>
+    <button id="allow" class="primary">Allow</button>
+  </div>
 </div></div>
-<div id="toast"></div>
+<div id="toasts"></div>
 
 <script>
 "use strict";
@@ -193,23 +216,33 @@ function h(tag, props, ...kids) {
     else if (k in el && k !== "list") el[k] = v;
     else el.setAttribute(k, v === true ? "" : v);
   }
-  for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false)
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
   return el;
 }
-function toast(t, ms = 2800) { const e = $("#toast"); e.textContent = t; e.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove("on"), ms); }
+function toast(t, ms = 2800) {
+  const e = h("div", { class: "toast", text: t });
+  $("#toasts").append(e);
+  requestAnimationFrame(() => e.classList.add("on"));
+  setTimeout(() => { e.classList.remove("on"); setTimeout(() => e.remove(), 300); }, ms);
+}
 async function api(path, body, opt = {}) {
   const init = body === undefined && !opt.post
     ? { headers: { "X-Omni": "1" } }
-    : { method: "POST", headers: { "X-Omni": "1", "Content-Type": "application/json" }, body: JSON.stringify(body || {}) };
+    : { method: "POST", headers: { "X-Omni": "1", "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}) };
   const r = await fetch(path, init);
   let d = {}; try { d = await r.json(); } catch (_) {}
   if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
   return d;
 }
-const store = { get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} } };
-const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, "0")).join("");
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+};
+const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)),
+  b => b.toString(16).padStart(2, "0")).join("");
 
-/* ---------- markdown (DOM only, no innerHTML) ---------- */
 function inline(text) {
   const frag = document.createDocumentFragment();
   const re = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
@@ -219,7 +252,10 @@ function inline(text) {
     const t = m[0];
     if (t[0] === "`") frag.append(h("code", { text: t.slice(1, -1) }));
     else if (t.startsWith("**")) frag.append(h("b", { text: t.slice(2, -2) }));
-    else { const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(t); frag.append(h("a", { href: mm[2], target: "_blank", rel: "noopener noreferrer", text: mm[1] })); }
+    else {
+      const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(t);
+      frag.append(h("a", { href: mm[2], target: "_blank", rel: "noopener noreferrer", text: mm[1] }));
+    }
     last = m.index + t.length;
   }
   if (last < text.length) frag.append(text.slice(last));
@@ -233,7 +269,8 @@ function md(src) {
       const body = part.replace(/^[^\n]*\n/, "");
       const code = h("code", { text: body.replace(/\n$/, "") });
       const pre = h("pre", {}, code);
-      const copyBtn = h("button", { class: "copy-code", text: "Copy", onclick: () => copyText(code.textContent) });
+      const copyBtn = h("button", { class: "copy-code", text: "Copy",
+        onclick: () => copyText(code.textContent) });
       root.append(h("div", { style: "position:relative" }, pre, copyBtn));
       return;
     }
@@ -246,8 +283,17 @@ function md(src) {
           const tag = /\d/.test(m[1]) ? "ol" : "ul";
           if (!list || list.tagName.toLowerCase() !== tag) { list = h(tag); root.append(list); }
           list.append(h("li", {}, inline(m[2])));
-        } else if ((m = /^(#{1,3})\s+(.*)/.exec(ln))) { list = null; root.append(h("h" + m[1].length, {}, inline(m[2]))); }
-        else if (ln.trim()) { list = null; const last = root.lastChild; if (last && last.tagName === "P" && last.dataset.open) { last.append(document.createElement("br"), inline(ln)); } else { const p = h("p", {}, inline(ln)); p.dataset.open = "1"; root.append(p); } }
+        } else if ((m = /^(#{1,3})\s+(.*)/.exec(ln))) {
+          list = null; root.append(h("h" + m[1].length, {}, inline(m[2])));
+        } else if (ln.trim()) {
+          list = null;
+          const last = root.lastChild;
+          if (last && last.tagName === "P" && last.dataset.open) {
+            last.append(document.createElement("br"), inline(ln));
+          } else {
+            const p = h("p", {}, inline(ln)); p.dataset.open = "1"; root.append(p);
+          }
+        }
       }
       list = null;
       if (root.lastChild && root.lastChild.dataset) delete root.lastChild.dataset.open;
@@ -256,48 +302,114 @@ function md(src) {
   return root;
 }
 
-/* ---------- chat ---------- */
 let sid = store.get("omni_sid") || rid(), cursor = 0, busy = false, polling = false;
 store.set("omni_sid", sid);
 const msgs = $("#msgs"), logEl = $("#log"), toolEls = {};
-function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 120; }
-function add(el) { const stick = atBottom(); clearEmpty(); msgs.append(el); if (stick) logEl.scrollTop = logEl.scrollHeight; return el; }
+function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140; }
+function add(el) {
+  const stick = atBottom(); clearEmpty(); msgs.append(el);
+  if (stick) logEl.scrollTop = logEl.scrollHeight;
+  return el;
+}
 function clearEmpty() { const e = $("#emptyState"); if (e) e.remove(); }
 function showEmpty() {
   msgs.append(h("div", { class: "empty", id: "emptyState" },
     h("h2", { text: "What should Omni work on?" }),
-    h("div", { text: "It can read and edit code and Word/Excel/PowerPoint files, run commands, browse pages and remember things. It has full read/write access to your PC (with approval)." }),
-    h("div", { class: "ex" }, ...["Summarise the files in my Documents folder", "Review the code here and write REVIEW.md", "Create a Word report from my notes"].map(t =>
+    h("div", { text: "Reads and edits code and Office files, runs commands, browses pages, and (if configured) talks to MCP servers. Full PC access with approval." }),
+    h("div", { class: "ex" }, ...[
+      "Summarise the files in my Documents folder",
+      "Review the code here and write REVIEW.md",
+      "Create a Word report from my notes"].map(t =>
       h("button", { text: t, onclick: () => { $("#inp").value = t; $("#inp").focus(); } })))));
 }
+
+let statusState = {};
+function renderStatus() {
+  const w = $("#working");
+  if (!busy) { w.replaceChildren(); return; }
+  const info = statusState;
+  const card = h("div", { class: "status-card" });
+  card.append(h("div", { class: "title" },
+    h("span", { class: "spin" }),
+    h("span", { text: info.title || "Working…" }),
+    info.route ? h("span", { class: "small", text: " · " + info.route }) : null));
+  if (info.detail) card.append(h("div", { class: "detail", text: info.detail }));
+  if (info.recent && info.recent.length) {
+    const ul = h("ul");
+    for (const r of info.recent.slice(-6)) ul.append(h("li", { text: r }));
+    card.append(ul);
+  }
+  card.append(h("div", { class: "foot" },
+    h("button", { class: "danger", text: "Stop", onclick: doStop })));
+  w.replaceChildren(card);
+}
+function updateStatus(patch) { statusState = Object.assign({}, statusState, patch); renderStatus(); }
+function setBusy(b, reset = true) {
+  busy = b;
+  $("#send").style.display = b ? "none" : "";
+  $("#stop").style.display = b ? "" : "none";
+  if (reset) statusState = {};
+  renderStatus();
+}
+
 function render(ev) {
   switch (ev.type) {
-    case "user": return add(h("div", { class: "msg user" }, h("div", { class: "bubble", text: ev.text }), h("div", { class: "msg-actions" }, h("button", { text: "Edit", onclick: (e) => editMsg(e, ev) }), h("button", { text: "Copy", onclick: () => copyText(ev.text) }), h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }))));
-    case "assistant": return add(h("div", { class: "msg asst mid" }, h("div", { class: "bubble" }, md(ev.text)), h("div", { class: "msg-actions" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }), h("button", { text: "Copy", onclick: () => copyText(ev.text) }), h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }))));
-    case "final": return add(h("div", { class: "msg asst" }, h("div", { class: "bubble" }, md(ev.text)), h("div", { class: "msg-actions" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }), h("button", { text: "Copy", onclick: () => copyText(ev.text) }), h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }))));
+    case "user": return add(h("div", { class: "msg user" },
+      h("div", { class: "bubble", text: ev.text })));
+    case "assistant": return add(h("div", { class: "msg asst mid" },
+      h("div", { class: "bubble" }, md(ev.text))));
+    case "final": return add(h("div", { class: "msg asst" },
+      h("div", { class: "bubble" }, md(ev.text)),
+      h("div", { class: "msg-actions" },
+        h("button", { text: "Copy", onclick: () => copyText(ev.text) }))));
     case "tool": {
-      let args = ev.text || ""; let pretty = args;
-      try { const o = JSON.parse(args); pretty = JSON.stringify(o, null, 1); args = Object.entries(o).map(([k, v]) => k + "=" + (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ")).join("  "); } catch (_) {}
-      const d = h("details", { class: "tool" }, h("summary", {}, h("span", { class: "st" }), h("span", { class: "n", text: ev.name }), h("span", { class: "a", text: args.slice(0, 160) })), h("pre", { text: pretty }));
-      if (ev.id) toolEls[ev.id] = d; return add(d);
+      let args = ev.text || "", pretty = args;
+      try {
+        const o = JSON.parse(args);
+        pretty = JSON.stringify(o, null, 1);
+        args = Object.entries(o).map(([k, v]) =>
+          k + "=" + (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ")).join("  ");
+      } catch (_) {}
+      const d = h("details", { class: "tool" },
+        h("summary", {}, h("span", { class: "st" }), h("span", { class: "n", text: ev.name }),
+          h("span", { class: "a", text: args.slice(0, 160) })),
+        h("pre", { text: pretty }));
+      if (ev.id) toolEls[ev.id] = d;
+      return add(d);
     }
     case "tool_result": {
       const d = toolEls[ev.id]; if (!d) return;
       d.querySelector(".st").classList.add(ev.ok ? "ok" : "bad");
-      d.append(h("pre", { text: ev.text })); return;
+      if (!d.querySelector("pre.stream")) d.append(h("pre", { text: ev.text }));
+      else if (!ev.ok) d.append(h("pre", { text: "ERROR (see stream above):\n" + ev.text }));
+      return;
+    }
+    case "tool_stream": {
+      const d = toolEls[ev.id]; if (!d) return;
+      let pre = d.querySelector("pre.stream");
+      if (!pre) { pre = h("pre", { class: "stream" }); d.append(pre); }
+      pre.textContent += ev.text;
+      if (atBottom()) logEl.scrollTop = logEl.scrollHeight;
+      return;
     }
     case "notice": return add(h("div", { class: "note", text: "↪ " + ev.text }));
+    case "progress":
+      updateStatus({ title: ev.title || "Working", detail: ev.detail, recent: ev.recent, route: ev.route });
+      return;
     case "verify": return add(h("div", { class: "note verify", text: ev.text }));
-    case "route": { const c = $("#routeChip"); c.replaceChildren("answering: ", h("b", { text: ev.text })); return; }
+    case "route": {
+      const c = $("#routeChip");
+      c.replaceChildren("answering: ", h("b", { text: ev.text }));
+      c.title = "pool=" + ev.pool + " model=" + ev.model + " reason=" + (ev.reason || "primary");
+      updateStatus({ route: ev.text });
+      return;
+    }
     case "error": return add(h("div", { class: "note err", text: ev.text }));
     case "approval": return askApproval(ev);
     case "approval_done": if (pendingApproval && pendingApproval.id === ev.id) closeModal(); return;
   }
 }
-function setBusy(b) {
-  busy = b; $("#send").style.display = b ? "none" : ""; $("#stop").style.display = b ? "" : "none";
-  $("#working").replaceChildren(...(b ? ["Working", h("span", { class: "dots" })] : []));
-}
+
 async function poll() {
   if (polling) return; polling = true; let fails = 0;
   try {
@@ -305,182 +417,558 @@ async function poll() {
       let d;
       try { d = await api(`/api/poll?session=${sid}&after=${cursor}&wait=15`); fails = 0; }
       catch (e) {
-        if (/authoris/.test(e.message)) { toast("Session expired - reopen the link from the terminal"); setBusy(false); break; }
+        if (/authoris/.test(e.message)) { toast("Session expired — reopen the link from the terminal"); setBusy(false); break; }
         if (++fails >= 5) { toast("Lost connection to the Omni server: " + e.message, 6000); setBusy(false); break; }
         await new Promise(r => setTimeout(r, 1500)); continue;
       }
       cursor = d.next;
       let done = false;
-      for (const ev of d.events) { if (ev.type === "user") continue; if (ev.type === "done") done = true; else render(ev); }
-      if (done || !d.busy && !d.events.length) { setBusy(false); refreshKeys(); loadSessions(); break; }
+      for (const ev of d.events) {
+        if (ev.type === "user") continue;
+        if (ev.type === "done") done = true; else render(ev);
+      }
+      if (done || (!d.busy && !d.events.length)) { setBusy(false); refreshKeys(); loadSessions(); break; }
     }
   } finally { polling = false; }
 }
+
 async function send() {
   const t = $("#inp").value.trim(); if (!t || busy) return;
   try {
     const r = await api("/api/chat", { session: sid, text: t });
-    render({ type: "user", text: t }); $("#inp").value = ""; autoGrow(); cursor = r.cursor; setBusy(true); poll();
+    render({ type: "user", text: t }); $("#inp").value = ""; autoGrow();
+    cursor = r.cursor;
+    statusState = { title: "Sending…" };
+    setBusy(true, false);
+    poll();
   } catch (e) { toast(e.message, 5000); }
 }
-function autoGrow() { const i = $("#inp"); i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight, 200) + "px"; }
+async function doStop() {
+  try { await api("/api/stop", { session: sid }); toast("Stopping…"); }
+  catch (e) { toast(e.message); }
+}
+function autoGrow() {
+  const i = $("#inp"); i.style.height = "auto";
+  i.style.height = Math.min(i.scrollHeight, 200) + "px";
+}
 async function loadChat() {
   msgs.replaceChildren(); for (const k in toolEls) delete toolEls[k];
   try {
     const d = await api(`/api/history?session=${sid}`);
     d.items.forEach(render); if (!d.items.length) showEmpty();
-    cursor = d.cursor; $("#autoBox").checked = d.auto; $("#autoTog").classList.toggle("on", d.auto);
-    if (typeof d.strict === "boolean") { $("#strictBox").checked = d.strict; $("#strictTog").classList.toggle("on", d.strict); }
-    d.pending.forEach(p => askApproval({ id: p.id, text: p.action }));
-    if (d.busy) { setBusy(true); poll(); } else setBusy(false);
+    cursor = d.cursor;
+    $("#autoBox").checked = d.auto; $("#autoTog").classList.toggle("on", d.auto);
+    if (typeof d.strict === "boolean") {
+      $("#strictBox").checked = d.strict;
+      $("#strictTog").classList.toggle("on", d.strict);
+    }
+    d.pending.forEach(p => askApproval({ id: p.id, text: p.action, tool: p.tool }));
+    if (d.busy) { setBusy(true, false); poll(); } else setBusy(false);
     logEl.scrollTop = logEl.scrollHeight;
   } catch (e) { showEmpty(); toast(e.message, 5000); }
 }
+function timeAgo(sec) {
+  if (sec < 60) return sec + "s ago";
+  if (sec < 3600) return Math.round(sec / 60) + "m ago";
+  if (sec < 86400) return Math.round(sec / 3600) + "h ago";
+  return Math.round(sec / 86400) + "d ago";
+}
 async function loadSessions() {
   try {
-    const list = await api("/api/sessions"); const box = $("#sessions"); box.replaceChildren();
-    for (const s of list) box.append(h("div", { class: "sess" + (s.id === sid ? " on" : ""), onclick: () => switchTo(s.id) },
-      h("span", { text: s.title }),
-      h("button", { title: "Delete chat", text: "✕", onclick: async e => { e.stopPropagation(); if (!confirm("Delete this chat?")) return; await api("/api/session/delete", { session: s.id }); if (s.id === sid) newChat(); else loadSessions(); } })));
+    const list = await api("/api/sessions");
+    const box = $("#sessions"); box.replaceChildren();
+    for (const s of list) {
+      const t = Math.max(1, Math.round((Date.now() / 1000) - (s.mtime || 0)));
+      box.append(h("div", { class: "sess" + (s.id === sid ? " on" : ""), onclick: () => switchTo(s.id) },
+        h("span", { text: s.title, title: s.title }),
+        h("span", { class: "t", text: timeAgo(t) }),
+        h("button", { title: "Delete chat", text: "✕", onclick: async e => {
+          e.stopPropagation();
+          if (!confirm("Delete this chat?")) return;
+          await api("/api/session/delete", { session: s.id });
+          if (s.id === sid) newChat(); else loadSessions();
+        } })));
+    }
   } catch (_) {}
 }
-function switchTo(id) { sid = id; store.set("omni_sid", sid); $("#app").classList.remove("leftopen"); loadChat(); loadSessions(); }
+function switchTo(id) {
+  sid = id; store.set("omni_sid", sid);
+  $("#app").classList.remove("leftopen"); loadChat(); loadSessions();
+}
 function newChat() { switchTo(rid()); }
 
-/* ---------- approvals ---------- */
 let pendingApproval = null;
-function askApproval(ev) { pendingApproval = ev; $("#modalAction").textContent = ev.text; $("#modal").classList.add("on"); }
+function askApproval(ev) {
+  pendingApproval = ev;
+  $("#modalAction").textContent = ev.text;
+  $("#modalRemember").checked = false;
+  $("#modalRemember").parentElement.style.display = ev.tool ? "" : "none";
+  $("#modal").classList.add("on");
+}
 function closeModal() { pendingApproval = null; $("#modal").classList.remove("on"); }
-async function answer(allow) { const p = pendingApproval; if (!p) return; closeModal(); try { await api("/api/approve", { session: sid, id: p.id, allow }); } catch (e) { toast(e.message); } }
+async function answer(allow) {
+  const p = pendingApproval; if (!p) return;
+  const remember = $("#modalRemember").checked;
+  closeModal();
+  try { await api("/api/approve", { session: sid, id: p.id, allow, remember }); }
+  catch (e) { toast(e.message); }
+}
 
-/* ---------- keys & models panel ---------- */
-let S = null, modelCache = {}, addServicePreset = "";
+function entrable(input, action) {
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      action();
+    }
+  });
+  return input;
+}
+
+let S = null, modelCache = {};
 function badge(txt, cls) { return h("span", { class: "badge " + (cls || ""), text: txt }); }
-function fmtTime(s) { return s >= 3600 ? Math.round(s / 3600) + "h" : s >= 60 ? Math.round(s / 60) + "m" : s + "s"; }
-async function act(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg); await refreshKeys(true); return r; } catch (e) { toast(e.message, 6000); } }
+function fmtTime(s) {
+  return s >= 3600 ? Math.round(s / 3600) + "h"
+    : s >= 60 ? Math.round(s / 60) + "m" : s + "s";
+}
+async function act(fn, okMsg) {
+  try {
+    const r = await fn();
+    if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg);
+    await refreshKeys(true);
+    return r;
+  } catch (e) { toast(e.message, 6000); }
+}
 
 async function refreshKeys(force) {
   const pane = $("#pane-keys");
-  if (!force && pane.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (!force && pane.contains(document.activeElement) &&
+      /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   try { S = await api("/api/state"); } catch (e) { return; }
   $("#wsChip").replaceChildren("workspace: ", h("b", { text: S.workspace }));
   renderKeys();
+  renderMcp();
 }
 function renderKeys() {
-  const pane = $("#pane-keys"); const openKeys = new Set([...pane.querySelectorAll("details.kl[open]")].map(d => d.dataset.pool));
+  const pane = $("#pane-keys");
+  const openKeys = new Set([...pane.querySelectorAll("details.kl[open]")].map(d => d.dataset.pool));
   const scroll = pane.scrollTop; pane.replaceChildren();
   if (S.load_error) pane.append(h("div", { class: "note err", text: S.load_error }));
+
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Rotation" }),
     h("div", { class: "row" },
-      h("select", { onchange: e => act(() => api("/api/strategy", { strategy: e.target.value }), "Strategy saved") },
-        ...S.strategies.map(s => h("option", { value: s, selected: s === S.strategy, text: s === "round_robin" ? "round robin - spread calls over all keys" : "failover - use keys in order" }))),
-    ),
-    h("div", { class: "small", text: "If a key is rate-limited, out of quota or invalid, Omni switches to the next key by itself, then to the model fallbacks, then to the next service. Short limits are waited out (up to " + S.max_wait + "s)." })));
+      h("select", {
+        onchange: e => act(() => api("/api/strategy", { strategy: e.target.value }), "Strategy saved")
+      },
+        ...S.strategies.map(s => h("option", { value: s, selected: s === S.strategy,
+          text: s === "round_robin" ? "round robin — spread calls over all keys"
+                                     : "failover — use keys in order" })))),
+    h("div", { class: "small", text: "Keys are scored by health, so a flaky key is deprioritized automatically. Rate limits cool the key; model-not-found cools the whole pool; daily quotas cool until midnight Pacific. Short limits are waited out (up to " + S.max_wait + "s)." })));
+
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Models" }),
     h("div", { class: "row" },
       h("button", { class: "primary", text: "↻ Refresh all model lists",
-        onclick: e => { const t = e.target; t.textContent = "fetching…"; t.disabled = true;
+        onclick: e => {
+          const t = e.target; t.textContent = "fetching…"; t.disabled = true;
           act(() => api("/api/refresh_all", {}),
-              r => `Refreshed ${Object.keys(r.refreshed).length} keys`).finally(() => {
-            t.textContent = "↻ Refresh all model lists"; t.disabled = false; }); } }),
+              r => `Refreshed ${Object.keys(r.refreshed).length} keys`)
+            .finally(() => { t.textContent = "↻ Refresh all model lists"; t.disabled = false; });
+        } }),
       h("span", { class: "small", text: "Each key's available models are fetched from its provider and shown in the dropdown next to it." }))));
+
   S.pools.forEach((p, i) => pane.append(poolCard(p, i, openKeys.has(p.pool))));
   pane.append(addServiceCard());
   pane.scrollTop = scroll;
 }
+
 function poolCard(p, idx, open) {
   const dl = h("datalist", { id: "dl-" + p.pool });
   (modelCache[p.pool] || []).forEach(m => dl.append(h("option", { value: m })));
+
   const mIn = h("input", { value: p.model, list: "dl-" + p.pool, placeholder: "model id", spellcheck: false });
   const note = h("span", { class: "small" });
   const loadModels = async refresh => {
     note.textContent = "loading model list…";
-    try { const d = await api(`/api/models?pool=${encodeURIComponent(p.pool)}${refresh ? "&refresh=1" : ""}`);
-      modelCache[p.pool] = d.models; dl.replaceChildren(...d.models.map(m => h("option", { value: m })));
-      note.textContent = d.models.length ? d.models.length + " models available - click the box and type to filter" + (d.listed === false ? "  ⚠ the current model is NOT in this list" : "") : (d.note || "this service has no model list - type the id");
+    try {
+      const d = await api(`/api/models?pool=${encodeURIComponent(p.pool)}${refresh ? "&refresh=1" : ""}`);
+      modelCache[p.pool] = d.models;
+      dl.replaceChildren(...d.models.map(m => h("option", { value: m })));
+      note.textContent = d.models.length
+        ? d.models.length + " models available — click the box and type to filter" +
+          (d.listed === false ? "  ⚠ the current model is NOT in this list" : "")
+        : (d.note || "this service has no model list — type the id");
       note.style.color = d.listed === false ? "var(--warn)" : "";
     } catch (e) { note.textContent = e.message; }
   };
-  const fbIn = h("input", { value: p.fallbacks.join(", "), placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash", spellcheck: false, list: "dl-" + p.pool });
+
+  const applyModel = () => act(async () => {
+    const r = await api("/api/pool/model", { pool: p.pool, model: mIn.value });
+    return r;
+  }, r => r.listed === false
+    ? "Saved — but this model is not in the service's list, it may fail"
+    : "Model set for all " + p.keys.length + " keys");
+
+  entrable(mIn, applyModel);
+
+  const fbIn = h("input", { value: p.fallbacks.join(", "),
+    placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash",
+    spellcheck: false, list: "dl-" + p.pool });
+  const saveFb = () => act(() =>
+    api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value }),
+    "Fallback models saved");
+  entrable(fbIn, saveFb);
+
   const c = p.counts;
-  const keysList = h("details", { class: "kl", "data-pool": p.pool, open }, h("summary", { class: "small", text: p.keys.length + " key(s) - show / hide" }),
+  const keysList = h("details", { class: "kl", "data-pool": p.pool, open },
+    h("summary", { class: "small", text: p.keys.length + " key(s) — show / hide" }),
     h("div", { class: "keys" }, ...p.keys.map(k => h("div", { class: "k" },
-      h("span", { class: "dot " + k.status, title: k.status }), h("span", { class: "nm", text: k.name }), h("span", { class: "mk", text: k.masked }),
-      h("span", { class: "info", title: k.reason || k.last_error, text: k.status === "ready" ? `ok ${k.ok} · fail ${k.fail}` : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " - " + k.reason : ""}` }),
+      h("span", { class: "dot " + k.status, title: k.status }),
+      h("span", { class: "nm", text: k.name }),
+      h("span", { class: "mk", text: k.masked }),
+      h("span", { class: "info", title: k.reason || k.last_error,
+        text: k.status === "ready"
+          ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
+          : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}` }),
       (() => {
         const sel = h("select", { title: "Model for this key",
-          onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }), "Model set for " + k.name) });
-        const cached = (k.models && k.models.length)
-          ? k.models
-          : (k.model ? [k.model] : []);
+          onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }),
+                             "Model set for " + k.name) });
+        const cached = (k.models && k.models.length) ? k.models : (k.model ? [k.model] : []);
         sel.replaceChildren(...(cached.length
           ? cached.map(m => h("option", { value: m, text: m, selected: m === k.model }))
           : [h("option", { value: "", text: "(no models cached)" })]));
         if (!k.models || !k.models.length) {
           api(`/api/key/models?name=${encodeURIComponent(k.name)}`).then(d => {
             if (d.models && d.models.length) {
-              sel.replaceChildren(...d.models.map(m => h("option", { value: m, text: m, selected: m === (d.current || k.model) })));
+              sel.replaceChildren(...d.models.map(m => h("option", { value: m, text: m,
+                selected: m === (d.current || k.model) })));
             }
           }).catch(() => {});
         }
         return sel;
       })(),
       h("button", { text: "↻", title: "Refresh this key's model list",
-        onclick: e => { e.target.textContent = "…";
+        onclick: e => {
+          e.target.textContent = "…";
           act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`),
-              "Refreshed " + k.name).finally(() => e.target.textContent = "↻"); } }),
-      h("button", { text: "test", title: "Send a real tiny request with this key", onclick: ev => { ev.target.textContent = "…"; act(async () => (await api("/api/keys/test", { name: k.name })).results[0], r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120)); } }),
-      h("button", { class: "danger", text: "✕", title: "Remove this key", onclick: () => { if (confirm("Remove " + k.name + "?")) act(() => api("/api/keys/remove", { name: k.name }), "Removed"); } })))));
-  const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service - one per line or comma separated", spellcheck: false });
+              "Refreshed " + k.name).finally(() => e.target.textContent = "↻");
+        } }),
+      h("button", { text: "test", title: "Send a real tiny request with this key",
+        onclick: ev => {
+          ev.target.textContent = "…";
+          act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
+              r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120))
+            .finally(() => ev.target.textContent = "test");
+        } }),
+      h("button", { class: "danger", text: "✕", title: "Remove this key",
+        onclick: () => {
+          if (confirm("Remove " + k.name + "?"))
+            act(() => api("/api/keys/remove", { name: k.name }), "Removed");
+        } })))));
+
+  const addBox = h("textarea", { class: "keysbox",
+    placeholder: "Paste more keys for this service — one per line or comma separated",
+    spellcheck: false });
+  const addKeysBtn = h("button", { text: "Add keys to " + p.pool,
+    onclick: () => addBox.value.trim() && act(
+      () => api("/api/keys/add", { pool: p.pool, keys: addBox.value }),
+      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
+  addBox.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addKeysBtn.click(); }
+  });
+
   return h("div", { class: "card" },
-    h("h3", {}, (idx === 0 ? "★ " : "") + p.pool, badge(c.ready + " ready", c.ready ? "g" : "r"), c.cooling ? badge(c.cooling + " cooling", "w") : null, c.invalid ? badge(c.invalid + " invalid", "r") : null,
+    h("h3", {},
+      (idx === 0 ? "★ " : "") + p.pool,
+      badge(c.ready + " ready", c.ready ? "g" : "r"),
+      c.cooling ? badge(c.cooling + " cooling", "w") : null,
+      c.invalid ? badge(c.invalid + " invalid", "r") : null,
       h("span", { style: "flex:1" }),
-      h("button", { class: "ghost", title: "Higher priority", text: "▲", disabled: idx === 0, onclick: () => act(() => { const n = S.pools.map(x => x.pool); [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]]; return api("/api/pool/order", { names: n }); }) }),
-      h("button", { class: "ghost", title: "Lower priority", text: "▼", disabled: idx === S.pools.length - 1, onclick: () => act(() => { const n = S.pools.map(x => x.pool); [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]]; return api("/api/pool/order", { names: n }); }) })),
+      h("button", { class: "ghost", title: "Higher priority", text: "▲", disabled: idx === 0,
+        onclick: () => act(() => {
+          const n = S.pools.map(x => x.pool);
+          [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
+          return api("/api/pool/order", { names: n });
+        }) }),
+      h("button", { class: "ghost", title: "Lower priority", text: "▼", disabled: idx === S.pools.length - 1,
+        onclick: () => act(() => {
+          const n = S.pools.map(x => x.pool);
+          [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]];
+          return api("/api/pool/order", { names: n });
+        }) })),
     h("div", { class: "small", text: p.base_url }),
-    h("div", { class: "row" }, h("b", { text: "Model", style: "width:70px" }), mIn,
-      h("button", { class: "primary", text: "Apply", title: "Use this model for ALL keys of this service", onclick: () => act(async () => { const r = await api("/api/pool/model", { pool: p.pool, model: mIn.value }); return r; }, r => r.listed === false ? "Saved - but this model is not in the service's list, it may fail" : "Model set for all " + p.keys.length + " keys") }),
-      h("button", { text: "List…", title: "Load the models this service offers", onclick: () => loadModels(true) })),
-    dl, h("div", { class: "row" }, note),
-    h("div", { class: "row" }, h("b", { text: "Fallback", style: "width:70px" }), fbIn,
-      h("button", { text: "Save", title: "Tried (on every key) when the chosen model is out of quota - quotas are per model", onclick: () => act(() => api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value }), "Fallback models saved") })),
     h("div", { class: "row" },
-      h("button", { text: "Test one", onclick: e => { e.target.textContent = "testing…"; act(async () => (await api("/api/keys/test", { name: p.keys[0].name })).results, rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140)); } }),
-      p.keys.length > 1 ? h("button", { text: "Test all " + p.keys.length, onclick: e => { e.target.textContent = "testing…"; act(async () => (await api("/api/keys/test", { pool: p.pool })).results, rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work"); } }) : null,
-      h("button", { text: "Reset cooldowns", onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }), "Cooldowns cleared") }),
-      h("button", { class: "danger", text: "Remove service", onclick: () => { if (confirm("Remove " + p.pool + " and all its " + p.keys.length + " keys?")) act(() => api("/api/pool/remove", { pool: p.pool }), "Removed"); } })),
+      h("b", { text: "Model", style: "width:70px" }), mIn,
+      h("button", { class: "primary", text: "Apply", onclick: applyModel }),
+      h("button", { text: "List…", title: "Load the models this service offers",
+        onclick: () => loadModels(true) })),
+    dl, h("div", { class: "row" }, note),
+    h("div", { class: "row" },
+      h("b", { text: "Fallback", style: "width:70px" }), fbIn,
+      h("button", { text: "Save",
+        title: "Tried (on every key) when the chosen model is out of quota — quotas are per model",
+        onclick: saveFb })),
+    h("div", { class: "row" },
+      h("button", { text: "Test one", onclick: e => {
+        e.target.textContent = "testing…";
+        act(async () => (await api("/api/keys/test", { name: p.keys[0].name })).results,
+            rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140))
+          .finally(() => e.target.textContent = "Test one");
+      } }),
+      p.keys.length > 1 ? h("button", { text: "Test all " + p.keys.length,
+        onclick: e => {
+          e.target.textContent = "testing…";
+          act(async () => (await api("/api/keys/test", { pool: p.pool })).results,
+              rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work")
+            .finally(() => e.target.textContent = "Test all " + p.keys.length);
+        } }) : null,
+      h("button", { text: "Reset cooldowns",
+        onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }), "Cooldowns cleared") }),
+      h("button", { class: "danger", text: "Remove service",
+        onclick: () => {
+          if (confirm("Remove " + p.pool + " and all its " + p.keys.length + " keys?"))
+            act(() => api("/api/pool/remove", { pool: p.pool }), "Removed");
+        } })),
     keysList,
-    h("div", { class: "row" }, addBox), h("div", { class: "row" }, h("button", { text: "Add keys to " + p.pool, onclick: () => addBox.value.trim() && act(() => api("/api/keys/add", { pool: p.pool, keys: addBox.value }), r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) })));
+    h("div", { class: "row" }, addBox),
+    h("div", { class: "row" }, addKeysBtn));
 }
+
 function addServiceCard() {
-  const preset = h("select", {}, h("option", { value: "", text: "Custom / other…" }), ...S.presets.map(p => h("option", { value: p.name, text: p.name })));
-  const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false }), url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)", spellcheck: false }), model = h("input", { placeholder: "model id", spellcheck: false });
-  const keys = h("textarea", { class: "keysbox", placeholder: "API key(s) - one per line or comma separated", spellcheck: false });
-  preset.addEventListener("change", () => { const p = S.presets.find(x => x.name === preset.value); if (p) { name.value = p.name; url.value = p.base_url; model.value = p.model; } });
-  return h("div", { class: "card" }, h("h3", { text: "Add a service" }),
-    h("div", { class: "row" }, preset, name), h("div", { class: "row" }, url), h("div", { class: "row" }, model), keys,
-    h("div", { class: "row" }, h("button", { class: "primary", text: "Add", onclick: () => act(() => api("/api/keys/add", { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }), r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) })),
+  const preset = h("select", {},
+    h("option", { value: "", text: "Custom / other…" }),
+    ...S.presets.map(p => h("option", { value: p.name, text: p.name })));
+  const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false });
+  const url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)", spellcheck: false });
+  const model = h("input", { placeholder: "model id", spellcheck: false });
+  const keys = h("textarea", { class: "keysbox",
+    placeholder: "API key(s) — one per line or comma separated", spellcheck: false });
+  preset.addEventListener("change", () => {
+    const p = S.presets.find(x => x.name === preset.value);
+    if (p) { name.value = p.name; url.value = p.base_url; model.value = p.model; }
+  });
+  const addBtn = h("button", { class: "primary", text: "Add",
+    onclick: () => act(() => api("/api/keys/add",
+      { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }),
+      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
+  [name, url, model].forEach(el => entrable(el, () => addBtn.click()));
+  keys.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); }
+  });
+  return h("div", { class: "card" },
+    h("h3", { text: "Add a service" }),
+    h("div", { class: "row" }, preset, name),
+    h("div", { class: "row" }, url),
+    h("div", { class: "row" }, model),
+    keys,
+    h("div", { class: "row" }, addBtn),
     h("div", { class: "small", text: "Keys stay on this computer in data/providers.json and are never sent back to the browser." }));
 }
 
-/* ---------- files ---------- */
+function renderMcp() {
+  const pane = $("#pane-mcp"); if (!pane || !S) return;
+  const scroll = pane.scrollTop;
+  pane.replaceChildren();
+  pane.append(h("div", { class: "card" },
+    h("h3", { text: "MCP servers" }),
+    h("div", { class: "small", text: "Model Context Protocol servers extend Omni with new tools (filesystem, github, sqlite, playwright…). Configure servers in data/mcp.json or add them below. Tools appear to the model as mcp__<server>__<tool>." })));
+  if (S.mcp_load_errors && S.mcp_load_errors.length) {
+    pane.append(h("div", { class: "note err", text: S.mcp_load_errors.join("\n") }));
+  }
+  if (!S.mcp || !S.mcp.length) {
+    pane.append(h("div", { class: "card" },
+      h("div", { class: "small", text: "No servers configured yet." })));
+  } else {
+    for (const m of S.mcp) {
+      pane.append(h("div", { class: "card" },
+        h("div", { class: "mcp-row" },
+          h("span", { style: "width:10px;height:10px;border-radius:50%;background:" + (m.ready ? "var(--ok)" : "var(--bad)") }),
+          h("span", { class: "nm", text: m.name }),
+          badge(m.tools + " tools", m.ready ? "g" : "r"),
+          m.error ? h("span", { class: "small", text: m.error }) : null,
+          h("button", { text: "Restart",
+            onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => r.result) }),
+          h("button", { text: "Stop",
+            onclick: () => act(() => api("/api/mcp/stop", { name: m.name }), "Stopped") }),
+          h("button", { class: "primary", text: "Start",
+            onclick: () => act(() => api("/api/mcp/start", { name: m.name }), r => `${m.name}: ${r.tools} tools`) })),
+        h("div", { class: "small", text: m.command })));
+    }
+  }
+  const name = h("input", { placeholder: "server name (e.g. filesystem)", spellcheck: false });
+  const cmd = h("input", { placeholder: "command (e.g. npx)", spellcheck: false });
+  const args = h("input", { placeholder: "args, space-separated (e.g. -y @modelcontextprotocol/server-filesystem /home/you)", spellcheck: false });
+  const addBtn = h("button", { class: "primary", text: "Add & connect",
+    onclick: () => act(() => api("/api/mcp/add", { name: name.value, command: cmd.value,
+      args: args.value.split(/\s+/).filter(Boolean) }),
+      r => `Connected: ${r.tools} tools`) });
+  [name, cmd, args].forEach(el => entrable(el, () => addBtn.click()));
+  pane.append(h("div", { class: "card" },
+    h("h3", { text: "Add an MCP server" }),
+    h("div", { class: "row" }, name, cmd),
+    h("div", { class: "row" }, args),
+    h("div", { class: "row" }, addBtn),
+    h("div", { class: "small", text: "Standard examples: npx -y @modelcontextprotocol/server-filesystem <dir> · npx -y @modelcontextprotocol/server-github · uvx mcp-server-sqlite --db-path <file>" })));
+  pane.scrollTop = scroll;
+}
+
 async function loadFiles() {
   const pane = $("#pane-files");
   try {
     const list = await api("/api/files");
-    pane.replaceChildren(h("div", { class: "row" }, h("button", { text: "Refresh", onclick: loadFiles }), h("button", { text: "Upload…", onclick: () => $("#fileIn").click() }), h("span", { class: "small", text: list.length + " file(s) in the workspace" })),
-      h("div", { class: "files" }, ...list.map(f => h("div", { class: "f" }, h("span", { title: f.path, text: f.path }), h("span", { class: "small", text: f.size > 1048576 ? (f.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(f.size / 1024)) + " KB" }), h("a", { href: "/api/file?path=" + encodeURIComponent(f.path), text: "download" })))));
+    pane.replaceChildren(
+      h("div", { class: "row" },
+        h("button", { text: "Refresh", onclick: loadFiles }),
+        h("button", { text: "Upload…", onclick: () => $("#fileIn").click() }),
+        h("span", { class: "small", text: list.length + " file(s) in the workspace" })),
+      h("div", { class: "files" }, ...list.map(f => h("div", { class: "f" },
+        h("span", { title: f.path, text: f.path }),
+        h("span", { class: "small", text: f.size > 1048576
+          ? (f.size / 1048576).toFixed(1) + " MB"
+          : Math.max(1, Math.round(f.size / 1024)) + " KB" }),
+        h("a", { href: "/api/file?path=" + encodeURIComponent(f.path), text: "download" })))));
   } catch (e) { pane.textContent = e.message; }
 }
 async function upload(files) {
   for (const f of files) {
-    try { const r = await fetch("/api/upload?name=" + encodeURIComponent(f.name), { method: "POST", headers: { "X-Omni": "1" }, body: f }); const d = await r.json(); if (!r.ok) throw new Error(d.error);
-      $("#inp").value = ($("#inp").value + (($("#inp").value && !$("#inp").value.endsWith(" ")) ? " " : "") + `[file in workspace: ${d.path}] `); autoGrow(); toast("Uploaded " + d.path);
+    try {
+      const r = await fetch("/api/upload?name=" + encodeURIComponent(f.name),
+        { method: "POST", headers: { "X-Omni": "1" }, body: f });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      const cur = $("#inp").value;
+      $("#inp").value = cur + (cur && !cur.endsWith(" ") ? " " : "") + `[file in workspace: ${d.path}] `;
+      autoGrow();
+      toast("Uploaded " + d.path);
     } catch (e) { toast("Upload failed: " + e.message, 5000); }
   }
   loadFiles();
+}
+
+function openBrowser(startPath, cb) {
+  const overlay = h("div", { id: "browse",
+    style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
+
+  const crumbs = h("div", { class: "crumbs" });
+  const recent = h("div", { class: "recent" });
+  const listing = h("div", { class: "listing" });
+  const filterIn = h("input", { placeholder: "Filter…", style: "flex:1" });
+  const deepBox = h("input", { type: "checkbox" });
+  const hiddenBox = h("input", { type: "checkbox" });
+  const drivesBox = h("div", { class: "row" });
+  let allEntries = [];
+  let curPath = "";
+
+  function renderEntries() {
+    const f = filterIn.value.toLowerCase();
+    const filtered = f && !deepBox.checked
+      ? allEntries.filter(en => en.name.toLowerCase().includes(f))
+      : allEntries;
+    listing.replaceChildren(...filtered.slice(0, 500).map(en => {
+      const row = h("div", { class: "f", title: en.path },
+        h("span", { text: en.dir ? "📁" : "📄" }),
+        h("span", { class: "nm", text: en.name }),
+        en.dir ? null : h("span", { class: "small",
+          text: Math.max(1, Math.round(en.size / 1024)) + " KB" }));
+      row.addEventListener("click", () => {
+        listing.querySelectorAll(".f.sel").forEach(x => x.classList.remove("sel"));
+        row.classList.add("sel");
+      });
+      row.addEventListener("dblclick", () => {
+        if (en.dir) go(en.path);
+      });
+      return row;
+    }));
+  }
+
+  filterIn.addEventListener("input", () => {
+    if (deepBox.checked) return;
+    renderEntries();
+  });
+  deepBox.addEventListener("change", () => { if (deepBox.checked) go(curPath, true); });
+
+  function setCrumbs(p) {
+    crumbs.replaceChildren();
+    const isWin = /^[A-Za-z]:[\\/]/.test(p);
+    const parts = p.split(/[\\/]/).filter(Boolean);
+    let acc = isWin ? "" : "/";
+    const home = h("button", { class: "ghost", text: "🏠", title: "Home",
+      onclick: () => go((S && S.workspace) || "") });
+    crumbs.append(home);
+    parts.forEach((part, i) => {
+      if (i === 0 && isWin) acc = part + "\\";
+      else if (isWin) acc = acc.replace(/\\?$/, "\\") + part;
+      else acc = acc.replace(/\/?$/, "/") + part;
+      const target = acc;
+      crumbs.append(h("span", { text: isWin ? "\\" : "/" }));
+      crumbs.append(h("button", { class: "ghost crumb", text: part,
+        onclick: () => go(target) }));
+    });
+  }
+
+  function renderRecent() {
+    let rec = [];
+    try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
+    recent.replaceChildren(...rec.slice(0, 6).map(r =>
+      h("button", { class: "ghost", title: r,
+        text: r.split(/[\\/]/).filter(Boolean).pop() || r,
+        onclick: () => go(r) })));
+  }
+  function pushRecent(p) {
+    let rec = [];
+    try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
+    rec = [p, ...rec.filter(x => x !== p)].slice(0, 10);
+    store.set("omni_recent_ws", JSON.stringify(rec));
+    renderRecent();
+  }
+
+  async function go(p, deep = false) {
+    const q = new URLSearchParams({ path: p || "" });
+    if (deep && filterIn.value.trim()) q.set("search", filterIn.value.trim());
+    if (hiddenBox.checked) q.set("hidden", "1");
+    try {
+      const d = await api("/api/browse?" + q);
+      curPath = d.path;
+      setCrumbs(d.path);
+      allEntries = d.entries;
+      renderEntries();
+      drivesBox.replaceChildren(...(d.drives || []).map(dr =>
+        h("button", { text: dr, onclick: () => go(dr) })));
+    } catch (e) { toast(e.message); }
+  }
+
+  const useBtn = h("button", { class: "primary", text: "Use this folder",
+    onclick: async () => {
+      if (cb) await cb(curPath);
+      pushRecent(curPath);
+      overlay.remove();
+    } });
+  const pathBar = h("div", { class: "row" },
+    h("button", { text: "⬆ Up",
+      onclick: () => go((curPath || "").replace(/[\\/][^\\/]*$/, "") ||
+        (curPath.match(/^[A-Za-z]:/) ? curPath.slice(0, 3) : "/")) }),
+    crumbs,
+    h("span", { style: "flex:1" }),
+    useBtn);
+
+  const dlg = h("div", { class: "dlg",
+    style: "background:var(--panel);border-radius:14px;border:1px solid var(--line);padding:18px;width:100%;max-width:800px;box-shadow:var(--shadow)" },
+    h("h3", { style: "margin:0 0 4px", text: "Choose workspace" }),
+    recent,
+    pathBar,
+    h("div", { class: "row", style: "margin-top:6px" },
+      filterIn,
+      h("label", { class: "tog" }, deepBox, " deep search"),
+      h("label", { class: "tog" }, hiddenBox, " hidden")),
+    drivesBox,
+    listing,
+    h("div", { class: "row", style: "justify-content:flex-end;margin-top:10px" },
+      h("button", { text: "Cancel", onclick: () => overlay.remove() })));
+  overlay.append(dlg);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+  renderRecent();
+  go(startPath || (S && S.workspace) || "");
 }
 
 function copyText(t) { navigator.clipboard.writeText(t); toast("Copied to clipboard"); }
@@ -489,7 +977,7 @@ async function retryMsg(e, ev) {
   if (busy) return toast("Agent is busy");
   try {
     const r = await api("/api/chat/retry", { session: sid });
-    cursor = r.cursor; setBusy(true); poll();
+    cursor = r.cursor; setBusy(true, false); poll();
   } catch (e) { toast(e.message); }
 }
 async function editMsg(e, ev) {
@@ -499,92 +987,71 @@ async function editMsg(e, ev) {
   if (newText === null || newText.trim() === ev.text) return;
   try {
     const r = await api("/api/chat/edit", { session: sid, index: ev.idx, text: newText.trim() });
-    cursor = r.cursor; setBusy(true); poll();
+    cursor = r.cursor; setBusy(true, false); poll();
   } catch (e) { toast(e.message); }
 }
 async function deleteMsg(e, ev) {
   e.stopPropagation();
   if (!confirm("Delete this message?")) return;
-  try {
-    await api("/api/message/delete", { session: sid, index: ev.idx });
-    loadChat();
-  } catch (e) { toast(e.message); }
+  try { await api("/api/message/delete", { session: sid, index: ev.idx }); loadChat(); }
+  catch (e) { toast(e.message); }
 }
 
-/* ---------- full-PC directory browser ---------- */
-function openBrowser(startPath, cb) {
-  const overlay = h("div", { id: "browse", style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
-  const pathIn = h("input", { value: startPath || "", style: "flex:1" });
-  const filterIn = h("input", { placeholder: "Filter current view...", style: "flex:1" });
-  const searchBtn = h("button", { text: "Deep Search", title: "Search recursively in this folder", onclick: () => go(pathIn.value, filterIn.value) });
-  const listing = h("div", { class: "listing" });
-  const drivesBox = h("div", { class: "row" });
-  let allEntries = [];
-
-  function renderEntries() {
-    const f = filterIn.value.toLowerCase();
-    // Only filter locally if we didn't just do a deep search
-    const filtered = allEntries.filter(en => en.name.toLowerCase().includes(f));
-    listing.replaceChildren(...filtered.map(en => h("div", { class: "f",
-      onclick: () => { if (en.dir) go(en.path); } },
-      h("span", { text: en.dir ? "📁" : "📄" }),
-      h("span", { class: "nm", text: en.name }),
-      en.dir ? null : h("span", { class: "small", text: Math.max(1, Math.round(en.size / 1024)) + " KB" }))));
-  }
-
-  filterIn.oninput = renderEntries;
-
-  async function go(p, search = "") {
-    const oldText = searchBtn.textContent;
-    if (search) { searchBtn.textContent = "Searching..."; searchBtn.disabled = true; }
-    try {
-      const d = await api(`/api/browse?path=${encodeURIComponent(p || "")}${search ? "&search=" + encodeURIComponent(search) : ""}`);
-      pathIn.value = d.path;
-      allEntries = d.entries;
-      renderEntries();
-      drivesBox.replaceChildren(...(d.drives || []).map(dr =>
-        h("button", { text: dr, onclick: () => go(dr) })));
-    } catch (e) { toast(e.message); }
-    finally { searchBtn.textContent = oldText; searchBtn.disabled = false; }
-  }
-  const dlg = h("div", { class: "dlg", style: "background:var(--panel);border-radius:14px;border:1px solid var(--line);padding:18px;width:100%;max-width:760px;box-shadow:var(--shadow)" },
-    h("h3", { style: "margin:0 0 8px", text: "Browse your PC" }),
-    h("div", { class: "row" }, h("button", { text: "⬆ Up",
-      onclick: () => go((pathIn.value || "").replace(/[\\/][^\\/]*$/, "") || "/") }), pathIn,
-      h("button", { text: "Go", onclick: () => go(pathIn.value) })),
-    h("div", { class: "row", style: "margin-top:8px" }, filterIn, searchBtn),
-    drivesBox, listing,
-    h("div", { class: "row", style: "justify-content:flex-end;margin-top:12px" },
-      h("button", { text: "Cancel", onclick: () => overlay.remove() }),
-      h("button", { class: "primary", text: "Use this folder",
-        onclick: async () => { if (cb) await cb(pathIn.value); overlay.remove(); } })));
-  overlay.append(dlg);
-  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
-  document.body.append(overlay);
-  go(startPath || "");
-}
-
-/* ---------- wiring ---------- */
-$("#send").onclick = send; $("#stop").onclick = () => api("/api/stop", { session: sid });
-$("#inp").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+$("#send").onclick = send;
+$("#stop").onclick = doStop;
+$("#inp").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+});
 $("#inp").addEventListener("input", autoGrow);
-$("#newChat").onclick = newChat; $("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
+$("#newChat").onclick = newChat;
+$("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
 $("#left-toggle").onclick = () => $("#app").classList.add("leftcollapsed");
 $("#expand-left").onclick = () => $("#app").classList.remove("leftcollapsed");
-$("#allow").onclick = () => answer(true); $("#deny").onclick = () => answer(false);
-$("#autoBox").onchange = async e => { if (e.target.checked && !confirm("Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust. Turn on?")) { e.target.checked = false; return; } const d = await api("/api/auto", { session: sid, on: e.target.checked }); $("#autoTog").classList.toggle("on", d.auto); };
-$("#strictBox").onchange = async e => { const d = await api("/api/strict", { on: e.target.checked }); $("#strictTog").classList.toggle("on", d.strict); toast("Strict mode " + (d.strict ? "ON" : "OFF")); };
-$("#attach").onclick = () => $("#fileIn").click(); $("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = ""; };
-logEl.addEventListener("dragover", e => e.preventDefault()); logEl.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
-function openRight(tab) { $("#app").classList.add("rightopen"); document.querySelectorAll(".tabs [data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab)); document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + tab)); if (tab === "files") loadFiles(); else refreshKeys(true); }
-$("#keysBtn").onclick = () => $("#app").classList.contains("rightopen") ? $("#app").classList.remove("rightopen") : openRight("keys");
-$("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
-document.querySelectorAll(".tabs [data-tab]").forEach(b => b.onclick = () => openRight(b.dataset.tab));
-setInterval(() => { if ($("#app").classList.contains("rightopen") && $("#pane-keys").classList.contains("on")) refreshKeys(); }, 4000);
+$("#allow").onclick = () => answer(true);
+$("#deny").onclick = () => answer(false);
+$("#autoBox").onchange = async e => {
+  if (e.target.checked && !confirm("Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust. Turn on?")) {
+    e.target.checked = false; return;
+  }
+  const d = await api("/api/auto", { session: sid, on: e.target.checked });
+  $("#autoTog").classList.toggle("on", d.auto);
+};
+$("#strictBox").onchange = async e => {
+  const d = await api("/api/strict", { on: e.target.checked });
+  $("#strictTog").classList.toggle("on", d.strict);
+  toast("Strict mode " + (d.strict ? "ON" : "OFF"));
+};
+$("#attach").onclick = () => $("#fileIn").click();
+$("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = ""; };
+logEl.addEventListener("dragover", e => e.preventDefault());
+logEl.addEventListener("drop", e => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]);
+});
 
-/* workspace chip click opens the browser */
+function openRight(tab) {
+  $("#app").classList.add("rightopen");
+  document.querySelectorAll(".tabs [data-tab]").forEach(b =>
+    b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll(".pane").forEach(p =>
+    p.classList.toggle("on", p.id === "pane-" + tab));
+  if (tab === "files") loadFiles();
+  else if (tab === "mcp") { refreshKeys(true); renderMcp(); }
+  else refreshKeys(true);
+}
+$("#keysBtn").onclick = () =>
+  $("#app").classList.contains("rightopen")
+    ? $("#app").classList.remove("rightopen")
+    : openRight("keys");
+$("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
+document.querySelectorAll(".tabs [data-tab]").forEach(b =>
+  b.onclick = () => openRight(b.dataset.tab));
+setInterval(() => {
+  if ($("#app").classList.contains("rightopen") &&
+      $("#pane-keys").classList.contains("on")) refreshKeys();
+}, 5000);
+
 $("#wsChip").style.cursor = "pointer";
-$("#wsChip").title = "Click to change the agent's workspace (browse your whole PC)";
 $("#wsChip").addEventListener("click", () => {
   openBrowser((S && S.workspace) || "", async (p) => {
     const r = await api("/api/workspace/set", { path: p });
@@ -595,7 +1062,10 @@ $("#wsChip").addEventListener("click", () => {
 
 (async function init() {
   await refreshKeys(true); await loadChat(); loadSessions();
-  if (S) { $("#strictBox").checked = !!S.strict; $("#strictTog").classList.toggle("on", !!S.strict); }
+  if (S) {
+    $("#strictBox").checked = !!S.strict;
+    $("#strictTog").classList.toggle("on", !!S.strict);
+  }
   if (S && !S.pools.length) { openRight("keys"); toast("Add your first API key to start"); }
 })();
 </script>

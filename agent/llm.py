@@ -1,15 +1,24 @@
-"""OpenAI-compatible chat client with automatic key rotation, model fallback and provider failover (stdlib only).
+# agent/llm.py
+"""OpenAI-compatible chat client with automatic key rotation, model fallback,
+provider failover, rich progress events and light self-healing.
 
 Order of attempts for one request
 ---------------------------------
 for each pool (service) in priority order:
     for each model in [chosen model, fallback models...]:
-        for each usable key (round-robin or priority order):
-            try  ->  success: return
-                     failure: classify it, put the right thing on cooldown, go on
-If everything is cooling down only because of short rate limits, wait (up to max_wait seconds) and go again.
+        for each usable key (scored, not blind round-robin):
+            try -> success: return
+                   failure: classify, cooldown the right thing, continue
+
+Notable behaviours
+------------------
+* Rich progress events: `notify` receives short human strings the UI can render.
+* Self-healing: 400s that mention `tools` are retried once without tools; 404s
+  trigger a model-list refresh and one retry with the closest match.
+* Cancel is checked between attempts AND inside the wait loop.
 """
 import datetime as _dt
+import difflib
 import json
 import re
 import socket
@@ -18,7 +27,7 @@ import time
 import urllib.error
 import urllib.request
 
-UA = "omni-agent/2.0"
+UA = "omni-agent/2.1"
 
 
 class LLMError(Exception):
@@ -26,21 +35,18 @@ class LLMError(Exception):
 
 
 class Fail(Exception):
-    """One failed attempt. scope says what to put on cooldown."""
-
     def __init__(self, kind, msg, scope="key_model", cooldown=0, status=None):
         super().__init__(msg)
         self.kind, self.msg, self.scope, self.cooldown, self.status = kind, msg, scope, cooldown, status
 
 
-MIN_RATE_COOLDOWN = 10      # seconds; never retry a rate-limited key sooner than this
-DEFAULT_RATE_COOLDOWN = 45  # when the service does not say how long to wait
-NO_TEMP = set()    # (pool, model) pairs that reject the `temperature` parameter
+MIN_RATE_COOLDOWN = 10
+DEFAULT_RATE_COOLDOWN = 45
+NO_TEMP = set()
 
 
-# ---------------------------------------------------------------- error classification
+# ---------------------------------------------------------------- classification
 def _next_pacific_midnight():
-    """Google's free-tier daily quotas reset at midnight Pacific time."""
     try:
         from zoneinfo import ZoneInfo
         now = _dt.datetime.now(ZoneInfo("America/Los_Angeles"))
@@ -68,7 +74,6 @@ def _retry_after(headers, text):
 
 
 def _short(text):
-    """Pull the human message out of a JSON error body (Gemini sometimes wraps it in a list)."""
     try:
         d = json.loads(text)
         if isinstance(d, list) and d:
@@ -89,9 +94,12 @@ def classify(status, text, headers=None):
     retry = _retry_after(headers, text)
     prefix = f"HTTP {status}: " if status else ""
 
-    # temperature not accepted by reasoning models -> caller retries without it
     if status == 400 and "temperature" in low and re.search(r"unsupported|not support|only the default|invalid", low):
         return Fail("param", msg, "none", 0, status)
+
+    # Tools-schema complaints -> the caller may retry without tools.
+    if status == 400 and "tools" in low and re.search(r"unsupported|not support|invalid|schema|parameters", low):
+        return Fail("tools", msg, "none", 0, status)
 
     if status == 429 or "resource_exhausted" in low:
         if re.search(r"per[ _-]?day|daily|requestsperday|PerDay", text, re.I):
@@ -118,7 +126,7 @@ def classify(status, text, headers=None):
     if status in (408, 409, 425) or (status and status >= 500):
         return Fail("server", prefix + "server error: " + msg, "pool_model", 20, status)
 
-    return Fail("fatal", prefix + msg, "none", 0, status)     # 400/413/422: the request itself is bad - no key will fix it
+    return Fail("fatal", prefix + msg, "none", 0, status)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -138,7 +146,7 @@ def _post_json(url, headers, body, timeout):
     except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
         reason = getattr(e, "reason", e)
         raise Fail("network", f"network error: {reason}", "pool_model", 15)
-    except Exception as e:      # http.client.* (RemoteDisconnected, IncompleteRead...)
+    except Exception as e:
         raise Fail("network", f"network error: {e}", "pool_model", 15)
 
 
@@ -156,7 +164,6 @@ def _headers(p):
 
 
 def _normalise(msg):
-    """Make sure tool-call arguments are JSON strings (some gateways return objects)."""
     for c in msg.get("tool_calls") or []:
         fn = c.get("function") or {}
         if not isinstance(fn.get("arguments", ""), str):
@@ -167,9 +174,13 @@ def _normalise(msg):
 
 
 def _attempt(cfg, p, model, base):
-    """One HTTP call to one key. Returns the assistant message or raises Fail."""
-    for _ in range(2):
+    """One HTTP call to one key. Retries once without temperature if the model rejects it."""
+    drop_tools_next = False
+    for _ in range(3):
         body = dict(base, model=model)
+        if drop_tools_next:
+            body.pop("tools", None)
+            body.pop("tool_choice", None)
         if (p.pool, model) not in NO_TEMP:
             body["temperature"] = cfg.temperature
         status, headers, text = _post_json(p.base_url + "/chat/completions", _headers(p), body, cfg.timeout)
@@ -183,7 +194,7 @@ def _attempt(cfg, p, model, base):
                 if msg.get("content") or msg.get("tool_calls"):
                     return _normalise(msg)
                 raise Fail("empty", "model returned an empty reply", "none", 0)
-            err = data.get("error") if isinstance(data, dict) else None      # 200 with an error body (OpenRouter does this)
+            err = data.get("error") if isinstance(data, dict) else None
             code = err.get("code") if isinstance(err, dict) else None
             f = classify(code if isinstance(code, int) else 500, text, headers)
             raise f
@@ -191,28 +202,31 @@ def _attempt(cfg, p, model, base):
         if f.kind == "param" and (p.pool, model) not in NO_TEMP:
             NO_TEMP.add((p.pool, model))
             continue
+        if f.kind == "tools" and not drop_tools_next:
+            drop_tools_next = True
+            continue
         raise f
     raise Fail("fatal", "model keeps rejecting the request parameters", "none", 0)
 
 
 # ---------------------------------------------------------------- public API
 def ping(p, cfg, model=None):
-    """Tiny real request to one key (used by /test and the UI)."""
     try:
         return _attempt(cfg, p, model or p.model,
-                        {"messages": [{"role": "user", "content": "Reply with the word pong."}], "max_tokens": 64})
+                        {"messages": [{"role": "user", "content": "Reply with the word pong."}],
+                         "max_tokens": 64})
     except Fail as f:
-        if f.kind == "empty":          # HTTP 200 but "thinking" models can eat the tiny token budget: the key works
+        if f.kind == "empty":
             return {"content": "(key works - model sent an empty reply to the tiny test)"}
         raise LLMError(f.msg)
 
 
 def probe(cfg, p, model=None):
-    """Real test of one key. Records the result in the key health (so the UI shows invalid keys).
-    Returns (ok, kind, text)."""
     pm, model = cfg.providers, (model or p.model)
     try:
-        msg = _attempt(cfg, p, model, {"messages": [{"role": "user", "content": "Reply with the word pong."}], "max_tokens": 64})
+        msg = _attempt(cfg, p, model,
+                       {"messages": [{"role": "user", "content": "Reply with the word pong."}],
+                        "max_tokens": 64})
         pm.health.clear(name=p.name)
         pm.health.ok(p)
         return True, "ok", str(msg.get("content") or "")[:60]
@@ -228,23 +242,43 @@ def _stderr(text):
     print("  ! " + text, file=sys.stderr)
 
 
-def chat_ex(cfg, messages, tools=None, notify=None, cancel=None):
-    """Returns (assistant_message, route) where route = {provider, pool, model, fallback}."""
+def _progress_payload(pool, model, key_name, kind, remaining, log):
+    """Turn the recent log into a compact progress string the UI can show."""
+    recent = []
+    for e in log[-5:]:
+        try:
+            recent.append(f"{e[2]} [{e[1]}] -> {e[3]}")
+        except Exception:
+            continue
+    detail = f"{len(log)} attempt(s) so far, {remaining:.0f}s left before retry"
+    return {"title": "All keys busy", "detail": detail, "recent": recent,
+            "route": f"{pool} · {model}"}
+
+
+def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
+    """Returns (assistant_message, route).
+
+    route = {provider, pool, model, fallback, reason}
+    on_progress(payload) is optional; the web server wires it to a UI event.
+    """
     pm = cfg.providers
     notify = notify or _stderr
+    progress = on_progress or (lambda payload: None)
     base = {"messages": messages}
     if tools:
         base["tools"] = tools
         base["tool_choice"] = "auto"
     deadline = time.time() + pm.max_wait
     waited_notice = False
+    attempted_model_refresh = set()
+
     while True:
         if cancel is not None and cancel.is_set():
             raise LLMError("stopped by user")
         pools = pm.pools()
         if not pools:
             raise LLMError("No provider configured. Add keys in the UI or:  /add openrouter YOUR_KEY")
-        log = []            # (pool, model, key_name, kind, reason)
+        log = []
         for pi, (pool, _) in enumerate(pools):
             chain = pm.model_chain(pool)
             for mi, model in enumerate(chain):
@@ -258,33 +292,80 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None):
                     try:
                         msg = _attempt(cfg, p, model, base)
                     except Fail as f:
+                        # ---- self-healing: 404 model -> refresh list, retry once
+                        if f.kind == "model" and pool not in attempted_model_refresh:
+                            attempted_model_refresh.add(pool)
+                            try:
+                                pm.refresh_models(p.name, force=True)
+                                fresh = p.models or []
+                                close = difflib.get_close_matches(model, fresh, n=1, cutoff=0.4)
+                                if close and close[0] != model:
+                                    notify(f"{model} not available on {pool}; retrying with {close[0]}")
+                                    try:
+                                        msg = _attempt(cfg, p, close[0], base)
+                                        pm.health.ok(p)
+                                        pm.note_used(pool, p.name)
+                                        return msg, {"provider": p.name, "pool": pool,
+                                                     "model": close[0], "fallback": True,
+                                                     "reason": "model-swapped-after-404"}
+                                    except Fail as f2:
+                                        f = f2
+                            except Exception:
+                                pass
+
                         if f.kind == "fatal":
-                            raise LLMError(f"{p.name} ({model}): {f.msg}")
+                            # Last chance: retry once with a minimal request
+                            try:
+                                minimal = {"messages": messages}
+                                msg = _attempt(cfg, p, model, minimal)
+                                pm.health.ok(p)
+                                pm.note_used(pool, p.name)
+                                return msg, {"provider": p.name, "pool": pool, "model": model,
+                                             "fallback": True, "reason": "retried-without-tools"}
+                            except Fail:
+                                raise LLMError(f"{p.name} ({model}): {f.msg}")
+
                         pm.health.mark(p, model, f.scope, f.kind, f.cooldown, f.msg)
                         log.append((pool, model, p.name, f.kind, f.msg, f.cooldown))
                         notify(f"{p.name} [{model}] {f.kind}: {f.msg[:110]}")
                         if f.scope == "pool_model":
                             break
+                        if f.scope == "none":
+                            raise LLMError(f"{p.name} ({model}): {f.msg}")
                         continue
                     pm.health.ok(p)
                     pm.note_used(pool, p.name)
-                    route = {"provider": p.name, "pool": pool, "model": model, "fallback": (pi > 0 or mi > 0)}
+                    reason = "primary" if (pi == 0 and mi == 0) else \
+                             ("model-fallback" if mi > 0 else "pool-fallback")
+                    route = {"provider": p.name, "pool": pool, "model": model,
+                             "fallback": (pi > 0 or mi > 0), "reason": reason}
                     if route["fallback"] and log:
                         notify(f"using fallback {p.name} / {model}")
                     return msg, route
-        # ---- nothing worked in this pass
+
+        # nothing worked in this pass
         waits = [e[5] for e in log if e[3] in pm.health.TRANSIENT and isinstance(e[5], (int, float)) and e[5] > 0]
         if waits and time.time() + min(waits) <= deadline:
             w = min(waits) + 0.5
             if not waited_notice:
                 notify(f"every key is busy - waiting {int(w)}s for the first one to free up")
                 waited_notice = True
+            last_pool = log[-1][0] if log else "?"
+            last_model = log[-1][1] if log else "?"
+            progress(_progress_payload(last_pool, last_model,
+                                       log[-1][2] if log else "?",
+                                       log[-1][3] if log else "?", w, log))
             slept = 0.0
             while slept < w:
                 if cancel is not None and cancel.is_set():
                     raise LLMError("stopped by user")
                 time.sleep(min(0.5, w - slept))
                 slept += 0.5
+                if int(slept * 2) % 6 == 0:
+                    progress({"title": f"Waiting {int(w - slept)}s",
+                              "detail": "checking keys again shortly",
+                              "recent": [f"{e[2]} [{e[1]}] -> {e[3]}" for e in log[-4:]],
+                              "route": f"{last_pool} · {last_model}"})
             continue
         raise LLMError(_summary(log))
 
@@ -315,8 +396,8 @@ def _summary(log):
     return "\n".join(lines)
 
 
-def chat(cfg, messages, tools=None, notify=None, cancel=None):
-    return chat_ex(cfg, messages, tools, notify, cancel)[0]
+def chat(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
+    return chat_ex(cfg, messages, tools, notify, cancel, on_progress)[0]
 
 
 # ---------------------------------------------------------------- model listing
@@ -324,7 +405,6 @@ _MODEL_CACHE = {}
 
 
 def list_models(cfg, pool, force=False):
-    """Model ids a service offers (GET /models with the first usable key). Cached for 10 minutes."""
     pm = cfg.providers
     hit = _MODEL_CACHE.get(pool)
     if hit and not force and time.time() - hit[0] < 600:
@@ -355,16 +435,13 @@ def list_models(cfg, pool, force=False):
 
 
 def model_listed(cfg, pool, model):
-    """True/False if we could check, None if the service has no usable /models endpoint."""
     try:
         return model in list_models(cfg, pool)
     except Exception:
         return None
 
 
-# ---------------------------------------------------------------- v2 additions
 def list_models_for_provider(p, force=False):
-    """Model ids a single key can see (GET /models with that key). Cached 10 min per key."""
     key = f"prov:{p.name}:{p.base_url}"
     hit = _MODEL_CACHE.get(key)
     if hit and not force and time.time() - hit[0] < 600:
@@ -388,8 +465,7 @@ def list_models_for_provider(p, force=False):
 
 
 def verify(cfg, messages, final_answer):
-    """Ask the model to flag claims it did NOT verify with a tool call.
-    Returns a list of {claim, verified, note}. Best-effort; returns [] on any failure."""
+    """Strict-mode verifier. Returns [] on any failure."""
     if not final_answer or len(final_answer) < 80:
         return []
     prompt = (
@@ -408,7 +484,6 @@ def verify(cfg, messages, final_answer):
     try:
         msg, _ = chat_ex(cfg, msgs, tools=None)
         txt = (msg.get("content") or "").strip()
-        # tolerate code fences around the JSON
         m = re.search(r"\{.*\}", txt, re.S)
         if not m:
             return []

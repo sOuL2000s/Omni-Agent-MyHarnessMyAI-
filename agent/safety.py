@@ -12,14 +12,23 @@ _tl = threading.local()
 
 
 def set_approver(fn, auto=None):
-    """fn(action:str) -> bool asked instead of the terminal. auto=True/False overrides AGENT_AUTO_APPROVE."""
+    """fn(action:str, tool:str|None=None) -> bool.
+
+    `tool` is the tool name (e.g. "run_shell"), so the UI can offer
+    "don't ask again for this tool". A one-argument callable still works.
+    """
     _tl.approver = fn
     _tl.auto = auto
 
 
+def _call_approver(fn, action, tool):
+    try:
+        return bool(fn(action, tool))
+    except TypeError:
+        return bool(fn(action))
+
+
 def resolve(cfg, path: str, write=False) -> Path:
-    """Resolve a path. Relative paths are anchored at the workspace; absolute paths
-    anywhere on the PC are allowed (with approval unless auto-approve is on)."""
     p = Path(str(path)).expanduser()
     if not p.is_absolute():
         p = cfg.workspace / p
@@ -31,17 +40,18 @@ def resolve(cfg, path: str, write=False) -> Path:
                 f"Path outside workspace blocked: {p}. "
                 f"Set AGENT_ALLOW_OUTSIDE=1 to permit."
             )
-        confirm(cfg, f"{'WRITE to' if write else 'Read'} outside workspace: {p}")
+        confirm(cfg, f"{'WRITE to' if write else 'Read'} outside workspace: {p}",
+                tool="write_file" if write else "read_file")
     return p
 
 
-def confirm(cfg, action: str):
+def confirm(cfg, action: str, tool=None):
     auto = getattr(_tl, "auto", None)
     if auto is True or (auto is None and cfg.auto_approve):
         return
     approver = getattr(_tl, "approver", None)
     if approver is not None:
-        if not approver(action):
+        if not _call_approver(approver, action, tool):
             raise Denied("User denied the action.")
         return
     if not sys.stdin.isatty():

@@ -1,10 +1,10 @@
 # agent/providers.py
 """Providers (= API keys), pools (= keys of one service) and key health.
 
-v2 changes:
-  * Provider now carries a per-key `models` list, fetched from the service.
-  * Key-format detection picks the provider automatically.
-  * New keys get a sensible default model chosen from the fetched list.
+This version adds:
+  * score-based key selection (health-weighted, not blind round-robin),
+  * last_error_at tracking so recently-failed keys deprioritize briefly,
+  * a `reset_rr()` helper the UI can use when the user wants to re-shuffle.
 """
 import json
 import os
@@ -28,7 +28,6 @@ PRESETS = {
 STRATEGIES = ("round_robin", "failover")
 DEFAULT_SETTINGS = {"strategy": "round_robin", "fallbacks": {}, "max_wait": 90}
 
-# model-name hints used to pick a default when a fresh model list arrives
 PREFERRED_MODEL_HINTS = {
     "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
     "openrouter": ["anthropic/claude-sonnet-4.5", "anthropic/claude-3.5-sonnet",
@@ -166,6 +165,7 @@ class Health:
             s = self.stats.setdefault(p.name, {"ok": 0, "fail": 0})
             s["fail"] += 1
             s["last_error"] = f"{kind}: {reason[:120]}"
+            s["last_error_at"] = time.time()
             self.save()
 
     def ok(self, p):
@@ -298,25 +298,51 @@ class Manager:
     def max_wait(self):
         return int(self.settings.get("max_wait", 90))
 
+    # ---- smart key picking -------------------------------------------------
+    def _score(self, p, now=None):
+        """Higher = better. Health-weighted with a mild recency penalty."""
+        now = now or time.time()
+        s = self.health.stats.get(p.name, {})
+        ok = s.get("ok", 0)
+        fail = s.get("fail", 0)
+        total = ok + fail
+        # Bayesian success rate with 1 ok / 1 fail priors so new keys aren't frozen out.
+        rate = (ok + 1) / (total + 2)
+        recent_fail = 1.0 if (now - s.get("last_error_at", 0)) < 60 else 0.0
+        # small penalty for lifetime fail count, capped so it never dominates
+        fail_pen = min(0.3, 0.02 * fail)
+        return rate - 0.25 * recent_fail - fail_pen
+
     def pick_order(self, pool, model):
         with self.lock:
             ps = list(self.providers_in(pool))
+            if not ps:
+                return ps
+            now = time.time()
             if self.strategy == "round_robin" and len(ps) > 1:
+                # Sort by score, but rotate the top 3 to spread quota across them.
+                ps.sort(key=lambda p: self._score(p, now), reverse=True)
+                top, rest = ps[:3], ps[3:]
                 last = self.rr.get(pool)
-                names = [p.name for p in ps]
+                names = [p.name for p in top]
                 if last in names:
                     i = names.index(last) + 1
-                    ps = ps[i:] + ps[:i]
+                    top = top[i:] + top[:i]
+                return top + rest
+            # failover: strictly best-first
+            ps.sort(key=lambda p: self._score(p, now), reverse=True)
             return ps
 
     def note_used(self, pool, name):
         self.rr[pool] = name
 
+    def reset_rr(self):
+        self.rr.clear()
+
     # ---- editing
     def add(self, name, key, model=None, base_url=None):
         pool = pool_of(name)
         detected = detect_provider(key)
-        # if the user gave a generic placeholder name, replace it with the detected service
         if detected and (pool in ("default", "new", "custom") or not name):
             name = f"{detected}-{len(self.providers_in(detected)) + 1}"
             pool = detected
@@ -337,7 +363,6 @@ class Manager:
                 self.items.append(new)
             self.health.clear(name=name)
             self.save()
-        # best-effort model fetch (never fatal)
         try:
             self.refresh_models(name)
         except Exception:
@@ -345,7 +370,6 @@ class Manager:
 
     def add_keys(self, pool, keys, base_url=None, model=None):
         pool = pool.strip()
-        # detect from the first key if the pool isn't a known preset
         if pool not in PRESETS and keys:
             det = detect_provider(keys[0])
             if det:
@@ -380,7 +404,6 @@ class Manager:
                 added.append(name)
             if added:
                 self.save()
-        # fire off model fetches (best-effort, one thread per key)
         for nm in added:
             threading.Thread(target=self._safe_refresh, args=(nm,), daemon=True).start()
         return added, dup
@@ -392,6 +415,8 @@ class Manager:
             pass
 
     def refresh_models(self, name, force=True):
+        if os.environ.get("OMNI_NO_REFRESH"):
+            return []
         from . import llm
         p = self.get(name)
         ids = llm.list_models_for_provider(p, force=force)
@@ -412,7 +437,6 @@ class Manager:
             try:
                 ids = self.refresh_models(p.name)
                 out[p.name] = ids
-                # Also update the pool-level cache in llm.py
                 llm._MODEL_CACHE[p.pool] = (time.time(), ids)
             except Exception as e:
                 out[p.name] = f"error: {e}"
@@ -468,7 +492,6 @@ class Manager:
 
     order_by = order_pools
 
-    # ---- display helpers
     def status(self, p, model=None):
         st = self.health.state(p, model or p.model)
         if not st:
@@ -503,6 +526,7 @@ class Manager:
                     "model": p.model,
                     "models": p.models,
                     "models_fetched": p.models_fetched,
+                    "score": round(self._score(p), 3),
                 })
             out.append({"pool": pool, "model": model, "fallbacks": self.fallbacks(pool),
                         "base_url": ps[0].base_url, "counts": counts, "keys": keys})

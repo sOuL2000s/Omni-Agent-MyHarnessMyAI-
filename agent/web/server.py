@@ -1,9 +1,10 @@
+# agent/web/server.py
 """Local web UI for Omni (standard library only).
 
-Security model: it can run shell commands for you, so it
+Security model:
   * binds to 127.0.0.1 by default,
-  * needs a random per-start token (carried in the URL once, then in an HttpOnly SameSite=Strict cookie),
-  * checks the Host header (blocks DNS-rebinding), and
+  * requires a per-start token (URL once, then HttpOnly SameSite=Strict cookie),
+  * checks the Host header (blocks DNS-rebinding),
   * never sends API keys to the browser (only masked tails).
 """
 import hmac
@@ -21,6 +22,7 @@ from urllib.parse import urlparse, parse_qs, quote
 
 from .. import loop, llm, safety, commands
 from ..providers import PRESETS, STRATEGIES
+from ..tools import shell as _shell
 
 
 def _find_index() -> Path:
@@ -51,6 +53,7 @@ class Session:
         self.cancel = threading.Event()
         self.auto = False
         self.approvals = {}
+        self.allowed_tools = set()
         self.touched = time.time()
 
     @property
@@ -83,27 +86,36 @@ class Session:
         return "New chat"
 
     def render(self):
-        """History as UI events."""
         out = []
         for i, m in enumerate(self.history):
-            if i == 0: continue # skip system prompt
+            if i == 0:
+                continue
             r = m.get("role")
             if r == "user":
                 out.append({"type": "user", "text": m.get("content", ""), "idx": i})
             elif r == "assistant":
                 calls = m.get("tool_calls") or []
                 if m.get("content"):
-                    out.append({"type": "assistant" if calls else "final", "text": m["content"], "idx": i})
+                    out.append({"type": "assistant" if calls else "final",
+                                "text": m["content"], "idx": i})
                 for c in calls:
                     fn = c.get("function", {})
-                    out.append({"type": "tool", "name": fn.get("name"), "text": fn.get("arguments", ""), "id": c.get("id"), "idx": i})
+                    out.append({"type": "tool", "name": fn.get("name"),
+                                "text": fn.get("arguments", ""),
+                                "id": c.get("id"), "idx": i})
             elif r == "tool":
                 t = str(m.get("content", ""))
-                out.append({"type": "tool_result", "text": t[:1500], "id": m.get("tool_call_id"), "ok": not t.startswith("ERROR"), "idx": i})
+                out.append({"type": "tool_result", "text": t[:1500],
+                            "id": m.get("tool_call_id"),
+                            "ok": not t.startswith("ERROR"), "idx": i})
         return out
 
     def stop(self):
         self.cancel.set()
+        try:
+            _shell.kill_all()
+        except Exception:
+            pass
         for rec in list(self.approvals.values()):
             rec["allow"] = False
             rec["event"].set()
@@ -135,26 +147,39 @@ class App:
             return s
 
     def run_chat(self, sess, text):
-        def ask(action):
+        def ask(action, tool_name=None):
             if sess.auto:
                 return True
+            if tool_name and tool_name in sess.allowed_tools:
+                return True
             aid = secrets.token_hex(4)
-            rec = {"action": action, "event": threading.Event(), "allow": False}
+            rec = {"action": action, "event": threading.Event(),
+                   "allow": False, "remember": False, "tool": tool_name}
             sess.approvals[aid] = rec
-            sess.emit("approval", action, id=aid)
+            sess.emit("approval", action, id=aid, tool=tool_name)
             rec["event"].wait(600)
             sess.approvals.pop(aid, None)
+            if rec["remember"] and tool_name:
+                sess.allowed_tools.add(tool_name)
             sess.emit("approval_done", "", id=aid, allow=bool(rec["allow"]))
             return bool(rec["allow"])
 
         def work():
-            safety.set_approver(ask)
             try:
-                final = loop.run(self.cfg, sess.history, text, on_event=sess.emit, cancel=sess.cancel)
+                safety.set_approver(lambda action, tool=None: ask(action, tool))
+            except TypeError:
+                safety.set_approver(ask)
+            try:
+                _shell.set_emitter(lambda kind, text, **kw: sess.emit(kind, text, **kw))
+            except Exception:
+                pass
+            try:
+                final = loop.run(self.cfg, sess.history, text,
+                                 on_event=sess.emit, cancel=sess.cancel)
                 sess.emit("final", final)
             except llm.LLMError as e:
                 sess.emit("error", str(e))
-            except Exception as e:  # never let a tool crash kill the server
+            except Exception as e:
                 sess.emit("error", f"{type(e).__name__}: {e}")
             finally:
                 sess.busy = False
@@ -165,9 +190,18 @@ class App:
         sess.busy = True
         threading.Thread(target=work, daemon=True).start()
 
-    # ---- helpers for the keys panel
     def state(self):
         pm = self.cfg.providers
+        mcp_state = []
+        if getattr(self.cfg, "mcp", None):
+            for name, srv in self.cfg.mcp.servers.items():
+                mcp_state.append({
+                    "name": name,
+                    "ready": srv.ready,
+                    "tools": len(srv.tools),
+                    "error": srv.last_error,
+                    "command": " ".join(srv.cmd),
+                })
         return {
             "workspace": str(self.cfg.workspace),
             "strategy": pm.strategy,
@@ -178,6 +212,8 @@ class App:
             "presets": [{"name": k, "base_url": v[0], "model": v[1]} for k, v in PRESETS.items()],
             "auto_approve_env": self.cfg.auto_approve,
             "strict": self.cfg.strict,
+            "mcp": mcp_state,
+            "mcp_load_errors": list(getattr(self.cfg.mcp, "load_errors", [])) if self.cfg.mcp else [],
         }
 
     def probe(self, names):
@@ -192,20 +228,19 @@ class App:
 # ---------------------------------------------------------------- HTTP
 def make_handler(app):
     class H(BaseHTTPRequestHandler):
-        server_version = "OmniUI/2"
+        server_version = "OmniUI/2.1"
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *a):
             pass
 
-        # -- plumbing
         def _send(self, code, body=b"", ctype="application/json", extra=()):
             if isinstance(body, (dict, list)):
                 body = json.dumps(body).encode()
             elif isinstance(body, str):
                 body = body.encode()
             if code >= 400:
-                self.close_connection = True     # body may be unread; don't reuse the socket
+                self.close_connection = True
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -241,7 +276,6 @@ def make_handler(app):
             raw = self._body()
             return json.loads(raw.decode("utf-8")) if raw else {}
 
-        # -- routing
         def do_GET(self):
             self._route("GET")
 
@@ -261,7 +295,8 @@ def make_handler(app):
                             ("Location", "/"),
                             ("Set-Cookie", f"omni_token={app.token}; Path=/; HttpOnly; SameSite=Strict")])
                     if not self._cookie_ok():
-                        return self._send(401, "Open the exact link printed in the terminal when you ran:  omni ui\n", "text/plain; charset=utf-8")
+                        return self._send(401, "Open the exact link printed in the terminal when you ran:  omni ui\n",
+                                          "text/plain; charset=utf-8")
                     return self._send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
                 if not u.path.startswith("/api/"):
                     return self._err(404, "not found")
@@ -282,7 +317,7 @@ def make_handler(app):
             except Exception as e:
                 self._err(500, f"{type(e).__name__}: {e}")
 
-        # -- read endpoints
+        # ---- reads
         def api_state(self, q):
             self._send(200, app.state())
         api_state.method = "GET"
@@ -307,9 +342,12 @@ def make_handler(app):
 
         def api_history(self, q):
             s = app.session(q.get("session", ""))
-            pending = [{"id": k, "action": v["action"]} for k, v in s.approvals.items()]
-            self._send(200, {"items": s.render(), "cursor": len(s.events), "busy": s.busy,
-                             "pending": pending, "auto": s.auto, "strict": app.cfg.strict})
+            pending = [{"id": k, "action": v["action"], "tool": v.get("tool")}
+                       for k, v in s.approvals.items()]
+            self._send(200, {"items": s.render(), "cursor": len(s.events),
+                             "busy": s.busy, "pending": pending,
+                             "auto": s.auto, "strict": app.cfg.strict,
+                             "allowed_tools": sorted(s.allowed_tools)})
         api_history.method = "GET"
 
         def api_sessions(self, q):
@@ -321,7 +359,8 @@ def make_handler(app):
                         hist = json.loads(f.read_text(encoding="utf-8"))
                         t = next((str(m["content"])[:60] for m in hist if m.get("role") == "user"), "")
                         if t:
-                            out.append({"id": f.stem, "title": t})
+                            out.append({"id": f.stem, "title": t,
+                                        "mtime": int(f.stat().st_mtime)})
                     except Exception:
                         continue
             self._send(200, out)
@@ -331,9 +370,11 @@ def make_handler(app):
             ws, out = app.cfg.workspace, []
             for p in sorted(ws.rglob("*")):
                 rel = p.relative_to(ws)
-                if p.is_file() and not any(x.startswith(".") or x in ("__pycache__", "node_modules") for x in rel.parts):
+                if p.is_file() and not any(x.startswith(".") or x in ("__pycache__", "node_modules")
+                                           for x in rel.parts):
                     st = p.stat()
-                    out.append({"path": rel.as_posix(), "size": st.st_size, "mtime": int(st.st_mtime)})
+                    out.append({"path": rel.as_posix(), "size": st.st_size,
+                                "mtime": int(st.st_mtime)})
                 if len(out) >= 500:
                     break
             self._send(200, out)
@@ -348,7 +389,7 @@ def make_handler(app):
                        [("Content-Disposition", f"attachment; filename*=UTF-8''{quote(p.name)}")])
         api_file.method = "GET"
 
-        # -- chat endpoints
+        # ---- chat
         def api_chat(self, q):
             b = self._json_body()
             s = app.session(b.get("session", ""))
@@ -366,13 +407,15 @@ def make_handler(app):
         def api_chat_retry(self, q):
             b = self._json_body()
             s = app.session(b.get("session", ""))
-            if s.busy: return self._err(409, "this chat is still working")
+            if s.busy:
+                return self._err(409, "this chat is still working")
             idx = -1
-            for i in range(len(s.history)-1, -1, -1):
+            for i in range(len(s.history) - 1, -1, -1):
                 if s.history[i].get("role") == "user":
                     idx = i
                     break
-            if idx == -1: return self._err(400, "nothing to retry")
+            if idx == -1:
+                return self._err(400, "nothing to retry")
             text = s.history[idx]["content"]
             s.history = s.history[:idx]
             s.save()
@@ -383,9 +426,11 @@ def make_handler(app):
         def api_chat_edit(self, q):
             b = self._json_body()
             s = app.session(b.get("session", ""))
-            if s.busy: return self._err(409, "this chat is still working")
+            if s.busy:
+                return self._err(409, "this chat is still working")
             idx, text = b.get("index"), b.get("text")
-            if idx is None or idx >= len(s.history): return self._err(400, "invalid index")
+            if idx is None or idx >= len(s.history):
+                return self._err(400, "invalid index")
             s.history = s.history[:idx]
             s.save()
             s.emit("user", text)
@@ -402,6 +447,7 @@ def make_handler(app):
             rec = s.approvals.get(b.get("id"))
             if rec:
                 rec["allow"] = bool(b.get("allow"))
+                rec["remember"] = bool(b.get("remember"))
                 rec["event"].set()
             self._send(200, {"ok": bool(rec)})
 
@@ -427,12 +473,8 @@ def make_handler(app):
             s = app.session(b.get("session", ""))
             idx = b.get("index")
             if idx is not None and 0 <= idx < len(s.history):
-                # If it's a tool call, we might want to delete the result too
-                # but for simplicity let's just delete the one
                 s.history.pop(idx)
                 s.save()
-                # We also need to clear events and re-render or just tell the client to reload
-                # Simplest: client reloads history
                 self._send(200, {"ok": True})
             else:
                 self._err(400, "invalid index")
@@ -448,7 +490,7 @@ def make_handler(app):
             dest.write_bytes(data)
             self._send(200, {"path": dest.name, "size": len(data)})
 
-        # -- keys / models endpoints
+        # ---- keys / models
         def api_pool_model(self, q):
             b = self._json_body()
             pm = app.cfg.providers
@@ -477,8 +519,8 @@ def make_handler(app):
 
         def api_keys_add(self, q):
             b = self._json_body()
-            # Intelligent key extraction: handle spaces, commas, semicolons, and quotes
-            keys = [k.strip("'\" ") for k in re.split(r"[\s,;]+", b.get("keys", "")) if k.strip("'\" ") and not k.strip().startswith("#")]
+            keys = [k.strip("'\" ") for k in re.split(r"[\s,;]+", b.get("keys", ""))
+                    if k.strip("'\" ") and not k.strip().startswith("#")]
             if not keys:
                 raise ValueError("paste at least one key")
             pool = (b.get("pool") or "").strip()
@@ -486,8 +528,10 @@ def make_handler(app):
                 from ..providers import detect_provider
                 pool = detect_provider(keys[0]) or ""
             if pool and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.\-]*", pool):
-                raise ValueError("pool name: letters/digits only, e.g. gemini, openrouter, mygateway")
-            added, dup = app.cfg.providers.add_keys(pool, keys, (b.get("base_url") or None), (b.get("model") or None))
+                raise ValueError("pool name: letters/digits only")
+            added, dup = app.cfg.providers.add_keys(pool, keys,
+                                                    (b.get("base_url") or None),
+                                                    (b.get("model") or None))
             self._send(200, {"added": len(added), "duplicates": dup})
 
         def api_keys_remove(self, q):
@@ -510,9 +554,7 @@ def make_handler(app):
                 raise ValueError("name or pool required")
             self._send(200, {"results": app.probe(names)})
 
-        # -- v2: per-key models, PC browser, runtime workspace change
         def api_key_models(self, q):
-            """Cached model list for one key (fetched if stale)."""
             name = q.get("name", "")
             pm = app.cfg.providers
             p = pm.get(name)
@@ -543,7 +585,6 @@ def make_handler(app):
             self._send(200, {"provider": detect_provider(key)})
 
         def api_browse(self, q):
-            """List any directory on the PC. Used by the folder-picker modal."""
             import string
             path = q.get("path") or str(app.cfg.workspace)
             search = q.get("search", "").strip()
@@ -556,14 +597,13 @@ def make_handler(app):
                 p = p.parent
             if not p.is_dir():
                 p = Path.home()
-            
             entries = []
             try:
                 if search:
-                    # Recursive search for directories/files matching the pattern
                     count = 0
                     for c in p.rglob(f"*{search}*"):
-                        if count >= 200: break
+                        if count >= 200:
+                            break
                         if c.name.startswith(".") and q.get("hidden") != "1":
                             continue
                         try:
@@ -587,7 +627,6 @@ def make_handler(app):
                             continue
             except PermissionError:
                 return self._err(403, "permission denied")
-            
             drives = []
             if os.name == "nt":
                 for d in string.ascii_uppercase:
@@ -616,6 +655,68 @@ def make_handler(app):
             app.cfg.strict = bool(b.get("on"))
             self._send(200, {"strict": app.cfg.strict})
 
+        # ---- MCP
+        def api_mcp_restart(self, q):
+            name = self._json_body().get("name", "")
+            if not getattr(app.cfg, "mcp", None):
+                return self._err(400, "no MCP configured")
+            msg = app.cfg.mcp.restart(name)
+            from ..tools import mcp_bridge
+            mcp_bridge._registered_for = None
+            mcp_bridge.register(app.cfg)
+            self._send(200, {"ok": True, "result": msg})
+
+        def api_mcp_stop(self, q):
+            name = self._json_body().get("name", "")
+            srv = getattr(app.cfg, "mcp", None) and app.cfg.mcp.servers.get(name)
+            if srv:
+                srv.stop()
+            self._send(200, {"ok": True})
+
+        def api_mcp_start(self, q):
+            name = self._json_body().get("name", "")
+            srv = getattr(app.cfg, "mcp", None) and app.cfg.mcp.servers.get(name)
+            if not srv:
+                return self._err(404, "no such MCP server")
+            try:
+                srv.start()
+                from ..tools import mcp_bridge
+                mcp_bridge._registered_for = None
+                mcp_bridge.register(app.cfg)
+                self._send(200, {"ok": True, "tools": len(srv.tools)})
+            except Exception as e:
+                self._err(500, str(e))
+
+        def api_mcp_add(self, q):
+            b = self._json_body()
+            name = (b.get("name") or "").strip()
+            command = (b.get("command") or "").strip()
+            if not name or not command:
+                raise ValueError("name and command are required")
+            cfg_path = app.cfg.data_dir / "mcp.json"
+            try:
+                data = json.loads(cfg_path.read_text(encoding="utf-8-sig")) if cfg_path.exists() else {"servers": {}}
+            except Exception:
+                data = {"servers": {}}
+            data.setdefault("servers", {})[name] = {
+                "command": command,
+                "args": b.get("args") or [],
+                "env": b.get("env") or {},
+                "enabled": True,
+            }
+            cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            from ..mcp import MCPServer
+            srv = MCPServer(name, command, b.get("args") or [], b.get("env") or {}, b.get("cwd"))
+            try:
+                srv.start()
+                app.cfg.mcp.servers[name] = srv
+                from ..tools import mcp_bridge
+                mcp_bridge._registered_for = None
+                mcp_bridge.register(app.cfg)
+                self._send(200, {"ok": True, "tools": len(srv.tools)})
+            except Exception as e:
+                self._err(500, str(e))
+
     return H
 
 
@@ -642,6 +743,9 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True):
         print("WARNING: listening beyond this computer. Anyone with the link can run commands as you.")
     if cfg.providers.load_error:
         print("WARNING:", cfg.providers.load_error)
+    if getattr(cfg, "mcp", None) and cfg.mcp.servers:
+        names = ", ".join(f"{n}({len(s.tools)})" for n, s in cfg.mcp.servers.items())
+        print(f"MCP servers: {names}")
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
@@ -650,3 +754,5 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True):
         print("\nbye")
     finally:
         srv.server_close()
+        if getattr(cfg, "mcp", None):
+            cfg.mcp.stop_all()

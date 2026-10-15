@@ -42,3 +42,4 @@ data/*.tmp
 .idea/
 .DS_Store
 Thumbs.db
+mcp.json

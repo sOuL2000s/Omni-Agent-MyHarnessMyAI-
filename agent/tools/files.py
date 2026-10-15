@@ -1,3 +1,4 @@
+# agent/tools/files.py
 import fnmatch
 import re
 from .registry import tool
@@ -24,7 +25,8 @@ def read_file(cfg, path, start=1, end=None):
 def write_file(cfg, path, content):
     p = resolve(cfg, path, write=True)
     if p.exists():
-        confirm(cfg, f"Overwrite {p}") if not _in_ws(cfg, p) else None
+        if not _in_ws(cfg, p):
+            confirm(cfg, f"Overwrite {p}", tool="write_file")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return f"Wrote {len(content)} chars to {p}"
