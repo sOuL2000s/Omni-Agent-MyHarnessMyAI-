@@ -18,11 +18,24 @@ import uuid
 from .registry import tool, get_cancel
 from ..safety import confirm, Denied
 
+# This is a SPEED BUMP, not a guard. Approval prompts are the real safety net.
+# It will NOT catch things like `mv ~/Documents /tmp/x` or base64-encoded
+# payloads; it only stops the obvious catastrophic typos.
 BLOCK = [
-    r"rm\s+-rf\s+/(\s|$)",
-    r"mkfs",
-    r":\(\)\s*\{",           # fork bomb
-    r"dd\s+if=.*of=/dev/",
+    r"rm\s+-rf\s+/(\s|$)",                       # rm -rf /
+    r"rm\s+-rf\s+/\*",                           # rm -rf /*
+    r"rm\s+-rf\s+~\s*(&|;|$)",                   # rm -rf ~
+    r"rm\s+-rf\s+\$HOME",                        # rm -rf $HOME
+    r"--no-preserve-root",
+    r"\bmkfs(\.[a-z0-9]+)?\b",
+    r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?\s*:", # fork bomb
+    r"dd\s+if=.*of=/dev/(sd|nvme|hd|vd|disk)",
+    r"\bshred\b.*(/dev/|/etc/|/boot/)",
+    r"chmod\s+-R\s+0+\s+/",                      # chmod -R 000 /
+    r"chown\s+-R\s+.*\s+/",                      # chown -R ... /
+    r">\s*/dev/(sd|nvme|hd|vd)",                 # clobber a disk
+    r"\bformat\s+[a-z]:",                        # Windows format C:
+    r"\bdel\s+/[sf]\s+/[sf]\s+[a-z]:\\",         # Windows del /s /q C:\
 ]
 
 _ACTIVE: dict = {}
@@ -81,8 +94,9 @@ def active_jobs() -> list:
 
 @tool(
     "run_shell",
-    "Run a shell command in the workspace. Long commands stream their output "
-    "back and can be cancelled instantly with the Stop button.",
+    "Run a shell command in the workspace. Long commands stream output and "
+    "can be cancelled with Stop. NOTE: the blocklist only stops obvious "
+    "catastrophes; approval prompts are the real guard.",
     {"command": {"type": "string"},
      "timeout": {"type": "integer"},
      "background": {"type": "boolean"},

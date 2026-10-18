@@ -1,10 +1,12 @@
 # agent/providers.py
 """Providers (= API keys), pools (= keys of one service) and key health.
 
-This version adds:
+Design notes:
   * score-based key selection (health-weighted, not blind round-robin),
   * last_error_at tracking so recently-failed keys deprioritize briefly,
-  * a `reset_rr()` helper the UI can use when the user wants to re-shuffle.
+  * `Health.save()` prunes expired cooldowns so state.json stays small,
+  * `refresh_models()` only auto-picks a default when the key has no model yet
+    (so a flaky /models response can't silently change the user's choice).
 """
 import json
 import os
@@ -111,21 +113,26 @@ class Provider:
 
 class Health:
     TRANSIENT = ("rate", "server", "network")
+    EXPIRE_INTERVAL = 5.0  # seconds between automatic prune passes
 
     def __init__(self, path=None):
         self.path = path
         self.lock = threading.RLock()
         self.key, self.key_model, self.pool_model, self.stats = {}, {}, {}, {}
+        self._last_expire = 0.0
         if path:
             d, _ = read_json(path, {})
             self.key = d.get("key", {})
             self.key_model = d.get("key_model", {})
             self.pool_model = d.get("pool_model", {})
             self.stats = d.get("stats", {})
-            self._expire()
+            self._expire(force=True)
 
-    def _expire(self):
+    def _expire(self, force=False):
         now = time.time()
+        if not force and now - self._last_expire < self.EXPIRE_INTERVAL:
+            return
+        self._last_expire = now
         for table in (self.key, self.key_model, self.pool_model):
             for k in [k for k, v in table.items() if v["until"] <= now]:
                 del table[k]
@@ -133,14 +140,17 @@ class Health:
     def save(self):
         if not self.path:
             return
-        try:
-            write_json(self.path, {"key": self.key, "key_model": self.key_model,
-                                   "pool_model": self.pool_model, "stats": self.stats})
-        except Exception:
-            pass
+        with self.lock:
+            self._expire(force=True)  # drop dead entries before persisting
+            try:
+                write_json(self.path, {"key": self.key, "key_model": self.key_model,
+                                       "pool_model": self.pool_model, "stats": self.stats})
+            except Exception:
+                pass
 
     def state(self, p, model):
         with self.lock:
+            self._expire()
             now = time.time()
             for scope, table, k in (("key", self.key, p.name),
                                     ("key_model", self.key_model, f"{p.name}|{model}"),
@@ -188,6 +198,11 @@ class Health:
                     elif pool and (base == pool or pool_of(base) == pool):
                         del table[k]
             self.save()
+
+    def snapshot(self):
+        """Deep-ish copy of the stats table for consistent scoring."""
+        with self.lock:
+            return {k: dict(v) for k, v in self.stats.items()}
 
 
 class Manager:
@@ -299,16 +314,19 @@ class Manager:
         return int(self.settings.get("max_wait", 90))
 
     # ---- smart key picking -------------------------------------------------
-    def _score(self, p, now=None):
+    def _score(self, p, now=None, stats=None):
         """Higher = better. Health-weighted with a mild recency penalty."""
         now = now or time.time()
-        s = self.health.stats.get(p.name, {})
-        ok = s.get("ok", 0)
-        fail = s.get("fail", 0)
+        if stats is None:
+            stats = self.health.snapshot().get(p.name, {})
+        else:
+            stats = stats.get(p.name, {})
+        ok = stats.get("ok", 0)
+        fail = stats.get("fail", 0)
         total = ok + fail
         # Bayesian success rate with 1 ok / 1 fail priors so new keys aren't frozen out.
         rate = (ok + 1) / (total + 2)
-        recent_fail = 1.0 if (now - s.get("last_error_at", 0)) < 60 else 0.0
+        recent_fail = 1.0 if (now - stats.get("last_error_at", 0)) < 60 else 0.0
         # small penalty for lifetime fail count, capped so it never dominates
         fail_pen = min(0.3, 0.02 * fail)
         return rate - 0.25 * recent_fail - fail_pen
@@ -319,25 +337,27 @@ class Manager:
             if not ps:
                 return ps
             now = time.time()
+            stats = self.health.snapshot()
+            # Sort once by score (failover = strictly best-first).
+            ps.sort(key=lambda p: self._score(p, now, stats), reverse=True)
             if self.strategy == "round_robin" and len(ps) > 1:
-                # Sort by score, but rotate the top 3 to spread quota across them.
-                ps.sort(key=lambda p: self._score(p, now), reverse=True)
+                # Rotate the top 3 to spread quota across them.
                 top, rest = ps[:3], ps[3:]
-                last = self.rr.get(pool)
                 names = [p.name for p in top]
+                last = self.rr.get(pool)
                 if last in names:
                     i = names.index(last) + 1
                     top = top[i:] + top[:i]
                 return top + rest
-            # failover: strictly best-first
-            ps.sort(key=lambda p: self._score(p, now), reverse=True)
             return ps
 
     def note_used(self, pool, name):
-        self.rr[pool] = name
+        with self.lock:
+            self.rr[pool] = name
 
     def reset_rr(self):
-        self.rr.clear()
+        with self.lock:
+            self.rr.clear()
 
     # ---- editing
     def add(self, name, key, model=None, base_url=None):
@@ -423,7 +443,10 @@ class Manager:
         with self.lock:
             p.models = ids
             p.models_fetched = time.time()
-            if ids and p.model not in ids:
+            # Only auto-pick when the key has NO model yet, or the current
+            # model is empty. Never silently replace a model the user chose —
+            # a flaky /models response would otherwise overwrite their setting.
+            if ids and not p.model:
                 preferred = _pick_default_model(p.pool, ids)
                 if preferred:
                     p.model = preferred
@@ -504,12 +527,15 @@ class Manager:
 
     def summary(self):
         out = []
+        # Take one snapshot of stats so we don't re-acquire the lock per key.
+        stats_all = self.health.snapshot()
+        now = time.time()
         for pool, ps in self.pools():
             model = self.model_of(pool)
             keys, counts = [], {"ready": 0, "cooling": 0, "invalid": 0}
             for p in ps:
                 st = self.health.state(p, model)
-                stats = self.health.stats.get(p.name, {})
+                stats = stats_all.get(p.name, {})
                 if not st:
                     counts["ready"] += 1
                 elif st["kind"] in ("auth", "billing"):
@@ -526,7 +552,7 @@ class Manager:
                     "model": p.model,
                     "models": p.models,
                     "models_fetched": p.models_fetched,
-                    "score": round(self._score(p), 3),
+                    "score": round(self._score(p, now, stats_all), 3),
                 })
             out.append({"pool": pool, "model": model, "fallbacks": self.fallbacks(pool),
                         "base_url": ps[0].base_url, "counts": counts, "keys": keys})

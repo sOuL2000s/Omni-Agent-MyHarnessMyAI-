@@ -1,0 +1,4 @@
+# Build-time dependencies (Nuitka needs a C compiler; see README §9).
+nuitka
+ordered-set
+zstandard

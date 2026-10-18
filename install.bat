@@ -6,4 +6,4 @@ pip install -r requirements.txt
 if not exist .env copy .env.example .env
 echo.
 echo Done. Start the web UI with:  omni-ui.bat     (terminal chat: omni.bat)
-echo Add your API keys in the UI under "Keys & models", or edit .env.
+echo Add your API keys in the UI under "Keys & models", or from the terminal: /add KEY

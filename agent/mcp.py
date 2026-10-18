@@ -149,9 +149,16 @@ class MCPServer:
                     self.proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
+                    self.proc.wait(timeout=3)
         except Exception:
             pass
+        for stream in ("stdin", "stdout", "stderr"):
+            try:
+                getattr(self.proc, stream).close()
+            except Exception:
+                pass
         self.ready = False
+        self.tools = []
 
 
 def _expand_env(value):

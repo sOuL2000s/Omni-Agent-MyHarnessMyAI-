@@ -3,6 +3,8 @@
 
   python build.py                 -> dist/omni.dist/   (folder, fast startup)  [DEFAULT]
   python build.py --onefile       -> dist/omni.exe     (single file, slower startup)
+  python build.py --with-browser  -> also bundle selenium + webdriver_manager so the
+                                     built exe can render JS pages via AGENT_BROWSER=selenium
   python build.py --clean         -> wipe dist/ and the Nuitka cache first
 
 Both outputs are fully self-contained: the end user does NOT need Python,
@@ -31,7 +33,7 @@ def ensure_nuitka():
     except ImportError:
         print("Installing Nuitka and its helpers…")
         subprocess.check_call([sys.executable, "-m", "pip", "install",
-                               "nuitka", "ordered-set", "zstandard"])
+                               "-r", str(ROOT / "requirements-build.txt")])
 
 
 def ensure_requirements():
@@ -54,7 +56,7 @@ def clean():
             shutil.rmtree(p, ignore_errors=True)
 
 
-def build(onefile=False):
+def build(onefile=False, with_browser=False):
     entry = ROOT / "omni_entry.py"
     if not entry.exists():
         sys.exit("omni_entry.py not found at project root")
@@ -69,8 +71,6 @@ def build(onefile=False):
         "--include-package=pptx",
         "--include-package=lxml",
         "--include-package=tzdata",
-        "--include-package=selenium",
-        "--include-package=webdriver_manager",
         # --- GUI launcher needs tkinter. Nuitka requires the plugin flag for
         #     tkinter to work at runtime; the --include-module lines are not enough.
         "--enable-plugin=tk-inter",
@@ -90,9 +90,16 @@ def build(onefile=False):
         "--remove-output",
         "--company-name=Omni",
         "--product-name=Omni Agent",
-        "--file-version=2.0.0.0",
-        "--product-version=2.0.0.0",
+        "--file-version=2.1.0.0",
+        "--product-version=2.1.0.0",
     ]
+    if with_browser:
+        # Opt-in: bundle Selenium so the shipped exe can render JS pages.
+        # Grows the build by ~30 MB. See README §9.3.
+        cmd += [
+            "--include-package=selenium",
+            "--include-package=webdriver_manager",
+        ]
     if onefile:
         cmd.append("--onefile")               # optional: also pack into one file
     if os.name == "nt":
@@ -137,12 +144,15 @@ def build(onefile=False):
         print(f"  {exe} chat      terminal chat (no GUI)")
         print(f"  {exe} ui        web UI")
         print("\nShip the whole 'omni.dist' folder (zip it). The user runs omni.exe inside it.")
+    if with_browser:
+        print("\nThis build includes Selenium — AGENT_BROWSER=selenium will work at runtime.")
 
 
 if __name__ == "__main__":
     if "--clean" in sys.argv:
         clean()
     onefile = "--onefile" in sys.argv
+    with_browser = "--with-browser" in sys.argv
     if not have_compiler():
         print("WARNING: no C compiler detected.")
         if os.name == "nt":
@@ -154,4 +164,4 @@ if __name__ == "__main__":
             sys.exit(1)
     ensure_nuitka()
     ensure_requirements()
-    build(onefile=onefile)
+    build(onefile=onefile, with_browser=with_browser)

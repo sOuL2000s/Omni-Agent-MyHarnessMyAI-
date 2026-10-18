@@ -73,22 +73,22 @@ itself, so one dead key or exhausted free quota never stops your work.
 |---|---|
 | **Runs anywhere** | One `.exe` (Windows), one folder (macOS/Linux). No Python, no Docker, no dependencies. |
 | **Any LLM** | Gemini, OpenRouter, OpenAI, Anthropic, Groq, DeepSeek, Ollama, LM Studio, OmniRoute, or any OpenAI-compatible URL. |
-| **Multi-key rotation** | Add 30 Gemini keys; Omni round-robins between them and cools down the one that just hit a quota. |
+| **Multi-key rotation** | Add 30 Gemini keys; Omni spreads calls across them by health score and cools down the one that just hit a quota. |
 | **Model fallback** | If `gemini-2.5-pro` runs out of quota, it tries `gemini-2.5-flash` on the *same key* automatically. |
 | **Provider failover** | If Gemini is entirely down, it moves on to your OpenRouter pool, then your Groq pool. |
 | **Auto key detection** | Paste `AIza...` — Omni knows that's Gemini. `sk-or-v1-...` — OpenRouter. `gsk_...` — Groq. |
-| **Auto model discovery** | Every key fetches its available model list from the provider. You pick from a dropdown. |
-| **Full filesystem access** | Reads and writes *anywhere on your PC*, with a confirmation prompt outside the workspace. |
+| **Auto model discovery** | Every key fetches its available model list from the provider. You pick from a typeable dropdown (important for Gemini/OpenRouter, which list 100+ models). |
+| **Full filesystem access** | Reads and writes *anywhere on your PC*, with a confirmation prompt outside the workspace. A filesystem root (`/`, `C:\`) is refused as a workspace because it would silently disable this guard. |
 | **Word / Excel / PowerPoint** | Edits `.docx`, `.xlsx`, `.pptx` while preserving formatting. |
-| **Shell** | Runs commands in a shell, with a blocklist for catastrophic ones (`rm -rf /`, `mkfs`, fork bombs). |
-| **Web fetch** | Reads any URL, strips HTML, returns plain text. |
+| **Shell** | Runs commands in a shell, with a blocklist for catastrophic ones (`rm -rf /`, `mkfs`, fork bombs). It is a **speed bump, not a guard** — approval prompts are the real protection. |
+| **Web fetch** | Reads any URL, strips HTML, returns plain text. Fast (`urllib`) by default. Set `AGENT_BROWSER=selenium` to render JavaScript pages with a headless Chrome (source installs only — see §9.3). |
 | **Long-term memory** | Save facts, preferences, notes; they come back in every future session. |
 | **Chat history** | Every session is persisted in `data/sessions/`; the sidebar switches between them. |
 | **Strict mode** | After a tool-using answer, a second model call verifies factual claims and flags unverified ones. |
 | **Approval flow** | Shell commands and writes outside the workspace pop up an Allow/Deny dialog. |
 | **Auto-approve** | One toggle (or env var) skips all prompts. For sandboxes and trusted workspaces. |
-| **Workspace picker** | Click the workspace chip in the header to browse your entire PC and change the root on the fly. |
-| **Stop button** | Cancels a running task mid-flight, releases pending approvals. |
+| **Workspace picker** | Click the workspace chip in the header to browse your entire PC and change the root on the fly. A confirmation explains what "inside" means before applying. |
+| **Stop button** | Cancels a running task mid-flight, releases pending approvals, kills child processes. |
 | **Zero-config start** | Install, add one key, start working. Everything else is optional. |
 
 ---
@@ -154,7 +154,7 @@ That's it. The agent is ready.
 ### For builders (producing the `.exe`)
 
 See [§9 Building the standalone .exe](#9-building-the-standalone-exe). TL;DR:
-`install.bat`, `python -m pip install nuitka ordered-set zstandard`,
+`install.bat`, `python -m pip install -r requirements-build.txt`,
 `build.bat`, then `dist\omni.dist\omni.exe`.
 
 ---
@@ -248,10 +248,10 @@ Shows a small native window:
 ```
 
 - **Terminal chat** → opens a new terminal window running the CLI chat. The
-  launcher stays open (you can launch a second one, or the web UI, without
-  restarting).
+  launcher stays open so you can also start the web UI.
 - **Web UI** → starts the server in the background and opens your browser. The
-  status line shows the URL; closing the launcher stops the server.
+  status line shows the actual URL (the port may have been bumped to avoid a
+  conflict); closing the launcher stops the server.
 - **Quit** → closes everything.
 
 To skip the launcher and go straight to the terminal, either run
@@ -346,10 +346,12 @@ you can do here, plus file uploads and a live keys panel.
 └───────────┴──────────────────────────────────────────┴──────────────┘
 ```
 
-- **Left sidebar** — your chat sessions. `✕` deletes one.
+- **Left sidebar** — your chat sessions. `✕` deletes one. Long titles end in
+  `…`.
 - **Header** — workspace chip (click to browse your PC and change the root),
-  a chip showing which key/model answered last, the **strict** toggle, the
-  **auto-approve** toggle, and the **Keys & models** button.
+  a chip showing which pool/model answered last (click for the full route:
+  pool · key · model · reason), the **strict** toggle, the **auto-approve**
+  toggle, and the **Keys & models** button.
 - **Center** — the conversation. Tool calls show as collapsible cards. Shell
   commands and outside-workspace writes pop up an Allow/Deny dialog.
 - **Right panel** — keys, models, files. Opens with the **Keys & models**
@@ -363,14 +365,23 @@ automatic:
 - The model decides to call a tool (e.g. `read_file`). You see a card with the
   tool name and arguments. Expand it to see the raw arguments.
 - The tool runs. The card gets a green dot (success) or red dot (error), and
-  the output appears inside it.
+  the output appears inside it. Long-running shell commands stream their output
+  as it happens (coalesced to ~10 updates/sec so the UI stays responsive).
 - The model continues with the result. You see its reasoning as a dimmed
   "working" message, then the final answer.
 - If the model switched keys or models mid-answer (because of a quota hit),
-  you see an amber `↪ using fallback …` notice.
+  you see an amber `↪ using fallback …` notice, and the progress card shows
+  which key is being retried and why (humanized: "gemini-3 (gemini-2.5-flash)
+  rate-limited").
 - If strict mode is on and the answer contains claims the model didn't
   actually verify with a tool, an amber `⚠ Unverified claim(s)…` banner
   appears under the answer.
+- If all keys fail, the error note has a **Retry** button so you don't have to
+  retype the prompt.
+
+Every message has **Copy** (and **Retry** on assistant/final answers); user
+messages also have **Edit** and **Delete**. The user bubble is rendered with
+its history index immediately, so Edit/Delete work before the run finishes.
 
 ### 6.3 The **Keys & models** panel
 
@@ -389,29 +400,33 @@ provider added new models since you last used it.
 - **Base URL** — the service endpoint.
 - **Model row** — the pool's default model (used when a key has no override),
   an **Apply** button (changes the model for all keys of the pool at once),
-  and a **List…** button (fetches the live model list).
+  and a **List…** button (fetches the live model list). The model field is a
+  **typeable** `<input list>` — Gemini and OpenRouter list 100+ models, so a
+  native dropdown would be unusable. Type to filter.
 - **Fallback row** — comma-separated list of models to try when the chosen
   one hits a quota. **Quotas are per model** — if `gemini-2.5-pro` is used up,
   `gemini-2.5-flash-lite` on the *same key* still works. Set one or two.
 - **Key list** — every key with a health dot, its masked form, its stats, a
-  **model dropdown per key** (choose a different model for a specific key),
-  a ↻ button to refresh that one key's models, a **test** button, and ✕ to
-  remove it.
-- **Add keys to <pool>** — paste more keys, one per line.
+  **typeable model box per key** (choose a different model for a specific
+  key), a ↻ button to refresh that one key's models, a **test** button, and
+  ✕ to remove it.
+- **Add keys to <pool>** — paste more keys, one per line. A paste-in-progress
+  survives re-renders of the panel.
 - **Test one / Test all** — real API calls. Shows which keys work.
 - **Reset cooldowns** — clears health state for the pool.
 - **Remove service** — deletes the pool and all its keys.
 
-**Add a service card** (bottom) — the fast path. Pick a preset (`gemini`,
-`openrouter`, `openai`, `groq`, `deepseek`, `anthropic`, `ollama`, or
-*Custom*), paste one or more keys, click **Add**. Omni detects the provider
-from the key format if you leave the name blank, fetches the model list, and
-picks a sensible default.
+**Add a service card** — the fast path. Pick a preset (`gemini`, `openrouter`,
+`openai`, `groq`, `deepseek`, `anthropic`, `ollama`, or *Custom*), paste one or
+more keys, click **Add**. Omni detects the provider from the key format if you
+leave the name blank, fetches the model list, and picks a sensible default.
+When there are no pools yet, this card is shown **at the top** of the panel so
+a first-time user lands directly on it.
 
 ### 6.4 The **Files** panel
 
-- **Upload…** or drag-and-drop files anywhere on the chat area to upload them
-  into the workspace.
+- **Upload…** or drag-and-drop files (onto the chat area or the composer) to
+  upload them into the workspace. Files larger than 2 MB show upload progress.
 - The list shows every file in the workspace with size and a download link.
 - Uploaded files appear in the chat box as `[file in workspace: name.docx]`
   so you can immediately ask Omni to work on them.
@@ -421,12 +436,17 @@ picks a sensible default.
 Click the **workspace chip** in the header. A modal opens showing your whole
 PC:
 
-- **⬆ Up** to go to the parent directory.
+- **⬆ Up** to go to the parent directory; **←** to go back to the previous
+  location.
 - **Drive buttons** on Windows to jump between `C:\`, `D:\`, etc.
-- Click a folder to enter it.
-- Click **Use this folder** to make it Omni's new root. Relative paths in the
-  agent's tools resolve against this folder; outside-workspace paths still
-  trigger an approval prompt.
+- **Filter…** to search the current folder; tick **deep search** to search
+  recursively (prunes `node_modules`, `__pycache__`, `.git`, `.venv` and stops
+  after 200 hits so it never hangs on `C:\`).
+- Click a folder to enter it, **Use this folder** to make it Omni's new root.
+  A **confirmation dialog** warns you that files under the new folder will be
+  treated as "inside" and won't prompt for approval. The picker refuses a
+  filesystem root (`/`, `C:\`) and any ancestor of the `data/` folder (which
+  would expose your API keys to the agent's own file tools).
 
 ### 6.6 Strict mode and auto-approve toggles
 
@@ -548,15 +568,16 @@ For every request, Omni tries, in order:
 ```
 for each pool (primary first):
     for each model in [chosen model, fallback models…]:
-        for each usable key in the pool:
+        for each usable key in the pool (scored best-first):
             try the request
               success → return
               failure → classify, cooldown the right thing, continue
 ```
 
-Meaning: your first 30 Gemini keys are tried round-robin; if they all hit a
-`gemini-2.5-pro` daily quota, Omni moves to `gemini-2.5-flash-lite` on the
-same keys; if Gemini is down entirely, it moves to OpenRouter.
+Keys are **scored by health** (a Bayesian success rate with a small recency
+penalty for recent failures), not blindly round-robined. In `round_robin`
+mode the top three keys rotate to spread quota; in `failover` mode they are
+tried strictly best-first.
 
 ### 8.3 Strategies
 
@@ -580,7 +601,7 @@ same keys; if Gemini is down entirely, it moves to OpenRouter.
 If every key is only briefly rate-limited, Omni **waits** (up to
 `AGENT_MAX_WAIT`, default 90 s) for the first one to free up instead of
 failing. Cooldowns are saved in `data/state.json`, so a daily quota hit is
-remembered after a restart.
+remembered after a restart. Expired entries are pruned automatically.
 
 ### 8.5 Auto-detection of providers
 
@@ -601,9 +622,11 @@ override by naming the pool explicitly: `/add mypool KEY`.
 ### 8.6 Model discovery
 
 Every key is asked for its `/models` endpoint when added. The results are
-cached on the key and shown in the UI's per-key dropdown. Click **↻ Refresh
+cached on the key and shown in the UI's per-key model box. Click **↻ Refresh
 all model lists** if a provider adds models. The pool's default model (top of
-the card) applies to any key without an override.
+the card) applies to any key without an override. **A refresh never silently
+replaces a model you chose** — the auto-pick only fires when a key has no model
+at all.
 
 ---
 
@@ -621,7 +644,7 @@ touches it.
   - **Linux:** `sudo apt install build-essential`
 - **Nuitka and its helpers:**
   ```
-  python -m pip install nuitka ordered-set zstandard
+  python -m pip install -r requirements-build.txt
   ```
 
 Verify the compiler is reachable:
@@ -667,6 +690,18 @@ builds are 2–3 minutes.
 - `docx`, `openpyxl`, `pptx`, `lxml` (for Office files).
 - `tzdata` (for the Pacific-midnight quota reset logic on Windows).
 
+**Not** included by default: `selenium` and `webdriver-manager`. That means
+`AGENT_BROWSER=selenium` does **not** work in a shipped `.exe` — `web_fetch`
+always uses the fast `urllib` path, and `web_search` returns the "needs a
+browser" message. If you need JS rendering in the exe, rebuild with:
+
+```
+python build.py --with-browser
+```
+
+which adds `--include-package=selenium --include-package=webdriver_manager`
+and grows the build by ~30 MB. Most users don't need it.
+
 ### 9.4 Testing the build
 
 1. Move `dist/omni.dist/` (or `dist/omni.exe`) to a **machine without Python**.
@@ -697,23 +732,26 @@ with `OMNI_NO_GUI=1` or `omni.exe chat`.
 
 All settings are optional. Copy `.env.example` to `.env` and edit. Omni reads
 it from the project root (source) or the folder next to the exe (frozen).
+Values already exported in your shell take precedence (the loader uses
+`os.environ.setdefault`).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AGENT_BASE_URL` | `http://localhost:20128/v1` | Fallback gateway URL if you don't add keys through the UI |
-| `AGENT_API_KEY` | *(empty)* | Fallback API key |
-| `AGENT_MODEL` | `auto` | Fallback model |
-| `AGENT_WORKSPACE` | *(your home)* | Folder relative paths resolve against. Empty = home folder |
-| `AGENT_ALLOW_OUTSIDE` | `1` | `1` = allow read/write anywhere on the PC (still asks for approval) |
-| `AGENT_AUTO_APPROVE` | `0` | `1` = skip all prompts. **Dangerous.** See §11 |
-| `AGENT_STRICT` | `1` | `1` = verify factual claims in answers (see §12) |
-| `AGENT_MAX_TURNS` | `60` | Max tool-call rounds per task |
-| `AGENT_TEMPERATURE` | `0.2` | Model temperature. Lower = less creative, more factual |
-| `AGENT_TIMEOUT` | `180` | Seconds per HTTP call to the LLM |
-| `AGENT_STRATEGY` | `round_robin` | `round_robin` or `failover` |
-| `AGENT_MAX_WAIT` | `90` | Seconds to wait for a rate-limited key before giving up |
-| `AGENT_UI_TOKEN` | *(random)* | Fixed token for the web UI link. Useful for bookmarks |
-| `OMNI_NO_GUI` | *(unset)* | `1` = skip the launcher and go straight to the terminal |
+| `AGENT_BASE_URL` | `http://localhost:20128/v1` | **Fallback** gateway URL — only used when `data/providers.json` doesn't exist yet. Add real keys through the UI or `/add` instead. |
+| `AGENT_API_KEY` | *(empty)* | Fallback API key (same caveat). |
+| `AGENT_MODEL` | `auto` | Fallback model (same caveat). |
+| `AGENT_WORKSPACE` | *(your home)* | Folder relative paths resolve against. Empty = home folder. **A filesystem root (`/`, `C:\`) is refused at startup** because it disables the outside-workspace approval guard. |
+| `AGENT_ALLOW_OUTSIDE` | `1` | `1` = allow read/write anywhere on the PC (still asks for approval). |
+| `AGENT_AUTO_APPROVE` | `0` | `1` = skip all prompts. **Dangerous.** See §11. |
+| `AGENT_STRICT` | `1` | `1` = verify factual claims in answers (see §12). |
+| `AGENT_MAX_TURNS` | `60` | Max tool-call rounds per task. |
+| `AGENT_TEMPERATURE` | `0.2` | Model temperature. Lower = less creative, more factual. |
+| `AGENT_TIMEOUT` | `180` | Seconds per HTTP call to the LLM. |
+| `AGENT_STRATEGY` | `round_robin` | `round_robin` or `failover`. |
+| `AGENT_MAX_WAIT` | `90` | Seconds to wait for a rate-limited key before giving up. |
+| `AGENT_UI_TOKEN` | *(random)* | Fixed token for the web UI link. Useful for bookmarks. |
+| `AGENT_BROWSER` | *(unset)* | `selenium` = use a headless Chrome for `web_fetch` / `web_search` (opt-in; see §9.3). |
+| `OMNI_NO_GUI` | *(unset)* | `1` = skip the launcher and go straight to the terminal. |
 
 Keys live in `data/providers.json`, not in `.env`. Add them via the UI or the
 CLI. Treat the whole `data/` folder as a secret.
@@ -732,13 +770,18 @@ a real capability with real risks. Here's exactly how the safety layers work.
    PC are allowed, but trigger a confirmation prompt unless auto-approve is on.
 2. **Approval prompts** — any shell command, and any write *outside* the
    workspace, asks for Allow / Deny. In the terminal, it's a `y/N` prompt. In
-   the web UI, it's a modal.
+   the web UI, it's a modal. "Don't ask again for this tool" is per-session.
 3. **Shell blocklist** — a small set of catastrophic patterns is refused
-   outright regardless of approval: `rm -rf /`, `mkfs`, fork bombs,
-   `dd if=...of=/dev/...`.
+   outright regardless of approval: `rm -rf /`, `rm -rf /*`, `rm -rf ~`,
+   `--no-preserve-root`, `mkfs`, fork bombs, `dd if=...of=/dev/...`, `chmod -R
+   000 /`, `format C:`, etc. It is a **speed bump, not a guard** — it will not
+   catch `mv ~/Documents /tmp/x` or base64-encoded payloads.
 4. **Web UI hardening** — binds to `127.0.0.1` only, requires a per-start
-   token, checks the `Host` header (blocks DNS rebinding), and never sends API
-   keys to the browser (only masked tails like `sk-...abc`).
+   token, checks the `Host` header (blocks DNS rebinding), never sends API
+   keys to the browser (only masked tails like `sk-...abc`), and **refuses to
+   use a filesystem root or a parent of `data/` as the workspace**.
+5. **Startup guard** — `config.load()` exits with code 2 and a clear message
+   when `AGENT_WORKSPACE` points at a filesystem root.
 
 ### 11.2 Auto-approve — read this before enabling
 
@@ -765,8 +808,8 @@ with `AGENT_UI_TOKEN` set to a long random string.
 
 ### 11.4 Where keys are stored
 
-`data/providers.json`, plain text, `chmod 600` on Unix. Back it up carefully
-or not at all. The `.gitignore` excludes it.
+`data/providers.json`, plain text, `chmod 600` on Unix (`data/` itself is
+`chmod 700`). Back it up carefully or not at all. The `.gitignore` excludes it.
 
 ---
 
@@ -870,7 +913,7 @@ never touch your real `data/` folder or make real API calls.
 ```
 python tests/test_failover.py     # key rotation, quotas, model fallback, waiting, persistence
 python tests/test_agent.py        # tool loop, workspace guard, approvals
-python tests/test_web.py          # web server: auth, chat + approvals, key/model endpoints
+python tests/test_web.py          # web server: auth, chat + approvals, key/model endpoints, workspace guard
 ```
 
 Or all at once:
@@ -878,6 +921,10 @@ Or all at once:
 ```
 python -m unittest discover tests
 ```
+
+CI runs these on Ubuntu, Windows, and macOS for Python 3.10 and 3.12 — see
+`.github/workflows/test.yml`. The workflow installs only the runtime test
+deps (`python-docx openpyxl python-pptx tzdata`), skipping Selenium.
 
 The tests are a good way to see what Omni actually does when a key hits a
 quota, when a model doesn't exist, when the user denies approval, etc. Read
@@ -904,6 +951,16 @@ Fixes:
    other Google projects.
 4. If a pool shows `model not available`, click **List…** and pick a model
    that exists.
+5. If the note has a **Retry** button, click it after fixing the cause.
+
+### "workspace is a filesystem root"
+
+Omni refuses to start when `AGENT_WORKSPACE` (or the workspace picker) points
+at `/` or `C:\`, because that would silently disable the outside-workspace
+approval guard: every path would become "inside". Set `AGENT_WORKSPACE` to a
+normal folder (your home, or a project dir) and restart. The web UI's
+workspace picker refuses the same thing and also refuses any ancestor of the
+`data/` folder.
 
 ### "Model not available / 404"
 
@@ -966,6 +1023,11 @@ launch. Build without `--onefile` for a folder build with fast startup.
 
 The exe is unsigned. Click **More info → Run anyway**. See §9.5.
 
+### `web_search` says "needs a browser" in a built exe
+
+That's expected: the default build doesn't bundle Selenium. See §9.3 for how
+to rebuild with `--with-browser` if you need JS rendering.
+
 ---
 
 ## 16. FAQ
@@ -996,10 +1058,12 @@ slide text, not styles wholesale.
 
 **Can it browse the web?**
 Yes, via `web_fetch` (HTML stripped to plain text). It's read-only — it
-doesn't drive a browser or click buttons.
+doesn't drive a browser or click buttons. Set `AGENT_BROWSER=selenium` to
+render JS pages (source installs only).
 
 **How many keys can I add?**
-No hard limit. People run 30–50 Gemini keys. Round-robin spreads the load.
+No hard limit. People run 30–50 Gemini keys. Health-weighted rotation spreads
+the load.
 
 **Which model should I use?**
 Best quality per dollar: `claude-sonnet-4.5` (Anthropic), `gpt-4o` (OpenAI),
@@ -1066,7 +1130,8 @@ tool.
 
 ### 17.8 The core is small on purpose
 
-Roughly 3,500 lines of Python across the entire agent. No framework, no
+Roughly 4,500 lines of Python across the entire agent (the earlier "3,500"
+figure predates the health-scoring, MCP and streaming work). No framework, no
 abstraction layer, no magic. You can read it in an afternoon and change
 anything. That's a feature.
 

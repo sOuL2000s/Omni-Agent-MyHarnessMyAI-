@@ -7,12 +7,14 @@ Security model:
   * checks the Host header (blocks DNS-rebinding),
   * never sends API keys to the browser (only masked tails).
 """
+import fnmatch
 import hmac
 import json
 import mimetypes
 import os
 import re
 import secrets
+import string
 import threading
 import time
 import webbrowser
@@ -41,6 +43,11 @@ SID_RE = re.compile(r"^[a-f0-9]{8,32}$")
 MAX_JSON = 5 * 1024 * 1024
 MAX_UPLOAD = 50 * 1024 * 1024
 
+# Don't accumulate thousands of streaming chunks per session.
+MAX_EVENTS = 2000
+MAX_POLL_EVENTS = 200
+STREAM_COALESCE_SECONDS = 0.1
+
 
 # ---------------------------------------------------------------- chat sessions
 class Session:
@@ -55,6 +62,10 @@ class Session:
         self.approvals = {}
         self.allowed_tools = set()
         self.touched = time.time()
+        self.deleted = False
+        # tool_stream coalescing: one buffer per stream id
+        self._stream_buf = {}
+        self._stream_last = {}
 
     @property
     def file(self):
@@ -67,25 +78,67 @@ class Session:
         the current history index as `idx` so the client can offer Edit /
         Delete even before the run finishes and history is re-fetched."""
         with self.cond:
+            # Coalesce streaming tool output so the poller isn't woken up
+            # hundreds of times per second on a chatty shell command.
+            if kind == "tool_stream":
+                sid = extra.get("id")
+                if sid is None:
+                    pass
+                else:
+                    buf = self._stream_buf.setdefault(sid, [])
+                    buf.append(text)
+                    now = time.time()
+                    last = self._stream_last.get(sid, 0.0)
+                    if now - last < STREAM_COALESCE_SECONDS:
+                        return
+                    text = "".join(buf)
+                    buf.clear()
+                    self._stream_last[sid] = now
             payload = {"type": kind, "text": text}
-            # Attach idx for message-shaped events only.
             if kind in ("assistant", "final") and "idx" not in extra:
-                # The assistant message that produced this event was just
-                # appended to history by loop.run; its index is len-1.
                 payload["idx"] = max(0, len(self.history) - 1)
             payload.update(extra)
             self.events.append(payload)
+            self._cap_events()
             self.cond.notify_all()
+
+    def _cap_events(self):
+        """Keep the events list bounded, dropping the oldest tool_stream chunks."""
+        if len(self.events) <= MAX_EVENTS:
+            return
+        overflow = len(self.events) - MAX_EVENTS
+        drop = []
+        for i, e in enumerate(self.events):
+            if e.get("type") == "tool_stream":
+                drop.append(i)
+                if len(drop) >= overflow:
+                    break
+        if len(drop) < overflow:
+            for i in range(overflow - len(drop)):
+                if i < len(self.events):
+                    drop.append(i)
+        for i in sorted(set(drop), reverse=True):
+            del self.events[i]
 
     def poll(self, after, wait):
         with self.cond:
             if len(self.events) <= after and wait > 0:
                 self.cond.wait(wait)
-            return self.events[after:], len(self.events)
+            # Cap per-response payload; skip stale streaming chunks if the
+            # client fell far behind.
+            if after < 0:
+                after = 0
+            chunk = self.events[after:after + MAX_POLL_EVENTS]
+            if after + MAX_POLL_EVENTS < len(self.events):
+                chunk = [e for e in chunk if e.get("type") != "tool_stream"]
+            return chunk, min(after + MAX_POLL_EVENTS, len(self.events))
 
     def save(self):
+        if self.deleted:
+            return
         try:
-            self.file.write_text(json.dumps(self.history, ensure_ascii=False), encoding="utf-8")
+            self.file.write_text(json.dumps(self.history, ensure_ascii=False),
+                                 encoding="utf-8")
         except Exception:
             pass
 
@@ -180,15 +233,8 @@ class App:
             except TypeError:
                 safety.set_approver(ask)
             try:
-                _shell.set_emitter(lambda kind, text, **kw: sess.emit(kind, text, **kw))
-            except Exception:
-                pass
-            try:
                 final = loop.run(self.cfg, sess.history, text,
                                  on_event=sess.emit, cancel=sess.cancel)
-                # loop.run has already appended the final assistant message
-                # to sess.history. Emit its index so the client can wire
-                # Delete on the live-rendered bubble.
                 final_idx = len(sess.history) - 1 if sess.history else None
                 sess.emit("final", final, idx=final_idx)
             except llm.LLMError as e:
@@ -200,8 +246,8 @@ class App:
                 sess.save()
                 sess.emit("done")
 
-        sess.cancel.clear()
-        sess.busy = True
+        # The caller is expected to have already set sess.busy = True and
+        # cleared sess.cancel (so the "is this session busy?" check is atomic).
         threading.Thread(target=work, daemon=True).start()
 
     def state(self):
@@ -318,6 +364,9 @@ def make_handler(app):
                     return self._err(401, "not authorised - open the link from the terminal again")
                 if method == "POST" and self.headers.get("X-Omni") != "1":
                     return self._err(403, "missing header")
+                # /api/keys/add -> api_keys_add. Hyphens and nested slashes
+                # won't match; if you ever need them, add an explicit route
+                # table here.
                 fn = getattr(self, "api_" + u.path[5:].replace("/", "_"), None)
                 if not fn or method != getattr(fn, "method", "POST"):
                     return self._err(404, "no such endpoint")
@@ -414,13 +463,12 @@ def make_handler(app):
                 return self._err(409, "this chat is still working")
             if not app.cfg.providers.items:
                 raise ValueError("No API keys yet - open the Keys panel and add one.")
-            s.emit("user", text)
-            # The user message is appended inside loop.run; the index it will
-            # have is len(history) after the append, i.e. current len. We
-            # emit `idx` here so the client's optimistic user bubble has it
-            # too. (The history is not yet appended when this fires, so we
-            # pass len(history) as a hint.)
+            # Claim the session BEFORE emitting or spawning, so a second
+            # concurrent request cannot slip past the busy check above.
+            s.cancel.clear()
+            s.busy = True
             user_idx = len(s.history)
+            s.emit("user", text, idx=user_idx)
             app.run_chat(s, text)
             self._send(200, {"ok": True, "cursor": len(s.events), "user_idx": user_idx})
 
@@ -439,6 +487,8 @@ def make_handler(app):
             text = s.history[idx]["content"]
             s.history = s.history[:idx]
             s.save()
+            s.cancel.clear()
+            s.busy = True
             s.emit("user", text, idx=idx)
             app.run_chat(s, text)
             self._send(200, {"ok": True, "cursor": len(s.events)})
@@ -448,11 +498,17 @@ def make_handler(app):
             s = app.session(b.get("session", ""))
             if s.busy:
                 return self._err(409, "this chat is still working")
-            idx, text = b.get("index"), b.get("text")
-            if idx is None or idx >= len(s.history):
+            idx, text = b.get("index"), (b.get("text") or "").strip()
+            if idx is None or not (0 <= idx < len(s.history)):
                 return self._err(400, "invalid index")
+            if s.history[idx].get("role") != "user":
+                return self._err(400, "you can only edit user messages")
+            if not text:
+                return self._err(400, "empty message")
             s.history = s.history[:idx]
             s.save()
+            s.cancel.clear()
+            s.busy = True
             s.emit("user", text, idx=idx)
             app.run_chat(s, text)
             self._send(200, {"ok": True, "cursor": len(s.events)})
@@ -481,6 +537,7 @@ def make_handler(app):
             sid = self._json_body().get("session", "")
             s = app.session(sid)
             s.stop()
+            s.deleted = True
             app.sessions.pop(sid, None)
             try:
                 s.file.unlink()
@@ -491,13 +548,18 @@ def make_handler(app):
         def api_message_delete(self, q):
             b = self._json_body()
             s = app.session(b.get("session", ""))
+            if s.busy:
+                return self._err(409, "this chat is still working")
             idx = b.get("index")
-            if idx is not None and 0 <= idx < len(s.history):
-                s.history.pop(idx)
-                s.save()
-                self._send(200, {"ok": True})
-            else:
-                self._err(400, "invalid index")
+            if idx is None or not (0 <= idx < len(s.history)):
+                return self._err(400, "invalid index")
+            if idx == 0:
+                return self._err(400, "cannot delete the system prompt")
+            if s.history[idx].get("role") not in ("user", "assistant"):
+                return self._err(400, "can only delete user/assistant messages")
+            s.history.pop(idx)
+            s.save()
+            self._send(200, {"ok": True})
 
         def api_upload(self, q):
             name = Path(q.get("name", "upload.bin")).name or "upload.bin"
@@ -605,7 +667,6 @@ def make_handler(app):
             self._send(200, {"provider": detect_provider(key)})
 
         def api_browse(self, q):
-            import string
             path = q.get("path") or str(app.cfg.workspace)
             search = q.get("search", "").strip()
             p = Path(path).expanduser()
@@ -620,20 +681,34 @@ def make_handler(app):
             entries = []
             try:
                 if search:
+                    pat = f"*{search}*"
                     count = 0
-                    for c in p.rglob(f"*{search}*"):
-                        if count >= 200:
-                            break
-                        if c.name.startswith(".") and q.get("hidden") != "1":
-                            continue
-                        try:
-                            st = c.stat()
-                            entries.append({"name": str(c.relative_to(p)), "path": str(c),
-                                            "dir": c.is_dir(), "size": st.st_size,
+                    # os.walk lets us prune noise and stop early; rglob would
+                    # descend the whole tree before the filter is even applied.
+                    for root, dirs, files in os.walk(p):
+                        dirs[:] = [d for d in dirs
+                                   if d not in ("node_modules", "__pycache__", ".git", ".venv")]
+                        if q.get("hidden") != "1":
+                            dirs[:] = [d for d in dirs if not d.startswith(".")]
+                        for name in files:
+                            if name.startswith(".") and q.get("hidden") != "1":
+                                continue
+                            if not fnmatch.fnmatch(name, pat):
+                                continue
+                            full = Path(root) / name
+                            try:
+                                st = full.stat()
+                            except OSError:
+                                continue
+                            entries.append({"name": str(full.relative_to(p)),
+                                            "path": str(full),
+                                            "dir": False, "size": st.st_size,
                                             "mtime": int(st.st_mtime)})
                             count += 1
-                        except (OSError, ValueError):
-                            continue
+                            if count >= 200:
+                                break
+                        if count >= 200:
+                            break
                 else:
                     for c in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
                         if c.name.startswith(".") and q.get("hidden") != "1":
@@ -741,7 +816,7 @@ def make_handler(app):
 
 
 # ---------------------------------------------------------------- entry
-def serve(cfg, host="127.0.0.1", port=8765, open_browser=True):
+def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
     token = os.environ.get("AGENT_UI_TOKEN") or secrets.token_urlsafe(18)
     loopback = host in ("127.0.0.1", "localhost", "::1")
     hosts = {"127.0.0.1", "localhost", "::1"} if loopback else None
@@ -766,6 +841,11 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True):
     if getattr(cfg, "mcp", None) and cfg.mcp.servers:
         names = ", ".join(f"{n}({len(s.tools)})" for n, s in cfg.mcp.servers.items())
         print(f"MCP servers: {names}")
+    if on_url is not None:
+        try:
+            on_url(url)
+        except Exception:
+            pass
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

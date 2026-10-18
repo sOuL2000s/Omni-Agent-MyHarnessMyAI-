@@ -63,11 +63,18 @@ def new_history(cfg):
     return [{"role": "system", "content": system_prompt(cfg)}]
 
 
-def _trim(history, limit=180_000):
+def _trim(history, limit=180_000, protect_from=None):
+    """Drop the oldest tool outputs when the transcript gets too large.
+
+    `protect_from` is the history index where the CURRENT turn begins; we never
+    trim messages at or after that index (the model may still be reasoning
+    about them).
+    """
     total = sum(len(str(m.get("content") or "")) for m in history)
     if total <= limit:
         return
-    for m in history[1:-6]:
+    end = len(history) if protect_from is None else max(1, protect_from)
+    for m in history[1:end]:
         if m.get("role") == "tool" and len(m["content"]) > 400:
             m["content"] = m["content"][:300] + "\n...[old output trimmed]"
 
@@ -103,6 +110,21 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
        notice, progress, route, assistant, tool, tool_result, tool_stream, verify.
     """
     _set_context(on_event, cancel)
+    try:
+        return _run_inner(cfg, history, user_text, on_event, cancel)
+    finally:
+        # Clear the thread-locals so a subsequent run on the same thread
+        # (e.g. a fresh session) doesn't accidentally inherit an old cancel
+        # event or emitter.
+        _set_tool_cancel(None)
+        try:
+            _shell.set_emitter(None)
+        except Exception:
+            pass
+
+
+def _run_inner(cfg, history, user_text, on_event, cancel):
+    turn_start = len(history)  # protect this turn's tool outputs from trimming
     history.append({"role": "user", "content": user_text})
     last_route = None
     failures = {}
@@ -110,7 +132,7 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
     for turn in range(cfg.max_turns):
         if cancel is not None and cancel.is_set():
             return "(stopped by you)"
-        _trim(history)
+        _trim(history, protect_from=turn_start)
 
         try:
             msg, route = llm.chat_ex(
@@ -163,6 +185,10 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
         results = {}
 
         def run_one(c):
+            # Worker threads don't inherit the main thread's threading.local
+            # state, so re-attach the cancel event and the event emitter here.
+            _set_tool_cancel(cancel)
+            _shell.set_emitter(lambda kind, text, **kw: _emit(kind, text, **kw))
             fn = c["function"]
             name = fn["name"]
             on_event("tool", fn.get("arguments") or "", name=name, id=c["id"])
@@ -210,6 +236,10 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
                         "content": (f"`{name}` has failed {failures[name]} times. Stop retrying it "
                                     "and either use a different approach or tell the user you're stuck."),
                     })
+            else:
+                # A success clears the streak so we don't blacklist a tool
+                # that failed 3 times 40 turns ago for unrelated reasons.
+                failures.pop(name, None)
 
         if cancel is not None and cancel.is_set():
             return "(stopped by you)"

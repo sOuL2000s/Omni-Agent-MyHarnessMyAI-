@@ -7,13 +7,6 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 [ -f .env ] || cp .env.example .env
-if command -v npm >/dev/null; then
-  read -p "Install OmniRoute gateway globally with npm? [y/N] " a
-  [ "$a" = "y" ] && npm install -g omniroute
-else
-  echo "Node.js not found - skip OmniRoute, or install Node and rerun."
-fi
 echo
 echo "Done. Next:  ./omni-ui   (web UI - add your API keys under 'Keys & models')"
 echo "Terminal chat: ./omni      Check keys: ./omni check --all"
-echo "(OmniRoute is optional - Omni now rotates keys and models itself.)"

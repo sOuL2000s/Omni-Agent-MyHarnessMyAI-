@@ -60,6 +60,10 @@ def load() -> Config:
     ws.mkdir(parents=True, exist_ok=True)
     data = ROOT / "data"
     data.mkdir(exist_ok=True)
+    try:
+        os.chmod(data, 0o700)  # owner-only on Unix; no-op on Windows
+    except OSError:
+        pass
 
     cfg = Config(
         base_url=g("AGENT_BASE_URL", "http://localhost:20128/v1").rstrip("/"),
@@ -76,11 +80,26 @@ def load() -> Config:
         home=Path.home().resolve(),
     )
 
+    # Normalise the workspace once so safety.resolve() comparisons are exact
+    # even when AGENT_WORKSPACE pointed at a symlink.
+    try:
+        cfg.workspace = cfg.workspace.resolve()
+    except OSError:
+        pass
+    if cfg.home:
+        try:
+            cfg.home = cfg.home.resolve()
+        except OSError:
+            pass
+
     from .providers import Manager, Provider
     default = Provider("default", cfg.base_url, cfg.api_key, cfg.model)
     cfg.providers = Manager(data / "providers.json", default,
                             state_path=data / "state.json",
                             settings_path=data / "settings.json")
+    if cfg.providers.load_error and not cfg.providers.items:
+        print("WARNING:", cfg.providers.load_error, file=_sys.stderr)
+        print("  Fix or delete data/providers.json, then restart.", file=_sys.stderr)
     if g("AGENT_MAX_WAIT"):
         cfg.providers.settings["max_wait"] = int(g("AGENT_MAX_WAIT"))
     if g("AGENT_STRATEGY") in ("round_robin", "failover"):

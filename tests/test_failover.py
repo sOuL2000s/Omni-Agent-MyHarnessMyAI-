@@ -19,7 +19,8 @@ from agent import llm, commands                                    # noqa: E402
 from agent.config import Config                                    # noqa: E402
 from agent.providers import Manager, Provider, pool_of             # noqa: E402
 
-llm.MIN_RATE_COOLDOWN = 1          # keep the "wait for a key" test fast
+# Keep the "wait for a key" test fast. Restored in Base.tearDown.
+_ORIG_MIN_RATE_COOLDOWN = llm.MIN_RATE_COOLDOWN
 
 
 # ---------------------------------------------------------------- mock gateway
@@ -88,6 +89,7 @@ def make_cfg(tmp, timeout=5):
 
 class Base(unittest.TestCase):
     def setUp(self):
+        llm.MIN_RATE_COOLDOWN = 1
         self.tmp = tempfile.TemporaryDirectory()
         self.cfg = make_cfg(self.tmp.name)
         self.pm = self.cfg.providers
@@ -96,6 +98,7 @@ class Base(unittest.TestCase):
         llm.NO_TEMP.clear()
 
     def tearDown(self):
+        llm.MIN_RATE_COOLDOWN = _ORIG_MIN_RATE_COOLDOWN
         for g in self.gws:
             g.close()
         self.tmp.cleanup()

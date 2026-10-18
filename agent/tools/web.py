@@ -1,7 +1,21 @@
+# agent/tools/web.py
+"""web_fetch / web_search.
+
+By default this uses urllib (fast, no Chrome, no scraping).
+Set AGENT_BROWSER=selenium in .env to opt in to a headless Chrome via Selenium,
+which can render JavaScript pages. That path is slower and downloads a
+ChromeDriver on first use; it also scrapes Google for web_search, which is
+against their ToS and breaks whenever they change markup.
+
+The README recommends web_fetch for known URLs and only opting into
+AGENT_BROWSER=selenium when you actually need JS rendering.
+"""
+import os
 import re
-import urllib.request
-import urllib.parse
 import time
+import urllib.parse
+import urllib.request
+
 from .registry import tool
 
 try:
@@ -15,29 +29,43 @@ except ImportError:
     HAS_SELENIUM = False
 
 
-@tool("web_fetch", "Fetch a URL and return readable text (HTML stripped).", {"url": {"type": "string"}}, ["url"])
+def _use_browser() -> bool:
+    """Selenium is off unless AGENT_BROWSER=selenium is set."""
+    return HAS_SELENIUM and os.environ.get("AGENT_BROWSER", "").lower() == "selenium"
+
+
+@tool("web_fetch", "Fetch a URL and return readable text (HTML stripped).",
+      {"url": {"type": "string"}}, ["url"])
 def web_fetch(cfg, url):
-    if HAS_SELENIUM:
+    if _use_browser():
         options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--headless=new")
+        # Do NOT pass --no-sandbox unless you know why.
         options.add_argument("--disable-gpu")
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-        
-        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+        options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        )
+        driver = None
         try:
+            driver = webdriver.Chrome(
+                service=ChromeService(ChromeDriverManager().install()),
+                options=options,
+            )
             driver.get(url)
-            time.sleep(2)  # Wait for JS
-            text = driver.find_element(By.TAG_NAME, "body").text
-            return text.strip()
-        except Exception as e:
-            # Fallback to urllib if selenium fails
+            time.sleep(1.5)  # give JS a moment
+            return driver.find_element(By.TAG_NAME, "body").text.strip()
+        except Exception:
+            # Fall through to the urllib path below.
             pass
         finally:
-            driver.quit()
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
 
-    req = urllib.request.Request(url, headers={"User-Agent": "omni-agent/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "omni-agent/2.1"})
     with urllib.request.urlopen(req, timeout=30) as r:
         raw = r.read(2_000_000).decode(errors="replace")
     raw = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
@@ -45,48 +73,53 @@ def web_fetch(cfg, url):
     return re.sub(r"\s+", " ", text).strip()
 
 
-@tool("web_search", "Search the web using Google.", {"query": {"type": "string"}}, ["query"])
+@tool("web_search", "Search the web using Google (requires AGENT_BROWSER=selenium).",
+      {"query": {"type": "string"}}, ["query"])
 def web_search(cfg, query):
-    if not HAS_SELENIUM:
-        return "Error: selenium and webdriver-manager are not installed. Please install them to use web_search."
-    
+    if not _use_browser():
+        return ("web_search needs a browser. Set AGENT_BROWSER=selenium in .env "
+                "and install selenium + webdriver-manager. "
+                "Prefer web_fetch on a known URL.")
+
     options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--headless=new")
+    # Do NOT pass --no-sandbox unless you know why.
     options.add_argument("--disable-gpu")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-    
-    driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    )
+
+    driver = webdriver.Chrome(
+        service=ChromeService(ChromeDriverManager().install()),
+        options=options,
+    )
     try:
         driver.get(f"https://www.google.com/search?q={urllib.parse.quote(query)}")
         time.sleep(2)
         results = []
-        # Google search results are usually in div.g or similar
         for g in driver.find_elements(By.CSS_SELECTOR, "div.g"):
             try:
                 anchors = g.find_elements(By.TAG_NAME, "a")
-                if not anchors: continue
+                if not anchors:
+                    continue
                 link = anchors[0].get_attribute("href")
                 title_el = g.find_elements(By.TAG_NAME, "h3")
                 title = title_el[0].text if title_el else "No title"
-                
-                # Snippet is often in a div with a specific class or just text
+
                 snippet = ""
-                # Try common snippet classes
-                for cls in ["VwiC3b", "yXM94b", "MUwY0b"]:
+                for cls in ("VwiC3b", "yXM94b", "MUwY0b"):
                     s_el = g.find_elements(By.CLASS_NAME, cls)
                     if s_el:
                         snippet = s_el[0].text
                         break
-                
+
                 if link and title:
                     results.append(f"Title: {title}\nLink: {link}\nSnippet: {snippet}\n")
-            except:
+            except Exception:
                 continue
-        
+
         if not results:
-            # Try a simpler approach if the above fails (Google changes layout often)
             body_text = driver.find_element(By.TAG_NAME, "body").text
             return "Search results (raw text):\n" + body_text[:2000]
 

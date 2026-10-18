@@ -116,7 +116,7 @@ div:hover>.copy-code{opacity:1}
 .k .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok)} .k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn)} .k .dot.quota{background:#e8590c} .k .dot.auth,.k .dot.billing{background:var(--bad)}
 .k .nm{width:90px;font-weight:600} .k .mk{width:88px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px} .k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .k button{padding:0 6px;font-size:12px}
-.k select{padding:2px 6px;font-size:12px;max-width:200px}
+.k input{padding:2px 6px;font-size:12px;max-width:200px}
 textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,monospace}
 .files a{color:var(--accent);text-decoration:none} .files .f{display:flex;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:13px} .files .f span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mcp-row{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}
@@ -158,7 +158,7 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
     <header>
       <button class="ghost only-small" id="menuBtn" title="Chats">☰</button>
       <span class="chip" id="wsChip" title="Click to change the agent's workspace (browse your whole PC)"></span>
-      <span class="chip" id="routeChip" title="Key and model that answered last">no request yet</span>
+      <span class="chip" id="routeChip" title="Click for the full route (pool, model, key)">no request yet</span>
       <span class="sp"></span>
       <label class="tog strict" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
       <label class="tog" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
@@ -303,6 +303,7 @@ function md(src) {
 }
 
 let sid = store.get("omni_sid") || rid(), cursor = 0, busy = false, polling = false;
+let lastRoute = null;
 store.set("omni_sid", sid);
 const msgs = $("#msgs"), logEl = $("#log"), toolEls = {};
 function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140; }
@@ -317,10 +318,36 @@ function showEmpty() {
     h("h2", { text: "What should Omni work on?" }),
     h("div", { text: "Reads and edits code and Office files, runs commands, browses pages, and (if configured) talks to MCP servers. Full PC access with approval." }),
     h("div", { class: "ex" }, ...[
-      "Summarise the files in my Documents folder",
+      "Summarise the files in my Documents folder (will ask for approval)",
       "Review the code here and write REVIEW.md",
       "Create a Word report from my notes"].map(t =>
       h("button", { text: t, onclick: () => { $("#inp").value = t; $("#inp").focus(); } })))));
+}
+
+/* Human-readable labels for the internal cooldown kinds shown in the
+   progress card so non-technical users understand what's happening. */
+const KIND_LABEL = {
+  rate: "rate-limited",
+  auth: "invalid key",
+  quota: "out of quota",
+  model: "model unavailable",
+  billing: "no credits",
+  server: "service error",
+  network: "network error",
+  empty: "empty reply",
+  param: "bad parameters",
+  tools: "no tool support",
+  fatal: "error",
+};
+function humanizeRecent(list) {
+  if (!list) return list;
+  return list.map(line => {
+    // server sends "name [model] -> kind"
+    const m = /^(\S+) \[([^\]]+)\] -> (\S+)/.exec(line);
+    if (!m) return line;
+    const kind = KIND_LABEL[m[3]] || m[3];
+    return `${m[1]} (${m[2]}) ${kind}`;
+  });
 }
 
 let statusState = {};
@@ -334,9 +361,10 @@ function renderStatus() {
     h("span", { text: info.title || "Working…" }),
     info.route ? h("span", { class: "small", text: " · " + info.route }) : null));
   if (info.detail) card.append(h("div", { class: "detail", text: info.detail }));
-  if (info.recent && info.recent.length) {
+  const recent = humanizeRecent(info.recent);
+  if (recent && recent.length) {
     const ul = h("ul");
-    for (const r of info.recent.slice(-6)) ul.append(h("li", { text: r }));
+    for (const r of recent.slice(-6)) ul.append(h("li", { text: r }));
     card.append(ul);
   }
   card.append(h("div", { class: "foot" },
@@ -424,13 +452,18 @@ function render(ev) {
       return;
     case "verify": return add(h("div", { class: "note verify", text: ev.text }));
     case "route": {
+      lastRoute = ev;
       const c = $("#routeChip");
       c.replaceChildren("answering: ", h("b", { text: ev.text }));
-      c.title = "pool=" + ev.pool + " model=" + ev.model + " reason=" + (ev.reason || "primary");
+      c.title = `pool=${ev.pool} · key=${ev.provider} · model=${ev.model} · reason=${ev.reason || "primary"}`;
       updateStatus({ route: ev.text });
       return;
     }
-    case "error": return add(h("div", { class: "note err", text: ev.text }));
+    case "error":
+      return add(h("div", { class: "note err" },
+        h("div", { text: ev.text }),
+        h("div", { style: "margin-top:6px" },
+          h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
     case "approval": return askApproval(ev);
     case "approval_done": if (pendingApproval && pendingApproval.id === ev.id) closeModal(); return;
   }
@@ -455,9 +488,8 @@ async function poll() {
       }
       if (done || (!d.busy && !d.events.length)) {
         setBusy(false); refreshKeys(); loadSessions();
-        // Re-hydrate from history so every message carries a stable `idx`
-        // and the full action row (Edit/Delete/Retry/Copy) is present.
-        loadChat();
+        // Don't re-render the whole conversation (that flashed and lost
+        // scroll position). The live events already carried `idx`.
         break;
       }
     }
@@ -468,9 +500,9 @@ async function send() {
   const t = $("#inp").value.trim(); if (!t || busy) return;
   try {
     const r = await api("/api/chat", { session: sid, text: t });
-    // Render the user bubble optimistically. It will be re-rendered from
-    // history when the run finishes, so it will gain Edit/Delete then.
-    render({ type: "user", text: t });
+    // Render the user bubble with its history index so Edit/Delete appear
+    // immediately instead of after a reload.
+    render({ type: "user", text: t, idx: (typeof r.user_idx === "number" ? r.user_idx : undefined) });
     $("#inp").value = ""; autoGrow();
     cursor = r.cursor;
     statusState = { title: "Sending…" };
@@ -487,6 +519,7 @@ function autoGrow() {
   i.style.height = Math.min(i.scrollHeight, 200) + "px";
 }
 async function loadChat() {
+  const stick = atBottom();
   msgs.replaceChildren(); for (const k in toolEls) delete toolEls[k];
   try {
     const d = await api(`/api/history?session=${sid}`);
@@ -499,7 +532,7 @@ async function loadChat() {
     }
     d.pending.forEach(p => askApproval({ id: p.id, text: p.action, tool: p.tool }));
     if (d.busy) { setBusy(true, false); poll(); } else setBusy(false);
-    logEl.scrollTop = logEl.scrollHeight;
+    if (stick) logEl.scrollTop = logEl.scrollHeight;
   } catch (e) { showEmpty(); toast(e.message, 5000); }
 }
 function timeAgo(sec) {
@@ -561,74 +594,31 @@ function entrable(input, action) {
 
 let S = null, modelCache = {};
 
-/* Key panel: mutate the DOM locally instead of rebuilding the whole pane
-   on every action. Only a full refresh when the shape of the panel changes
-   (add keys, remove key, add service, remove pool, model list refresh). */
-async function act(fn, okMsg, opts = {}) {
+/* Key panel: re-render on every action, but snapshot user-typed values first
+   so a paste-in-progress survives the rebuild. */
+async function act(fn, okMsg) {
   try {
     const r = await fn();
     if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg);
-    if (opts.refresh) {
-      await refreshKeys(true, opts.keepFocus !== false);
-    } else {
-      // Cheap background refresh: update S but only re-render if the
-      // shape of the data changed. We detect that by comparing pool names
-      // and key names; if they match, we just patch health/status in place.
-      const prev = S;
-      try { S = await api("/api/state"); } catch (_) { return r; }
-      if (opts.patch === false || !sameShape(prev, S)) renderKeys();
-      else patchKeysInPlace();
-    }
+    await refreshKeys(true);
     return r;
   } catch (e) { toast(e.message, 6000); }
 }
-function sameShape(a, b) {
-  if (!a || !b) return false;
-  if (a.pools.length !== b.pools.length) return false;
-  for (let i = 0; i < a.pools.length; i++) {
-    const pa = a.pools[i], pb = b.pools[i];
-    if (pa.pool !== pb.pool) return false;
-    if (pa.keys.length !== pb.keys.length) return false;
-    for (let j = 0; j < pa.keys.length; j++) {
-      if (pa.keys[j].name !== pb.keys[j].name) return false;
-    }
-  }
-  return true;
+
+function snapshotInputs() {
+  const snap = {};
+  const pane = $("#pane-keys");
+  if (!pane) return snap;
+  pane.querySelectorAll("[data-persist]").forEach(el => {
+    snap[el.dataset.persist] = el.value;
+  });
+  return snap;
 }
-function patchKeysInPlace() {
-  // Update the "ready / cooling / invalid" badges, the info line, and the
-  // status dot for each key, without touching the DOM structure.
+function restoreInputs(snap) {
   const pane = $("#pane-keys");
   if (!pane) return;
-  S.pools.forEach((p, i) => {
-    const card = pane.querySelectorAll(".card")[i + 2];   // skip rotation + models cards
-    if (!card) return;
-    const badges = card.querySelectorAll(".badge");
-    // The three badges are: ready, cooling (optional), invalid (optional).
-    // Rebuild their text in place if present, else leave the structure alone.
-    const counts = p.counts;
-    const have = [...badges].map(b => b.textContent);
-    const want = [];
-    want.push(counts.ready + " ready");
-    if (counts.cooling) want.push(counts.cooling + " cooling");
-    if (counts.invalid) want.push(counts.invalid + " invalid");
-    for (let k = 0; k < Math.min(have.length, want.length); k++) {
-      if (have[k] !== want[k]) badges[k].textContent = want[k];
-    }
-    // Key rows: patch dot class and info text
-    const rows = card.querySelectorAll(".keys .k");
-    p.keys.forEach((k, j) => {
-      const row = rows[j]; if (!row) return;
-      const dot = row.querySelector(".dot");
-      if (dot) dot.className = "dot " + k.status;
-      const info = row.querySelector(".info");
-      if (info) {
-        info.textContent = k.status === "ready"
-          ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
-          : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}`;
-        info.title = k.reason || k.last_error || "";
-      }
-    });
+  pane.querySelectorAll("[data-persist]").forEach(el => {
+    if (snap[el.dataset.persist] !== undefined) el.value = snap[el.dataset.persist];
   });
 }
 
@@ -645,8 +635,7 @@ function renderKeys() {
   const pane = $("#pane-keys");
   const openKeys = new Set([...pane.querySelectorAll("details.kl[open]")].map(d => d.dataset.pool));
   const savedScroll = pane.scrollTop;
-  const focusedName = document.activeElement && document.activeElement.dataset
-    ? document.activeElement.dataset.focusKey : null;
+  const savedInputs = snapshotInputs();
   pane.replaceChildren();
   if (S.load_error) pane.append(h("div", { class: "note err", text: S.load_error }));
 
@@ -668,16 +657,21 @@ function renderKeys() {
         onclick: e => {
           const t = e.target; t.textContent = "fetching…"; t.disabled = true;
           act(() => api("/api/refresh_all", {}),
-              r => `Refreshed ${Object.keys(r.refreshed).length} keys`,
-              { refresh: true })
+              r => `Refreshed ${Object.keys(r.refreshed).length} keys`)
             .finally(() => { t.textContent = "↻ Refresh all model lists"; t.disabled = false; });
         } }),
       h("span", { class: "small", text: "Each key's available models are fetched from its provider and shown in the dropdown next to it." }))));
 
-  S.pools.forEach((p, i) => pane.append(poolCard(p, i, openKeys.has(p.pool))));
-  pane.append(addServiceCard());
+  // "Add a service" goes on top when there are no pools yet (so a new
+  // user lands right on the form); otherwise it lives at the bottom.
+  if (!S.pools.length) pane.append(addServiceCard(savedInputs));
+  S.pools.forEach((p, i) => pane.append(poolCard(p, i, openKeys.has(p.pool), savedInputs)));
+  if (S.pools.length) pane.append(addServiceCard(savedInputs));
   // Defer scroll restore so the browser has laid out the new content first.
-  requestAnimationFrame(() => { pane.scrollTop = savedScroll; });
+  requestAnimationFrame(() => {
+    pane.scrollTop = savedScroll;
+    restoreInputs(savedInputs);
+  });
 }
 
 function badge(txt, cls) { return h("span", { class: "badge " + (cls || ""), text: txt }); }
@@ -686,7 +680,7 @@ function fmtTime(s) {
     : s >= 60 ? Math.round(s / 60) + "m" : s + "s";
 }
 
-function poolCard(p, idx, open) {
+function poolCard(p, idx, open, savedInputs) {
   const dl = h("datalist", { id: "dl-" + p.pool });
   (modelCache[p.pool] || []).forEach(m => dl.append(h("option", { value: m })));
 
@@ -735,53 +729,43 @@ function poolCard(p, idx, open) {
           ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
           : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}` }),
       (() => {
-        const sel = h("select", { title: "Model for this key",
+        // Typeable datalist input — Gemini and OpenRouter have 100+ models,
+        // so a native <select> is unusable. The datalist is shared with the
+        // pool's model input.
+        const sel = h("input", { value: k.model || "", list: "dl-" + p.pool,
+          placeholder: "model id", spellcheck: false,
+          "data-persist": "key-model-" + k.name,
           onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }),
-                             "Model set for " + k.name, { patch: true }) });
-        const cached = (k.models && k.models.length) ? k.models : (k.model ? [k.model] : []);
-        sel.replaceChildren(...(cached.length
-          ? cached.map(m => h("option", { value: m, text: m, selected: m === k.model }))
-          : [h("option", { value: "", text: "(no models cached)" })]));
-        if (!k.models || !k.models.length) {
-          api(`/api/key/models?name=${encodeURIComponent(k.name)}`).then(d => {
-            if (d.models && d.models.length) {
-              sel.replaceChildren(...d.models.map(m => h("option", { value: m, text: m,
-                selected: m === (d.current || k.model) })));
-            }
-          }).catch(() => {});
-        }
+                             "Model set for " + k.name) });
         return sel;
       })(),
       h("button", { text: "↻", title: "Refresh this key's model list",
         onclick: e => {
           e.target.textContent = "…";
           act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`),
-              "Refreshed " + k.name, { patch: true })
+              "Refreshed " + k.name)
             .finally(() => e.target.textContent = "↻");
         } }),
       h("button", { text: "test", title: "Send a real tiny request with this key",
         onclick: ev => {
           ev.target.textContent = "…";
           act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
-              r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120),
-              { patch: true })
+              r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120))
             .finally(() => ev.target.textContent = "test");
         } }),
       h("button", { class: "danger", text: "✕", title: "Remove this key",
         onclick: () => {
           if (confirm("Remove " + k.name + "?"))
-            act(() => api("/api/keys/remove", { name: k.name }), "Removed",
-                { refresh: true });
+            act(() => api("/api/keys/remove", { name: k.name }), "Removed");
         } })))));
 
   const addBox = h("textarea", { class: "keysbox",
     placeholder: "Paste more keys for this service — one per line or comma separated",
-    spellcheck: false });
+    spellcheck: false, "data-persist": "addkeys-" + p.pool });
   const addKeysBtn = h("button", { text: "Add keys to " + p.pool,
     onclick: () => addBox.value.trim() && act(
       () => api("/api/keys/add", { pool: p.pool, keys: addBox.value }),
-      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : ""),
-      { refresh: true }) });
+      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
   addBox.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addKeysBtn.click(); }
   });
@@ -798,13 +782,13 @@ function poolCard(p, idx, open) {
           const n = S.pools.map(x => x.pool);
           [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
           return api("/api/pool/order", { names: n });
-        }, null, { refresh: true }) }),
+        }, null) }),
       h("button", { class: "ghost", title: "Lower priority", text: "▼", disabled: idx === S.pools.length - 1,
         onclick: () => act(() => {
           const n = S.pools.map(x => x.pool);
           [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]];
           return api("/api/pool/order", { names: n });
-        }, null, { refresh: true }) })),
+        }, null) })),
     h("div", { class: "small", text: p.base_url }),
     h("div", { class: "row" },
       h("b", { text: "Model", style: "width:70px" }), mIn,
@@ -821,41 +805,42 @@ function poolCard(p, idx, open) {
       h("button", { text: "Test one", onclick: e => {
         e.target.textContent = "testing…";
         act(async () => (await api("/api/keys/test", { name: p.keys[0].name })).results,
-            rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140),
-            { patch: true })
+            rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140))
           .finally(() => e.target.textContent = "Test one");
       } }),
       p.keys.length > 1 ? h("button", { text: "Test all " + p.keys.length,
         onclick: e => {
           e.target.textContent = "testing…";
           act(async () => (await api("/api/keys/test", { pool: p.pool })).results,
-              rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work",
-              { patch: true })
+              rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work")
             .finally(() => e.target.textContent = "Test all " + p.keys.length);
         } }) : null,
       h("button", { text: "Reset cooldowns",
         onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }),
-                            "Cooldowns cleared", { patch: true }) }),
+                            "Cooldowns cleared") }),
       h("button", { class: "danger", text: "Remove service",
         onclick: () => {
           if (confirm("Remove " + p.pool + " and all its " + p.keys.length + " keys?"))
-            act(() => api("/api/pool/remove", { pool: p.pool }), "Removed",
-                { refresh: true });
+            act(() => api("/api/pool/remove", { pool: p.pool }), "Removed");
         } })),
     keysList,
     h("div", { class: "row" }, addBox),
     h("div", { class: "row" }, addKeysBtn));
 }
 
-function addServiceCard() {
+function addServiceCard(savedInputs) {
   const preset = h("select", {},
     h("option", { value: "", text: "Custom / other…" }),
     ...S.presets.map(p => h("option", { value: p.name, text: p.name })));
-  const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false });
-  const url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)", spellcheck: false });
-  const model = h("input", { placeholder: "model id", spellcheck: false });
+  const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false,
+    "data-persist": "add-svc-name" });
+  const url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)",
+    spellcheck: false, "data-persist": "add-svc-url" });
+  const model = h("input", { placeholder: "model id", spellcheck: false,
+    "data-persist": "add-svc-model" });
   const keys = h("textarea", { class: "keysbox",
-    placeholder: "API key(s) — one per line or comma separated", spellcheck: false });
+    placeholder: "API key(s) — one per line or comma separated", spellcheck: false,
+    "data-persist": "add-svc-keys" });
   preset.addEventListener("change", () => {
     const p = S.presets.find(x => x.name === preset.value);
     if (p) { name.value = p.name; url.value = p.base_url; model.value = p.model; }
@@ -863,8 +848,7 @@ function addServiceCard() {
   const addBtn = h("button", { class: "primary", text: "Add",
     onclick: () => act(() => api("/api/keys/add",
       { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }),
-      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : ""),
-      { refresh: true }) });
+      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
   [name, url, model].forEach(el => entrable(el, () => addBtn.click()));
   keys.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); }
@@ -901,12 +885,12 @@ function renderMcp() {
           badge(m.tools + " tools", m.ready ? "g" : "r"),
           m.error ? h("span", { class: "small", text: m.error }) : null,
           h("button", { text: "Restart",
-            onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => r.result, { refresh: true }) }),
+            onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => r.result) }),
           h("button", { text: "Stop",
-            onclick: () => act(() => api("/api/mcp/stop", { name: m.name }), "Stopped", { refresh: true }) }),
+            onclick: () => act(() => api("/api/mcp/stop", { name: m.name }), "Stopped") }),
           h("button", { class: "primary", text: "Start",
             onclick: () => act(() => api("/api/mcp/start", { name: m.name }),
-                                r => `${m.name}: ${r.tools} tools`, { refresh: true }) })),
+                                r => `${m.name}: ${r.tools} tools`) })),
         h("div", { class: "small", text: m.command })));
     }
   }
@@ -916,7 +900,7 @@ function renderMcp() {
   const addBtn = h("button", { class: "primary", text: "Add & connect",
     onclick: () => act(() => api("/api/mcp/add", { name: name.value, command: cmd.value,
       args: args.value.split(/\s+/).filter(Boolean) }),
-      r => `Connected: ${r.tools} tools`, { refresh: true }) });
+      r => `Connected: ${r.tools} tools`) });
   [name, cmd, args].forEach(el => entrable(el, () => addBtn.click()));
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Add an MCP server" }),
@@ -944,12 +928,37 @@ async function loadFiles() {
         h("a", { href: "/api/file?path=" + encodeURIComponent(f.path), text: "download" })))));
   } catch (e) { pane.textContent = e.message; }
 }
+
+function uploadOne(file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
+    xhr.setRequestHeader("X-Omni", "1");
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && file.size > 2 * 1024 * 1024) {
+        const pct = Math.round(100 * e.loaded / e.total);
+        toast(`Uploading ${file.name}: ${pct}%`, 700);
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch (_) { reject(new Error("bad response")); }
+      } else {
+        let msg = `HTTP ${xhr.status}`;
+        try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.send(file);
+  });
+}
+
 async function upload(files) {
   for (const f of files) {
     try {
-      const r = await fetch("/api/upload?name=" + encodeURIComponent(f.name),
-        { method: "POST", headers: { "X-Omni": "1" }, body: f });
-      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      const d = await uploadOne(f);
       const cur = $("#inp").value;
       $("#inp").value = cur + (cur && !cur.endsWith(" ") ? " " : "") + `[file in workspace: ${d.path}] `;
       autoGrow();
@@ -972,6 +981,7 @@ function openBrowser(startPath, cb) {
   const drivesBox = h("div", { class: "row" });
   let allEntries = [];
   let curPath = "";
+  const history = [];
 
   function renderEntries() {
     const f = filterIn.value.toLowerCase();
@@ -1037,6 +1047,7 @@ function openBrowser(startPath, cb) {
   }
 
   async function go(p, deep = false) {
+    if (curPath && curPath !== p) history.push(curPath);
     const q = new URLSearchParams({ path: p || "" });
     if (deep && filterIn.value.trim()) q.set("search", filterIn.value.trim());
     if (hiddenBox.checked) q.set("hidden", "1");
@@ -1051,13 +1062,18 @@ function openBrowser(startPath, cb) {
     } catch (e) { toast(e.message); }
   }
 
+  const backBtn = h("button", { text: "←", title: "Back",
+    onclick: () => { if (history.length) go(history.pop()); } });
+
   const useBtn = h("button", { class: "primary", text: "Use this folder",
     onclick: async () => {
+      if (!confirm(`Make "${curPath}" the workspace?\n\nFiles under this folder will be treated as "inside" the workspace and won't prompt for approval when the agent writes to them.`)) return;
       if (cb) await cb(curPath);
       pushRecent(curPath);
       overlay.remove();
     } });
   const pathBar = h("div", { class: "row" },
+    backBtn,
     h("button", { text: "⬆ Up",
       onclick: () => go((curPath || "").replace(/[\\/][^\\/]*$/, "") ||
         (curPath.match(/^[A-Za-z]:/) ? curPath.slice(0, 3) : "/")) }),
@@ -1143,6 +1159,16 @@ logEl.addEventListener("drop", e => {
   if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]);
 });
 
+// Also handle drops onto the composer textarea so a dragged file uploads
+// instead of inserting its path as text.
+$("#inp").addEventListener("dragover", e => e.preventDefault());
+$("#inp").addEventListener("drop", e => {
+  if (e.dataTransfer.files.length) {
+    e.preventDefault();
+    upload([...e.dataTransfer.files]);
+  }
+});
+
 function openRight(tab) {
   $("#app").classList.add("rightopen");
   document.querySelectorAll(".tabs [data-tab]").forEach(b =>
@@ -1161,10 +1187,15 @@ $("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
 document.querySelectorAll(".tabs [data-tab]").forEach(b =>
   b.onclick = () => openRight(b.dataset.tab));
 
+$("#routeChip").onclick = () => {
+  if (!lastRoute) return toast("No request yet");
+  toast(`${lastRoute.pool} · key ${lastRoute.provider} · ${lastRoute.model}` +
+        (lastRoute.fallback ? ` (fallback: ${lastRoute.reason})` : ""), 5000);
+};
+
 /* NOTE: the 5-second auto-refresh of the keys panel has been removed.
-   It was rebuilding the pane mid-interaction and clobbering the scroll
-   position. The panel now refreshes on open, on shape-changing actions,
-   and manually (via the Refresh all model lists button). */
+   The panel now refreshes on open, on any action (via act()), and manually
+   (via the Refresh all model lists button). */
 
 $("#wsChip").style.cursor = "pointer";
 $("#wsChip").addEventListener("click", () => {

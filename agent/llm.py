@@ -44,6 +44,11 @@ MIN_RATE_COOLDOWN = 10
 DEFAULT_RATE_COOLDOWN = 45
 NO_TEMP = set()
 
+# Cap the on-disk / in-memory model caches so a long-running server doesn't
+# grow them without bound.
+_MODEL_CACHE_MAX = 64
+_NO_TEMP_MAX = 128
+
 
 # ---------------------------------------------------------------- classification
 def _next_pacific_midnight():
@@ -112,7 +117,8 @@ def classify(status, text, headers=None):
             or "reported as leaked" in low or "api key was reported" in low):
         return Fail("auth", prefix + "bad/expired/revoked key: " + msg, "key", 6 * 3600, status)
 
-    if status == 402 or re.search(r"insufficient (credits|funds|balance)|billing|payment required|credit", low) and status in (400, 402, 403):
+    if status == 402 or (re.search(r"insufficient (credits|funds|balance)|billing|payment required|credit", low)
+                         and status in (400, 402, 403)):
         return Fail("billing", prefix + "billing/credits problem: " + msg, "key", 3600, status)
 
     if status == 403:
@@ -201,6 +207,8 @@ def _attempt(cfg, p, model, base):
         f = classify(status, text, headers)
         if f.kind == "param" and (p.pool, model) not in NO_TEMP:
             NO_TEMP.add((p.pool, model))
+            if len(NO_TEMP) > _NO_TEMP_MAX:
+                NO_TEMP.clear()
             continue
         if f.kind == "tools" and not drop_tools_next:
             drop_tools_next = True
@@ -404,6 +412,15 @@ def chat(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
 _MODEL_CACHE = {}
 
 
+def _cache_put(key, value):
+    if len(_MODEL_CACHE) > _MODEL_CACHE_MAX:
+        # Evict the oldest 16 instead of clearing everything, so we don't
+        # trigger a thundering herd on the next request.
+        for k in list(_MODEL_CACHE)[:16]:
+            del _MODEL_CACHE[k]
+    _MODEL_CACHE[key] = value
+
+
 def list_models(cfg, pool, force=False):
     pm = cfg.providers
     hit = _MODEL_CACHE.get(pool)
@@ -427,7 +444,7 @@ def list_models(cfg, pool, force=False):
                         ids.append(i)
             ids = sorted(set(ids))
             if ids:
-                _MODEL_CACHE[pool] = (time.time(), ids)
+                _cache_put(pool, (time.time(), ids))
                 return ids
         except Exception as e:
             last = e
@@ -460,7 +477,7 @@ def list_models_for_provider(p, force=False):
                              i, re.I):
                 ids.append(i)
     ids = sorted(set(ids))
-    _MODEL_CACHE[key] = (time.time(), ids)
+    _cache_put(key, (time.time(), ids))
     return ids
 
 

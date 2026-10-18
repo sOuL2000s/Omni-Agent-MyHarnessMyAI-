@@ -35,6 +35,8 @@ class AgentLoop(unittest.TestCase):
         self.cfg.providers.add_keys("mock", ["k"], self.gw.url, "m")
 
     def tearDown(self):
+        # Reset thread-local approver so the next test starts clean.
+        safety.set_approver(None)
         self.gw.close()
         self.tmp.cleanup()
 

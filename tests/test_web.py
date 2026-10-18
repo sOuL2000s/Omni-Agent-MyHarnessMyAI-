@@ -101,9 +101,22 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/keys/add", {"pool": "bad name!", "keys": "x"})[0], 400)
         self.assertEqual(self.req("POST", "/api/keys/remove", {"name": "mock-2"})[0], 200)
 
+    def test_workspace_set_accepts_any_directory(self):
+        # The old guards are gone: any real directory is accepted, including
+        # roots and the data/ folder itself. Only a non-directory is refused.
+        with tempfile.TemporaryDirectory() as other:
+            st, d, _ = self.req("POST", "/api/workspace/set", {"path": other})
+            self.assertEqual(st, 200, d)
+            self.assertEqual(Path(d["workspace"]), Path(other).resolve())
+        st, d, _ = self.req("POST", "/api/workspace/set", {"path": str(self.cfg.data_dir)})
+        self.assertEqual(st, 200, d)
+        missing = str(Path(self.tmp.name) / "does-not-exist")
+        self.assertEqual(self.req("POST", "/api/workspace/set", {"path": missing})[0], 400)
+
     def test_chat_with_approval_flow(self):
         st, d, _ = self.req("POST", "/api/chat", {"session": SID, "text": "run echo"})
         self.assertEqual(st, 200)
+        self.assertEqual(d["user_idx"], 1)   # system prompt is index 0, user at 1
         # shell needs approval -> an approval event shows up
         after, approval, deadline, first = 0, None, time.time() + 15, []
         while time.time() < deadline and not approval:
@@ -180,6 +193,8 @@ class WebTests(unittest.TestCase):
         st, body, _ = self.req("GET", "/api/file?path=evil.txt")
         self.assertEqual((st, body), (200, b"hello"))
         self.assertEqual(self.req("GET", "/api/file?path=../providers.json")[0], 404)
+        # absolute paths outside the workspace are also blocked
+        self.assertEqual(self.req("GET", "/api/file?path=/etc/passwd")[0], 404)
         self.assertEqual(self.req("GET", "/api/poll?session=../../etc&after=0&wait=0")[0], 400)
 
     def test_index_page_served(self):

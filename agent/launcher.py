@@ -1,11 +1,12 @@
 # agent/launcher.py
 """Tiny tkinter launcher shown when omni.exe is started with no arguments.
 
-Two buttons: Terminal chat and Web UI. Everything else (run / check / provider /
-schedule) is still available from the command line as before.
+Two buttons: Terminal chat and Web UI. The launcher stays open after either
+so the user can start the other as well. Everything else (run / check /
+provider / schedule) is still available from the command line.
 
-The window is deliberately plain: no images, no fonts beyond the defaults, so it
-starts instantly and works on any Windows/macOS/Linux box Nuitka targets.
+The window is deliberately plain: no images, no fonts beyond the defaults, so
+it starts instantly and works on any Windows/macOS/Linux box Nuitka targets.
 """
 import os
 import subprocess
@@ -60,16 +61,16 @@ def _open_terminal_chat(cfg):
         _run_in_process(cfg, ["chat"])
 
 
-def _open_web_ui(cfg):
+def _open_web_ui(cfg, on_url=None):
     """Start the web UI server in a background thread and open the browser.
 
-    The launcher window stays open with a small status line, so the user can
-    close the launcher to stop the server.
+    `on_url` is called (from the server thread) with the real URL once the
+    socket is bound, so the launcher can display the actual port.
     """
     from .web.server import serve
-    # serve() blocks; run it in a daemon thread so the GUI stays responsive.
     t = threading.Thread(target=serve, kwargs=dict(
-        cfg=cfg, host="127.0.0.1", port=8765, open_browser=True),
+        cfg=cfg, host="127.0.0.1", port=8765, open_browser=True,
+        on_url=on_url),
         daemon=True)
     t.start()
     return t
@@ -147,22 +148,30 @@ def run_launcher(cfg) -> int:
 
     # ---- status label (updated when the web UI starts)
     status = tk.StringVar(value="")
-    status_lbl = ttk.Label(frm, textvariable=status, foreground="#666")
+    status_lbl = ttk.Label(frm, textvariable=status, foreground="#666",
+                           wraplength=380, justify="left")
     status_lbl.grid(row=4, column=0, columnspan=2, pady=(14, 0))
 
     def on_terminal():
-        status.set("Opening a terminal window…")
+        status.set("Opened a terminal window. This launcher can stay open for "
+                   "another launch, or you can close it.")
         root.update_idletasks()
         _open_terminal_chat(cfg)
-        root.after(300, root.destroy)   # close the launcher once the terminal starts
+        # Keep the launcher alive so the user can also start the web UI.
+        # (Matches the docstring and the README.)
 
     def on_web():
         status.set("Starting the web UI…")
         root.update_idletasks()
         try:
-            _open_web_ui(cfg)
-            status.set("Web UI running at http://localhost:8765  —  "
-                       "close this launcher to stop it.")
+            def _ready(url):
+                # called from the server thread; hop back to the GUI thread
+                try:
+                    root.after(0, lambda: status.set(
+                        f"Web UI running at {url}  —  close this launcher to stop it."))
+                except Exception:
+                    pass
+            _open_web_ui(cfg, on_url=_ready)
         except Exception as e:
             status.set(f"Could not start the web UI: {e}")
 

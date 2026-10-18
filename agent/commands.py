@@ -1,3 +1,4 @@
+# agent/commands.py
 """Slash commands to manage keys/models without leaving the harness (terminal; the web UI has the same powers)."""
 import getpass
 import shlex
@@ -193,6 +194,6 @@ def test(cfg, target=None):
         else:
             bad += 1
             out.append(f"{p.name} FAILED [{kind}]: {text[:200]}")
-    if len(targets) > 6 or target == "all" or (target and target in pm.pool_names() and len(targets) > 1):
+    if len(targets) > 6 or target == "all":
         out = [o for o in out if "FAILED" in o] + [f"{len(targets) - bad}/{len(targets)} keys OK"]
     return "\n".join(out)
