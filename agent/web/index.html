@@ -1491,12 +1491,48 @@ function renderMcp() {
   const cmd = h("input", { placeholder: "command (e.g. npx)", spellcheck: false });
   const args = h("input", { placeholder: "args, space-separated (e.g. -y @modelcontextprotocol/server-filesystem /home/you)", spellcheck: false });
   const urlIn = h("input", { placeholder: "remote URL (e.g. https://mcp.example.com/mcp) — leave blank for local", spellcheck: false });
+  const envIn = h("textarea", { class: "keysbox", spellcheck: false,
+    placeholder: "env / secrets — one KEY=VALUE per line, e.g.\nGITHUB_PERSONAL_ACCESS_TOKEN=ghp_...\nGOOGLE_OAUTH_TOKEN=ya29....",
+  });
+  const headersIn = h("textarea", { class: "keysbox", spellcheck: false,
+    placeholder: "HTTP headers (remote servers only) — one Header: value per line, e.g.\nAuthorization: Bearer eyJ...",
+  });
+
+  function parseEnv(text) {
+    const out = {};
+    for (const raw of (text || "").split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const i = line.indexOf("=");
+      if (i <= 0) continue;
+      const k = line.slice(0, i).trim();
+      let v = line.slice(i + 1).trim();
+      if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+      if (v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
+      if (k) out[k] = v;
+    }
+    return out;
+  }
+  function parseHeaders(text) {
+    const out = {};
+    for (const raw of (text || "").split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const i = line.indexOf(":");
+      if (i <= 0) continue;
+      out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    }
+    return out;
+  }
+
   const addBtn = h("button", { class: "primary", text: "Add & connect",
     onclick: () => act(() => api("/api/mcp/add", {
         name: name.value,
         command: cmd.value,
         args: args.value.split(/\s+/).filter(Boolean),
         url: urlIn.value.trim(),
+        env: parseEnv(envIn.value),
+        headers: parseHeaders(headersIn.value),
       }),
       r => `Connected: ${r.tools} tools`) });
   [name, cmd, args, urlIn].forEach(el => entrable(el, () => addBtn.click()));
@@ -1564,8 +1600,12 @@ function renderMcp() {
     h("div", { class: "row" }, name, cmd),
     h("div", { class: "row" }, args),
     h("div", { class: "row" }, urlIn),
+    h("div", { class: "small", text: "Environment variables (local servers — tokens, API keys)" }),
+    envIn,
+    h("div", { class: "small", text: "HTTP headers (remote servers — Authorization: Bearer …)" }),
+    headersIn,
     h("div", { class: "row" }, addBtn),
-    h("div", { class: "small", text: "Local server: fill command + args. Remote server: fill the URL (Streamable HTTP) and leave command/args blank. Pick a server above to pre-fill these fields." })));
+    h("div", { class: "small", text: "Local server: fill command + args. Remote server: fill the URL (Streamable HTTP). Tokens go in the env or headers box. Pick a server above to pre-fill these fields." })));
 
   loadRegistry(false);
   pane.scrollTop = scroll;

@@ -93,6 +93,12 @@ def build(onefile=False, with_browser=False):
         "--file-version=2.1.0.0",
         "--product-version=2.1.0.0",
     ]
+    if os.name == "nt":
+        icon = ROOT / "assets" / "omni.ico"
+        if icon.exists():
+            cmd.append(f"--windows-icon-from-ico={icon}")
+        else:
+            print(f"WARNING: {icon} not found — the exe will use the default icon.")
     if with_browser:
         # Opt-in: bundle Selenium so the shipped exe can render JS pages.
         # Grows the build by ~30 MB. See README §9.3.
