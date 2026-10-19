@@ -50,6 +50,12 @@ MAX_EVENTS = 2000
 MAX_POLL_EVENTS = 200
 STREAM_COALESCE_SECONDS = 0.1
 
+# Cap how much text a single message can render into the browser. A huge
+# message (e.g. a pasted document) would build thousands of DOM nodes in
+# index.html and freeze the tab. The full text is still in history and is
+# still sent to the model; only the rendered preview is truncated.
+MAX_RENDER_CHARS = 20000
+
 
 # ---------------------------------------------------------------- workspace guard
 def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
@@ -185,12 +191,12 @@ class Session:
                 continue
             r = m.get("role")
             if r == "user":
-                out.append({"type": "user", "text": m.get("content", ""), "idx": i})
+                out.append({"type": "user", "text": self._clip(m.get("content", "")), "idx": i})
             elif r == "assistant":
                 calls = m.get("tool_calls") or []
                 if m.get("content"):
                     out.append({"type": "assistant" if calls else "final",
-                                "text": m["content"], "idx": i})
+                                "text": self._clip(m["content"]), "idx": i})
                 for c in calls:
                     fn = c.get("function", {})
                     out.append({"type": "tool", "name": fn.get("name"),
@@ -202,6 +208,16 @@ class Session:
                             "id": m.get("tool_call_id"),
                             "ok": not t.startswith("ERROR"), "idx": i})
         return out
+
+    @staticmethod
+    def _clip(text):
+        """Truncate a rendered message. Does NOT change history; the full text
+        is still saved and still sent to the model on the next turn."""
+        s = str(text)
+        if len(s) <= MAX_RENDER_CHARS:
+            return s
+        return (s[:MAX_RENDER_CHARS]
+                + f"\n…[+{len(s) - MAX_RENDER_CHARS} chars — full text is in this chat's history]")
 
     def stop(self):
         self.cancel.set()

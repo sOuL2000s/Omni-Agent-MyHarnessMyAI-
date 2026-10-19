@@ -35,6 +35,8 @@ data/memory.jsonl
 data/sessions/
 data/*.corrupt-*
 data/*.tmp
+workspace/*
+!workspace/.gitkeep
 .env
 
 # IDE / OS

@@ -1525,6 +1525,68 @@ async function upload(files) {
 }
 
 /* ------------------------------------------------------------------
+   Large paste handling.
+
+   Pasting a large block of text (a log dump, a document, 500 KB of JSON)
+   used to freeze the browser: the textarea grew, every line got a DOM
+   node in the bubble, and the full text was sent to the model on every
+   subsequent turn. Now anything over LARGE_PASTE_CHARS is intercepted at
+   paste time, uploaded as a file in the workspace, and only a short
+   reference ("[pasted text attached as pasted-...txt]") goes in the
+   prompt. The agent reads the file with read_file if it needs the
+   content. Small pastes behave exactly as before.
+   ------------------------------------------------------------------ */
+const LARGE_PASTE_CHARS = 20000;   // ~20 KB
+
+$("#inp").addEventListener("paste", async e => {
+  const cd = e.clipboardData || window.clipboardData;
+  const txt = cd ? cd.getData("text") : "";
+  if (!txt || txt.length < LARGE_PASTE_CHARS) return;    // normal paste — let it through
+  e.preventDefault();                                     // don't insert 500 KB into the textarea
+
+  const name = `pasted-${Date.now()}.txt`;
+  toast(`Large paste (${Math.round(txt.length / 1024)} KB) — attaching as ${name}…`, 4000);
+  try {
+    const blob = new Blob([txt], { type: "text/plain" });
+    const file = new File([blob], name, { type: "text/plain" });
+    const d = await uploadOne(file);
+    const inp = $("#inp");
+    const ref = `[pasted text attached as ${d.path}]`;
+    inp.value = (inp.value ? inp.value + " " : "") + ref + " ";
+    inp.focus(); autoGrow();
+    toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`);
+    loadFiles();
+  } catch (err) {
+    toast("Attach failed: " + err.message, 5000);
+  }
+});
+
+/* Drag-and-drop of *selected text* (not a file) from another app arrives
+   as text/plain on dataTransfer. Same rule as paste: if it's large,
+   upload it instead of stuffing it into the prompt. */
+$("#inp").addEventListener("dragover", e => e.preventDefault());
+$("#inp").addEventListener("drop", async e => {
+  if (e.dataTransfer.files.length) {
+    e.preventDefault();
+    upload([...e.dataTransfer.files]);
+    return;
+  }
+  const txt = e.dataTransfer.getData("text") || "";
+  if (txt.length >= LARGE_PASTE_CHARS) {
+    e.preventDefault();
+    const name = `dropped-${Date.now()}.txt`;
+    try {
+      const file = new File([txt], name, { type: "text/plain" });
+      const d = await uploadOne(file);
+      const inp = $("#inp");
+      inp.value += (inp.value ? " " : "") + `[dropped text attached as ${d.path}] `;
+      autoGrow(); loadFiles();
+      toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`);
+    } catch (err) { toast("Attach failed: " + err.message, 5000); }
+  }
+});
+
+/* ------------------------------------------------------------------
    Workspace picker.
    Improvements vs. the previous version:
      * editable path bar (paste a path, Enter to go),
@@ -1799,16 +1861,6 @@ logEl.addEventListener("dragover", e => e.preventDefault());
 logEl.addEventListener("drop", e => {
   e.preventDefault();
   if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]);
-});
-
-// Also handle drops onto the composer textarea so a dragged file uploads
-// instead of inserting its path as text.
-$("#inp").addEventListener("dragover", e => e.preventDefault());
-$("#inp").addEventListener("drop", e => {
-  if (e.dataTransfer.files.length) {
-    e.preventDefault();
-    upload([...e.dataTransfer.files]);
-  }
 });
 
 function openRight(tab) {
