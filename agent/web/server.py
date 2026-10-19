@@ -6,7 +6,11 @@ Security model:
   * requires a per-start token (URL once, then HttpOnly SameSite=Strict cookie),
   * checks the Host header (blocks DNS-rebinding),
   * never sends API keys to the browser (only masked tails),
-  * refuses to use a filesystem root or a parent of data/ as the workspace.
+  * refuses a filesystem root as the workspace (it would disable the
+    outside-workspace approval guard; secret files are blocked separately
+    in agent/safety.py).
+  * /api/mcp_registry proxies the official MCP Registry (cached on disk);
+    nothing from it is executed until the user clicks "Add & connect".
 """
 import fnmatch
 import hmac
@@ -59,28 +63,21 @@ MAX_RENDER_CHARS = 20000
 
 # ---------------------------------------------------------------- workspace guard
 def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
-    """Refuse filesystem roots and ancestors of data/ as the workspace.
+    """Refuse a filesystem root as the workspace.
 
     A filesystem root would make every path "inside" and silently disable the
-    outside-workspace approval guard. An ancestor of data/ would let the
-    agent's own file tools read data/providers.json and exfiltrate the keys.
+    outside-workspace approval guard. Any other directory (including data/ and
+    its parents) is allowed — see the secret-file guard in agent/safety.py for
+    the credential protection that used to live here.
     """
     try:
         new_ws = new_ws.resolve()
     except OSError:
         pass
-    try:
-        data = data_dir.resolve()
-    except OSError:
-        data = data_dir
     if new_ws == new_ws.parent:
         raise ValueError(
             "refusing a filesystem root as the workspace "
             "(it would disable the outside-workspace approval guard)")
-    if new_ws == data or new_ws in data.parents:
-        raise ValueError(
-            "refusing a parent of data/ as the workspace "
-            "(the agent could read its own API keys)")
 
 
 # ---------------------------------------------------------------- chat sessions
@@ -701,7 +698,17 @@ def make_handler(app):
         def api_refresh_all(self, q):
             out = app.cfg.providers.refresh_all_models()
             summary = {k: (len(v) if isinstance(v, list) else str(v)) for k, v in out.items()}
-            self._send(200, {"refreshed": summary})
+            # Also return the per-pool model list so the browser can fill its
+            # client-side modelCache in one round-trip. Without this the
+            # <datalist> dropdowns are rebuilt from an empty modelCache and
+            # the "Refresh all" button looks like it did nothing.
+            by_pool = {}
+            for pool in app.cfg.providers.pool_names():
+                try:
+                    by_pool[pool] = llm.list_models(app.cfg, pool)
+                except Exception:
+                    by_pool[pool] = []
+            self._send(200, {"refreshed": summary, "models": by_pool})
 
         def api_key_model(self, q):
             b = self._json_body()
@@ -874,26 +881,61 @@ def make_handler(app):
             except Exception as e:
                 self._err(500, str(e))
 
+        def api_mcp_registry(self, q):
+            """List MCP servers from the official registry (cached on disk).
+
+            ?q=filter  ?refresh=1  ?limit=200
+            Never raises into the UI: network failures return an empty list
+            plus an `error` string so the panel can show a hint.
+            """
+            from .. import mcp_registry
+            cache = app.cfg.data_dir / "mcp_registry.json"
+            if q.get("refresh") == "1":
+                try:
+                    if cache.exists():
+                        cache.unlink()
+                except OSError:
+                    pass
+            installed = set()
+            if getattr(app.cfg, "mcp", None):
+                installed = set(app.cfg.mcp.servers.keys())
+            try:
+                limit = min(max(1, int(q.get("limit", 200))), 500)
+            except ValueError:
+                limit = 200
+            try:
+                rows = mcp_registry.search(cache, q.get("q", ""),
+                                           limit=limit, installed=installed)
+                self._send(200, {"servers": rows, "cached": cache.exists()})
+            except Exception as e:
+                self._send(200, {"servers": [], "error": str(e)})
+        api_mcp_registry.method = "GET"
+
         def api_mcp_add(self, q):
             b = self._json_body()
             name = (b.get("name") or "").strip()
             command = (b.get("command") or "").strip()
-            if not name or not command:
-                raise ValueError("name and command are required")
+            url = (b.get("url") or "").strip()
+            if not name or (not command and not url):
+                raise ValueError("name and either command or url are required")
             cfg_path = app.cfg.data_dir / "mcp.json"
             try:
                 data = json.loads(cfg_path.read_text(encoding="utf-8-sig")) if cfg_path.exists() else {"servers": {}}
             except Exception:
                 data = {"servers": {}}
             data.setdefault("servers", {})[name] = {
-                "command": command,
+                "command": command or None,
+                "url": url or None,
                 "args": b.get("args") or [],
                 "env": b.get("env") or {},
+                "headers": b.get("headers") or {},
                 "enabled": True,
             }
             cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             from ..mcp import MCPServer
-            srv = MCPServer(name, command, b.get("args") or [], b.get("env") or {}, b.get("cwd"))
+            srv = MCPServer(name, command or None, b.get("args") or [],
+                            b.get("env") or {}, b.get("cwd"),
+                            url=url or None, headers=b.get("headers") or {})
             try:
                 srv.start()
                 app.cfg.mcp.servers[name] = srv

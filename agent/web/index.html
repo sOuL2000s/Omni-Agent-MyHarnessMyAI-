@@ -519,7 +519,7 @@ textarea.keysbox{
    ============================================================ */
 #modal,#confirm{
   position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);
-  display:none;align-items:center;justify-content:center;z-index:20;padding:20px;
+  display:none;align-items:center;justify-content:center;z-index:50;padding:20px;
 }
 #modal.on,#confirm.on{display:flex}
 #modal .dlg,#confirm .dlg{
@@ -546,7 +546,7 @@ textarea.keysbox{
    ============================================================ */
 #toasts{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-  display:flex;flex-direction:column;gap:8px;z-index:30;max-width:90vw;align-items:center;
+  display:flex;flex-direction:column;gap:8px;z-index:60;max-width:90vw;align-items:center;
 }
 .toast{
   background:var(--ink);color:var(--bg);padding:10px 16px;
@@ -1184,6 +1184,16 @@ async function refreshKeys(force, keepFocus = true) {
   if (!force && keepFocus && pane.contains(document.activeElement) &&
       /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   try { S = await api("/api/state"); } catch (e) { return; }
+  // Seed the client-side modelCache from the state response when it's
+  // missing. /api/state includes each key's cached `models` array, so a
+  // pool whose models were refreshed server-side (Refresh all, per-key ↻,
+  // or a page reload) still gets a populated <datalist> on the next render.
+  for (const p of S.pools || []) {
+    if (!modelCache[p.pool] && p.keys && p.keys.length &&
+        Array.isArray(p.keys[0].models) && p.keys[0].models.length) {
+      modelCache[p.pool] = p.keys[0].models;
+    }
+  }
   $("#wsChip").replaceChildren("workspace: ", h("b", { text: S.workspace }));
   renderKeys();
   renderMcp();
@@ -1211,11 +1221,28 @@ function renderKeys() {
     h("h3", { text: "Models" }),
     h("div", { class: "row" },
       h("button", { class: "primary", text: "↻ Refresh all model lists",
-        onclick: e => {
+        onclick: async e => {
           const t = e.target; t.textContent = "fetching…"; t.disabled = true;
-          act(() => api("/api/refresh_all", {}),
-              r => `Refreshed ${Object.keys(r.refreshed).length} keys`)
-            .finally(() => { t.textContent = "↻ Refresh all model lists"; t.disabled = false; });
+          try {
+            const r = await api("/api/refresh_all", {});
+            // Fill the browser-side cache from the per-pool lists the
+            // server just returned, THEN re-render. Without this the
+            // pool cards rebuild their <datalist> from an empty
+            // modelCache and the dropdowns look unchanged.
+            let total = 0;
+            for (const [pool, models] of Object.entries(r.models || {})) {
+              modelCache[pool] = models || [];
+              total += modelCache[pool].length;
+            }
+            const nKeys = Object.keys(r.refreshed || {}).length;
+            const nPools = Object.keys(r.models || {}).length;
+            toast(`Refreshed ${nKeys} key(s) across ${nPools} pool(s) — ${total} models`);
+            await refreshKeys(true);
+          } catch (err) {
+            toast(err.message, 6000);
+          } finally {
+            t.textContent = "↻ Refresh all model lists"; t.disabled = false;
+          }
         } }),
       h("span", { class: "small", text: "Each key's available models are fetched from its provider and shown in the dropdown next to it." }))));
 
@@ -1425,14 +1452,13 @@ function renderMcp() {
   pane.replaceChildren();
   pane.append(h("div", { class: "card" },
     h("h3", { text: "MCP servers" }),
-    h("div", { class: "small", text: "Model Context Protocol servers extend Omni with new tools (filesystem, github, sqlite, playwright…). Configure servers in data/mcp.json or add them below. Tools appear to the model as mcp__<server>__<tool>." })));
+    h("div", { class: "small", text: "Model Context Protocol servers extend Omni with new tools (filesystem, github, sqlite, playwright…). Tools appear to the model as mcp__<server>__<tool>. Pick one from the official registry below, or add a private server by hand." })));
   if (S.mcp_load_errors && S.mcp_load_errors.length) {
     pane.append(h("div", { class: "note err", text: S.mcp_load_errors.join("\n") }));
   }
-  if (!S.mcp || !S.mcp.length) {
-    pane.append(h("div", { class: "card" },
-      h("div", { class: "small", text: "No servers configured yet." })));
-  } else {
+
+  // ---- Installed servers
+  if (S.mcp && S.mcp.length) {
     for (const m of S.mcp) {
       pane.append(h("div", { class: "card" },
         h("div", { class: "mcp-row" },
@@ -1449,21 +1475,99 @@ function renderMcp() {
                                 r => `${m.name}: ${r.tools} tools`) })),
         h("div", { class: "small", text: m.command })));
     }
+  } else {
+    pane.append(h("div", { class: "card" },
+      h("div", { class: "small", text: "No servers configured yet." })));
   }
+
+  // ---- Registry browser
+  const searchIn = h("input", { placeholder: "Search the MCP registry (filesystem, github, sqlite…)", spellcheck: false });
+  const results = h("div", { class: "mcp-results", style: "max-height:260px;overflow:auto;margin-top:8px" });
+  const hint = h("div", { class: "small", style: "margin-top:6px" });
+  const refreshBtn = h("button", { text: "↻ Refresh catalog", title: "Re-fetch the official registry (cached for 1 hour)",
+    onclick: () => loadRegistry(true) });
+
   const name = h("input", { placeholder: "server name (e.g. filesystem)", spellcheck: false });
   const cmd = h("input", { placeholder: "command (e.g. npx)", spellcheck: false });
   const args = h("input", { placeholder: "args, space-separated (e.g. -y @modelcontextprotocol/server-filesystem /home/you)", spellcheck: false });
+  const urlIn = h("input", { placeholder: "remote URL (e.g. https://mcp.example.com/mcp) — leave blank for local", spellcheck: false });
   const addBtn = h("button", { class: "primary", text: "Add & connect",
-    onclick: () => act(() => api("/api/mcp/add", { name: name.value, command: cmd.value,
-      args: args.value.split(/\s+/).filter(Boolean) }),
+    onclick: () => act(() => api("/api/mcp/add", {
+        name: name.value,
+        command: cmd.value,
+        args: args.value.split(/\s+/).filter(Boolean),
+        url: urlIn.value.trim(),
+      }),
       r => `Connected: ${r.tools} tools`) });
-  [name, cmd, args].forEach(el => entrable(el, () => addBtn.click()));
+  [name, cmd, args, urlIn].forEach(el => entrable(el, () => addBtn.click()));
+
+  function applyTemplate(row) {
+    const t = row.template;
+    if (!t || t.unsupported) { hint.textContent = (t && t.reason) || "No template available — fill in command and args manually."; return; }
+    const short = (row.name || "").split("/").pop().replace(/[^A-Za-z0-9_\-]/g, "_").slice(0, 32) || "mcp";
+    name.value = short;
+    if (t.transport === "http") {
+      cmd.value = "";
+      args.value = "";
+      urlIn.value = t.url || "";
+      hint.textContent = "Pre-filled remote endpoint from " + row.name + (t.note ? " (" + t.note + ")" : "") + ". Review and click Add.";
+      urlIn.focus();
+    } else {
+      urlIn.value = "";
+      cmd.value = t.command || "";
+      args.value = (t.args || []).join(" ");
+      hint.textContent = "Pre-filled from " + row.name + ". Check the args before adding.";
+      cmd.focus();
+    }
+  }
+
+  let registryCache = null;
+  async function loadRegistry(force) {
+    results.replaceChildren(h("div", { class: "small", text: "Loading registry…" }));
+    try {
+      const d = await api(`/api/mcp_registry?limit=300${force ? "&refresh=1" : ""}`);
+      registryCache = d.servers || [];
+      if (d.error) hint.textContent = "Registry unavailable: " + d.error + " — you can still add a server by hand below.";
+      renderResults();
+    } catch (e) {
+      results.replaceChildren(h("div", { class: "note err", text: e.message }));
+    }
+  }
+  function renderResults() {
+    const q = (searchIn.value || "").toLowerCase();
+    const list = (registryCache || []).filter(r =>
+      !q || r.name.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q));
+    if (!list.length) { results.replaceChildren(h("div", { class: "small", text: "No matching servers." })); return; }
+    results.replaceChildren(...list.slice(0, 100).map(r => {
+      const disabled = r.template && r.template.unsupported;
+      return h("div", { class: "mcp-result", style: "padding:8px 6px;border-bottom:1px solid var(--line);cursor:" + (disabled ? "not-allowed" : "pointer") + ";opacity:" + (disabled ? ".55" : "1"),
+        onclick: disabled ? null : () => applyTemplate(r) },
+        h("div", { style: "display:flex;gap:8px;align-items:center" },
+          h("b", { text: r.name }),
+          r.installed ? badge("installed", "g") : null,
+          disabled ? badge("remote", "w") : null),
+        r.description ? h("div", { class: "small", text: r.description }) : null,
+        disabled ? h("div", { class: "small", text: r.template.reason || "" }) : null);
+    }));
+  }
+  searchIn.addEventListener("input", renderResults);
+  entrable(searchIn, () => results.querySelector(".mcp-result")?.click());
+
+  pane.append(h("div", { class: "card" },
+    h("h3", { text: "Browse the MCP registry" }),
+    h("div", { class: "row" }, searchIn, refreshBtn),
+    results,
+    h("div", { class: "row" }, hint)));
+
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Add an MCP server" }),
     h("div", { class: "row" }, name, cmd),
     h("div", { class: "row" }, args),
+    h("div", { class: "row" }, urlIn),
     h("div", { class: "row" }, addBtn),
-    h("div", { class: "small", text: "Standard examples: npx -y @modelcontextprotocol/server-filesystem <dir> · npx -y @modelcontextprotocol/server-github · uvx mcp-server-sqlite --db-path <file>" })));
+    h("div", { class: "small", text: "Local server: fill command + args. Remote server: fill the URL (Streamable HTTP) and leave command/args blank. Pick a server above to pre-fill these fields." })));
+
+  loadRegistry(false);
   pane.scrollTop = scroll;
 }
 
@@ -1602,7 +1706,7 @@ let browseKeyHandler = null;
 function openBrowser(startPath, cb) {
   document.getElementById("browse")?.remove();
   const overlay = h("div", { id: "browse",
-    style: "position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
+    style: "position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:40;padding:16px" });
 
   const crumbs = h("div", { class: "crumbs" });
   const recent = h("div", { class: "recent" });
@@ -1758,6 +1862,7 @@ function openBrowser(startPath, cb) {
 
   const useBtn = h("button", { class: "primary", text: "Use this folder",
     onclick: async () => {
+      if (!curPath) return toast("Still loading the folder — try again in a moment");
       const ok = await confirmDlg(
         "Change workspace?",
         `Make "${curPath}" the workspace?\n\nFiles under this folder will be treated as "inside" and won't prompt for approval when the agent writes to them.`,
@@ -1768,7 +1873,7 @@ function openBrowser(startPath, cb) {
         pushRecent(curPath);
         overlay.remove();
         cleanupKeyHandler();
-      } catch (e) { toast(e.message); }
+      } catch (e) { toast(e.message, 6000); }
     } });
 
   const pathBar = h("div", { class: "row" },
@@ -1891,8 +1996,13 @@ $("#routeChip").onclick = () => {
 $("#wsChip").addEventListener("click", () => {
   openBrowser((S && S.workspace) || "", async (p) => {
     const r = await api("/api/workspace/set", { path: p });
+    // Update the chip immediately from the authoritative server response,
+    // then re-read the full state so anything else that depends on the
+    // workspace is consistent too.
+    if (S) S.workspace = r.workspace;
+    $("#wsChip").replaceChildren("workspace: ", h("b", { text: r.workspace }));
     toast("Workspace changed to " + r.workspace);
-    refreshKeys(true);
+    await refreshKeys(true);
   });
 });
 

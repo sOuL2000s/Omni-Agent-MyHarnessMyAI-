@@ -29,6 +29,10 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.request
+
+MCP_PROTOCOL_VERSION = "2025-06-18"   # header sent on every POST
 
 
 class MCPError(Exception):
@@ -36,9 +40,14 @@ class MCPError(Exception):
 
 
 class MCPServer:
-    def __init__(self, name, command, args=None, env=None, cwd=None):
+    def __init__(self, name, command=None, args=None, env=None, cwd=None,
+                 url=None, headers=None):
         self.name = name
-        self.cmd = [command] + (args or [])
+        self.transport = "http" if url else "stdio"
+        self.url = url
+        self.http_headers = dict(headers or {})
+        self.session_id = None
+        self.cmd = ([command] + (args or [])) if command else []
         self.env = {**os.environ, **(env or {})}
         self.cwd = cwd
         self.proc = None
@@ -51,6 +60,14 @@ class MCPServer:
 
     # -- lifecycle
     def start(self):
+        if self.transport == "http":
+            self._start_http()
+        else:
+            self._start_stdio()
+        self._initialize()
+        self.ready = True
+
+    def _start_stdio(self):
         self.proc = subprocess.Popen(
             self.cmd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -60,8 +77,13 @@ class MCPServer:
                          name=f"mcp-{self.name}-out").start()
         threading.Thread(target=self._stderr, daemon=True,
                          name=f"mcp-{self.name}-err").start()
-        self._initialize()
-        self.ready = True
+
+    def _start_http(self):
+        """No persistent connection for Streamable HTTP: every JSON-RPC
+        message is a fresh POST. We only verify the endpoint answers a
+        tools/list during _initialize()."""
+        if not self.url:
+            raise MCPError(f"MCP {self.name}: http transport requires a url")
 
     def _stderr(self):
         for line in self.proc.stderr:
@@ -84,6 +106,8 @@ class MCPServer:
             self.last_error = f"reader died: {e}"
 
     def _rpc(self, method, params=None, timeout=60):
+        if self.transport == "http":
+            return self._rpc_http(method, params, timeout)
         with self.lock:
             self.seq += 1
             rid = self.seq
@@ -104,8 +128,94 @@ class MCPServer:
             raise MCPError(f"MCP {self.name}: {resp['error']}")
         return resp.get("result") or {}
 
+    def _rpc_http(self, method, params=None, timeout=60):
+        """One JSON-RPC request = one HTTP POST to the MCP endpoint."""
+        with self.lock:
+            self.seq += 1
+            rid = self.seq
+        payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+            "Mcp-Method": method,
+            **self.http_headers,
+        }
+        if method in ("tools/call", "resources/read", "prompts/get"):
+            name = (params or {}).get("name") or (params or {}).get("uri")
+            if name:
+                headers["Mcp-Name"] = name
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        req = urllib.request.Request(self.url, data=json.dumps(payload).encode(),
+                                     headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                sid = r.headers.get("Mcp-Session-Id")
+                if sid:
+                    self.session_id = sid
+                ctype = r.headers.get("Content-Type", "")
+                body = r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            txt = ""
+            try:
+                txt = e.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            raise MCPError(f"MCP {self.name}: HTTP {e.code}: {txt[:300]}")
+        except Exception as e:
+            raise MCPError(f"MCP {self.name}: request failed: {e}")
+        data = self._parse_http_body(body, ctype, rid)
+        if "error" in data:
+            raise MCPError(f"MCP {self.name}: {data['error']}")
+        return data.get("result") or {}
+
+    @staticmethod
+    def _parse_http_body(body, ctype, rid):
+        """The server may reply with a single JSON object or an SSE stream."""
+        if "text/event-stream" in ctype:
+            for line in body.splitlines():
+                line = line.strip()
+                if line.startswith("data:"):
+                    raw = line[5:].strip()
+                    if not raw:
+                        continue
+                    try:
+                        msg = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if msg.get("id") == rid:
+                        return msg
+            raise MCPError("SSE stream ended without a matching response")
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise MCPError(f"invalid JSON reply: {body[:200]}")
+        if isinstance(data, list):
+            for msg in data:
+                if isinstance(msg, dict) and msg.get("id") == rid:
+                    return msg
+            raise MCPError("batch reply had no matching id")
+        return data
+
     def _notify(self, method, params=None):
         payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        if self.transport == "http":
+            headers = {
+                "Content-Type": "application/json",
+                "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+                "Mcp-Method": method,
+                **self.http_headers,
+            }
+            if self.session_id:
+                headers["Mcp-Session-Id"] = self.session_id
+            try:
+                req = urllib.request.Request(self.url, data=json.dumps(payload).encode(),
+                                             headers=headers, method="POST")
+                urllib.request.urlopen(req, timeout=10).close()
+            except Exception:
+                pass
+            return
         try:
             self.proc.stdin.write(json.dumps(payload) + "\n")
             self.proc.stdin.flush()
@@ -142,23 +252,25 @@ class MCPServer:
         return "\n".join(parts) if parts else "(no output)"
 
     def stop(self):
-        try:
-            if self.proc and self.proc.poll() is None:
-                self.proc.terminate()
-                try:
-                    self.proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.proc.kill()
-                    self.proc.wait(timeout=3)
-        except Exception:
-            pass
-        for stream in ("stdin", "stdout", "stderr"):
+        if self.transport == "stdio":
             try:
-                getattr(self.proc, stream).close()
+                if self.proc and self.proc.poll() is None:
+                    self.proc.terminate()
+                    try:
+                        self.proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        self.proc.kill()
+                        self.proc.wait(timeout=3)
             except Exception:
                 pass
+            for stream in ("stdin", "stdout", "stderr"):
+                try:
+                    getattr(self.proc, stream).close()
+                except Exception:
+                    pass
         self.ready = False
         self.tools = []
+        self.session_id = None
 
 
 def _expand_env(value):
@@ -195,9 +307,10 @@ class MCPRegistry:
                 continue
             if spec.get("enabled") is False:
                 continue
+            url = spec.get("url")
             cmd = spec.get("command")
-            if not cmd:
-                self.load_errors.append(f"{name}: no command")
+            if not url and not cmd:
+                self.load_errors.append(f"{name}: needs either 'command' or 'url'")
                 continue
             srv = MCPServer(
                 name=name,
@@ -205,6 +318,8 @@ class MCPRegistry:
                 args=_expand_env(spec.get("args") or []),
                 env=_expand_env(spec.get("env") or {}),
                 cwd=spec.get("cwd"),
+                url=url,
+                headers=_expand_env(spec.get("headers") or {}),
             )
             try:
                 srv.start()

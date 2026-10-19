@@ -445,8 +445,10 @@ PC:
 - Click a folder to enter it, **Use this folder** to make it Omni's new root.
   A **confirmation dialog** warns you that files under the new folder will be
   treated as "inside" and won't prompt for approval. The picker refuses a
-  filesystem root (`/`, `C:\`) and any ancestor of the `data/` folder (which
-  would expose your API keys to the agent's own file tools).
+  filesystem root (`/`, `C:\`) because that would disable the
+  outside-workspace approval guard. `data/` (and its parents) may be chosen,
+  but `data/providers.json`, `data/state.json` and `data/memory.jsonl` are
+  always refused by the file tools so the agent cannot read its own keys.
 
 ### 6.6 Strict mode and auto-approve toggles
 
@@ -781,7 +783,9 @@ a real capability with real risks. Here's exactly how the safety layers work.
    keys to the browser (only masked tails like `sk-...abc`), and **refuses to
    use a filesystem root or a parent of `data/` as the workspace**.
 5. **Startup guard** — `config.load()` exits with code 2 and a clear message
-   when `AGENT_WORKSPACE` points at a filesystem root.
+   when `AGENT_WORKSPACE` points at a filesystem root. The workspace picker
+   applies the same rule. The credential files inside `data/` are refused by
+   `agent/safety.py` even when `data/` is the workspace.
 
 ### 11.2 Auto-approve — read this before enabling
 
@@ -959,8 +963,8 @@ Omni refuses to start when `AGENT_WORKSPACE` (or the workspace picker) points
 at `/` or `C:\`, because that would silently disable the outside-workspace
 approval guard: every path would become "inside". Set `AGENT_WORKSPACE` to a
 normal folder (your home, or a project dir) and restart. The web UI's
-workspace picker refuses the same thing and also refuses any ancestor of the
-`data/` folder.
+workspace picker applies the same rule. `data/` and its parents are allowed;
+the credential files inside `data/` are always blocked by the file tools.
 
 ### "Model not available / 404"
 

@@ -1,5 +1,6 @@
 data/providers.json
 data/memory.jsonl
+data/mcp_registry.json
 .env
 .venv/
 __pycache__/

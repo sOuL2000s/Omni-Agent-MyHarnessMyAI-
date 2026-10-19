@@ -10,6 +10,11 @@ class Denied(Exception):
 
 _tl = threading.local()
 
+# Files inside data/ that hold credentials or session state. They stay
+# unreadable by the agent's file tools even when data/ (or one of its
+# parents) is set as the workspace.
+_SECRET_FILES = {"providers.json", "state.json", "memory.jsonl"}
+
 
 def set_approver(fn, auto=None):
     """fn(action:str, tool:str|None=None) -> bool.
@@ -33,6 +38,15 @@ def resolve(cfg, path: str, write=False) -> Path:
     if not p.is_absolute():
         p = cfg.workspace / p
     p = p.resolve()
+
+    # Always refuse the credential/state files, even when data/ is "inside".
+    try:
+        data = cfg.data_dir.resolve()
+    except OSError:
+        data = cfg.data_dir
+    if p.parent == data and p.name in _SECRET_FILES:
+        raise Denied(f"Refusing to touch {p.name}: it holds credentials/state.")
+
     inside = cfg.workspace == p or cfg.workspace in p.parents
     if not inside:
         if not cfg.allow_outside:

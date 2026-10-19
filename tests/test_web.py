@@ -106,12 +106,10 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/keys/remove", {"name": "mock-2"})[0], 200)
 
     def test_workspace_set_rejects_unsafe_paths(self):
-        """A normal directory is accepted. Filesystem roots, data/ and its
-        ancestors, and non-directories are refused.
-
-        (The old version of this test asserted that data/ *was* accepted,
-        contradicting the README's safety rules. Those rules are now
-        enforced in server._validate_workspace().)
+        """A normal directory is accepted. A filesystem root and a
+        non-directory are refused. data/ and its ancestors are now allowed
+        as the workspace; the credential files inside data/ are protected
+        by agent/safety.py instead (see test_secret_files_blocked).
         """
         # 1. A normal temp folder is accepted.
         with tempfile.TemporaryDirectory() as other:
@@ -119,15 +117,13 @@ class WebTests(unittest.TestCase):
             self.assertEqual(st, 200, d)
             self.assertEqual(Path(d["workspace"]), Path(other).resolve())
 
-        # 2. data/ itself is refused (the agent must not read its own keys).
+        # 2. data/ itself is allowed as the workspace now.
         st, d, _ = self.req("POST", "/api/workspace/set", {"path": str(self.cfg.data_dir)})
-        self.assertEqual(st, 400, d)
-        self.assertIn("data/", d["error"])
+        self.assertEqual(st, 200, d)
 
-        # 3. A parent of data/ is refused for the same reason.
+        # 3. A parent of data/ is allowed too.
         st, d, _ = self.req("POST", "/api/workspace/set", {"path": str(Path(self.tmp.name))})
-        self.assertEqual(st, 400, d)
-        self.assertIn("data/", d["error"])
+        self.assertEqual(st, 200, d)
 
         # 4. A filesystem root is refused (it would disable the
         #    outside-workspace approval guard).
@@ -141,6 +137,19 @@ class WebTests(unittest.TestCase):
         st, d, _ = self.req("POST", "/api/workspace/set", {"path": missing})
         self.assertEqual(st, 400, d)
         self.assertIn("not a directory", d["error"])
+
+    def test_secret_files_blocked(self):
+        """With data/ as the workspace, the file tools must still refuse
+        providers.json / state.json / memory.jsonl (Option A)."""
+        from agent.safety import resolve, Denied
+        from agent.tools import call
+        # Make data/ the workspace so the old "outside" guard can't save us.
+        self.cfg.workspace = self.cfg.data_dir.resolve()
+        # Seed providers.json so there's something to leak.
+        (self.cfg.data_dir / "providers.json").write_text("[]", encoding="utf-8")
+        out = call(self.cfg, "read_file", {"path": "providers.json"})
+        self.assertTrue(out.startswith("ERROR"), out)
+        self.assertIn("credentials", out.lower())
 
     def test_workspace_pick_without_gui_returns_501(self):
         """The /api/workspace/pick endpoint opens a tkinter dialog on the
@@ -266,6 +275,41 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"/api/workspace/pick", body)
         # The auto-approve banner element exists.
         self.assertIn(b'id="autoBanner"', body)
+        # The MCP registry browser is wired in.
+        self.assertIn(b"/api/mcp_registry", body)
+
+    def test_mcp_registry_converter_handles_remote(self):
+        """A remote-only entry must become {transport: 'http', url: ...},
+        not {unsupported: True}."""
+        from agent import mcp_registry
+        entry = {"name": "io.test/remote", "remotes": [
+            {"type": "sse", "url": "https://old.example.com/sse"},
+            {"type": "streamable-http", "url": "https://new.example.com/mcp"},
+        ]}
+        tmpl = mcp_registry.to_omni_config(entry)
+        self.assertEqual(tmpl["transport"], "http")
+        self.assertEqual(tmpl["url"], "https://new.example.com/mcp")
+        self.assertNotIn("unsupported", tmpl)
+
+    def test_mcp_registry_endpoint_handles_offline(self):
+        """With no network (and no cache) the endpoint must return
+        200 + {servers: [], error: ...}, not a 500."""
+        from agent import mcp_registry
+        # Point the cache at a temp path and force a fetch that will fail
+        # quickly by stubbing the HTTP helper.
+        cache = Path(self.tmp.name) / "mcp_registry.json"
+        orig = mcp_registry._get_json
+        def boom(url):
+            raise OSError("offline")
+        mcp_registry._get_json = boom
+        try:
+            st, d, _ = self.req("GET", "/api/mcp_registry?limit=5&refresh=1")
+        finally:
+            mcp_registry._get_json = orig
+        self.assertEqual(st, 200)
+        self.assertIn("servers", d)
+        self.assertIn("error", d)
+        self.assertEqual(d["servers"], [])
 
 
 if __name__ == "__main__":
