@@ -6,169 +6,651 @@
 <title>Omni</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
 <style>
+/* ============================================================
+   Design tokens
+   ============================================================ */
 :root{
-  --bg:#f6f7f9; --panel:#ffffff; --ink:#1b1f27; --muted:#667085; --line:#e4e7ec; --accent:#4f46e5; --accent-ink:#fff;
-  --user:#eef2ff; --ok:#12a150; --warn:#b7791f; --bad:#d92d20; --tool:#f1f3f6; --code:#0f172a; --code-ink:#e2e8f0;
-  --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.08);
+  --bg:#f7f8fa; --bg-2:#eef0f4; --panel:#ffffff; --panel-2:#fbfcfe;
+  --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --muted-2:#94a3b8;
+  --line:#e2e8f0; --line-2:#cbd5e1;
+  --accent:#4f46e5; --accent-2:#6366f1; --accent-ink:#ffffff;
+  --accent-soft:#eef2ff; --accent-soft-2:#e0e7ff;
+  --user:#eef2ff; --ok:#059669; --warn:#b45309; --bad:#dc2626;
+  --tool:#f1f5f9; --code:#0b1220; --code-ink:#e2e8f0;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.06);
+  --shadow:0 4px 16px -4px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06);
+  --shadow-lg:0 20px 40px -12px rgba(15,23,42,.25), 0 4px 12px rgba(15,23,42,.08);
+  --radius-sm:6px; --radius:10px; --radius-lg:14px; --radius-xl:18px;
+  --warn-bg:color-mix(in srgb,#b45309 12%,transparent);
+  --bad-bg:color-mix(in srgb,#dc2626 10%,transparent);
+  --ok-bg:color-mix(in srgb,#059669 10%,transparent);
+  --sb-thumb:#cbd5e1; --sb-thumb-hover:#94a3b8; --sb-track:transparent;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#0e1116; --panel:#161a22; --ink:#e6e9ef; --muted:#98a2b3; --line:#262c38; --accent:#818cf8; --accent-ink:#0e1116;
-  --user:#1e2340; --ok:#32d583; --warn:#fdb022; --bad:#f97066; --tool:#1b212c; --code:#0a0d12; --code-ink:#dbe3ef;
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.4);}}
+  --bg:#0b0f17; --bg-2:#111827; --panel:#131a26; --panel-2:#0f1621;
+  --ink:#e6e9ef; --ink-2:#c7cdd6; --muted:#94a3b8; --muted-2:#64748b;
+  --line:#1f2937; --line-2:#334155;
+  --accent:#818cf8; --accent-2:#6366f1; --accent-ink:#0b0f17;
+  --accent-soft:#1e1b4b; --accent-soft-2:#312e81;
+  --user:#1e2340; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+  --tool:#0f1621; --code:#050912; --code-ink:#dbe3ef;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow:0 4px 16px -4px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.4);
+  --shadow-lg:0 24px 48px -12px rgba(0,0,0,.7), 0 4px 12px rgba(0,0,0,.5);
+  --warn-bg:color-mix(in srgb,#fbbf24 14%,transparent);
+  --bad-bg:color-mix(in srgb,#f87171 14%,transparent);
+  --ok-bg:color-mix(in srgb,#34d399 14%,transparent);
+  --sb-thumb:#334155; --sb-thumb-hover:#475569;
+}}
+
+/* ============================================================
+   Base + scrollbars
+   ============================================================ */
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+body{
+  background:var(--bg);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+}
+
+/* Thin, themed scrollbars everywhere (Chromium/Safari) */
+*{scrollbar-width:thin;scrollbar-color:var(--sb-thumb) var(--sb-track)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--sb-track)}
+::-webkit-scrollbar-thumb{
+  background:var(--sb-thumb);border-radius:10px;
+  border:2px solid transparent;background-clip:padding-box;
+}
+::-webkit-scrollbar-thumb:hover{background:var(--sb-thumb-hover);background-clip:padding-box;border:2px solid transparent}
+::-webkit-scrollbar-corner{background:transparent}
+
+/* ============================================================
+   Form controls
+   ============================================================ */
 button,input,select,textarea{font:inherit;color:inherit}
-button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:5px 10px}
-button:hover{border-color:var(--accent)}
-button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button{
+  cursor:pointer;border:1px solid var(--line);background:var(--panel);
+  border-radius:var(--radius-sm);padding:6px 12px;font-weight:500;
+  transition:border-color .15s,background .15s,opacity .15s,transform .05s;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  white-space:nowrap;
+}
+button:hover:not(:disabled){border-color:var(--line-2);background:var(--panel-2)}
+button:active:not(:disabled){transform:translateY(.5px)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{
+  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+  font-weight:600;box-shadow:0 1px 0 rgba(0,0,0,.05) inset;
+}
+button.primary:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent-2)}
 button.danger{color:var(--bad)}
+button.danger:hover:not(:disabled){background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
 button.ghost{border-color:transparent;background:transparent}
-button:disabled{opacity:.5;cursor:default}
-input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;min-width:0}
-input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);border-color:var(--accent)}
-#app{display:grid;grid-template-columns:240px minmax(0,1fr) 0;height:100%;transition:grid-template-columns .3s ease}
+button.ghost:hover:not(:disabled){background:var(--bg-2)}
+
+input,select,textarea{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-sm);
+  padding:7px 10px;min-width:0;transition:border-color .15s,box-shadow .15s;
+}
+input:hover,select:hover,textarea:hover{border-color:var(--line-2)}
+input:focus,select:focus,textarea:focus{
+  outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent);
+}
+input[type="checkbox"]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+
+/* ============================================================
+   Layout
+   ============================================================ */
+#app{display:grid;grid-template-columns:260px minmax(0,1fr) 0;height:100%;transition:grid-template-columns .25s ease}
 #app.leftcollapsed{grid-template-columns:0 minmax(0,1fr) 0}
-#app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 420px}
-#app.rightopen{grid-template-columns:240px minmax(0,1fr) 420px}
-aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
-#left-toggle{position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;background:none;opacity:.5;cursor:pointer}
+#app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 440px}
+#app.rightopen{grid-template-columns:260px minmax(0,1fr) 440px}
+
+/* ============================================================
+   Left sidebar
+   ============================================================ */
+aside{
+  background:var(--panel);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden;
+  position:relative;z-index:6;
+}
+#right{border-right:0;border-left:1px solid var(--line)}
+#left-toggle{
+  position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;
+  background:none;opacity:.4;cursor:pointer;transition:opacity .15s;
+}
 #left-toggle:hover{opacity:1}
 #expand-left{position:fixed;top:14px;left:10px;z-index:5;display:none}
 #app.leftcollapsed #expand-left{display:block}
-#right{border-right:0;border-left:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:8px;padding:14px 14px 8px;font-weight:700;font-size:16px}
-.brand i{width:22px;height:22px;border-radius:7px;background:var(--accent);display:inline-block;position:relative}
+#app.leftcollapsed header{padding-left:56px}
+#expand-left:hover{background:var(--bg-2)}
+
+.brand{
+  display:flex;align-items:center;gap:10px;padding:16px 36px 10px 16px;
+  font-weight:700;font-size:16px;letter-spacing:-.01em;
+}
+.brand i{
+  width:24px;height:24px;border-radius:8px;background:var(--accent);
+  display:inline-block;position:relative;
+  box-shadow:0 2px 8px -2px color-mix(in srgb,var(--accent) 60%,transparent);
+}
 .brand i:after{content:"";position:absolute;inset:6px;border:2.5px solid var(--accent-ink);border-radius:50%}
-#sessions{overflow:auto;padding:6px;flex:1}
-.sess{display:flex;align-items:center;gap:4px;border-radius:8px;padding:6px 8px;cursor:pointer;color:var(--muted)}
-.sess:hover{background:var(--bg)} .sess.on{background:var(--user);color:var(--ink)}
-.sess span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sess .t{font-size:11px;color:var(--muted);margin-left:auto}
-.sess button{opacity:0;padding:0 6px;border:0;background:none;color:var(--muted)} .sess:hover button{opacity:1}
+
+.side-section{padding:0 12px 10px}
+#newChat{
+  width:100%;justify-content:flex-start;padding:9px 12px;font-weight:600;
+}
+#newChat::before{content:"+";font-size:16px;line-height:1;margin-right:2px}
+
+#sessSearch{width:100%;font-size:12.5px;padding:6px 9px;background:var(--bg)}
+
+#sessions{overflow:auto;padding:4px 6px 12px;flex:1}
+.side-label{
+  font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;
+  font-weight:600;padding:10px 12px 4px;
+}
+.sess{
+  display:flex;align-items:center;gap:6px;border-radius:var(--radius-sm);
+  padding:7px 10px;cursor:pointer;color:var(--ink-2);
+  transition:background .12s,color .12s;
+  position:relative;
+}
+.sess:hover{background:var(--bg)}
+.sess.on{background:var(--accent-soft);color:var(--ink);font-weight:500}
+.sess.on::before{
+  content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--accent);
+}
+.sess .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess .t{font-size:11px;color:var(--muted-2);margin-left:auto;font-variant-numeric:tabular-nums}
+.sess button{
+  opacity:0;padding:2px 5px;border:0;background:none;color:var(--muted);
+  border-radius:4px;transition:opacity .15s,background .15s;
+}
+.sess:hover button,.sess:focus-within button{opacity:1}
+.sess button:hover{background:var(--bad-bg);color:var(--bad)}
+
+/* ============================================================
+   Main column
+   ============================================================ */
 main{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
-header{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+
+header{
+  display:flex;align-items:center;gap:8px;padding:12px 20px;
+  border-bottom:1px solid var(--line);background:var(--panel);
+  flex-wrap:wrap;position:relative;z-index:4;
+}
 header .sp{flex:1}
-.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);background:var(--bg);white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.chip:hover{border-color:var(--accent);color:var(--ink)}
+
+.chip{
+  border:1px solid var(--line);border-radius:999px;padding:4px 12px;
+  font-size:12px;color:var(--muted);background:var(--bg);
+  white-space:nowrap;max-width:360px;overflow:hidden;text-overflow:ellipsis;
+  cursor:pointer;transition:border-color .15s,color .15s,background .15s;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.chip::before{
+  content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+  opacity:.7;flex:none;
+}
+#routeChip::before{background:var(--ok)}
+.chip:hover{border-color:var(--accent);color:var(--ink);background:var(--panel)}
 .chip b{color:var(--ink);font-weight:600}
-label.tog{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
-label.tog.on{color:var(--bad);font-weight:600}
-label.tog.strict.on{color:var(--warn)}
-#log{flex:1;overflow:auto;padding:18px 0 8px}
-.col{max-width:860px;margin:0 auto;padding:0 18px}
-.msg{margin:10px 0;display:flex}
-.msg.user{justify-content:flex-end}
-.bubble{padding:9px 13px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word}
-.user .bubble{background:var(--user);border-bottom-right-radius:4px}
-.asst .bubble{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;white-space:normal;max-width:100%;box-shadow:var(--shadow)}
+
+/* Toggle group for strict / auto-approve */
+.toggle-group{
+  display:inline-flex;align-items:center;border:1px solid var(--line);
+  border-radius:999px;background:var(--bg);padding:2px;gap:0;
+}
+label.tog{
+  display:inline-flex;align-items:center;gap:5px;font-size:12px;
+  color:var(--muted);cursor:pointer;padding:3px 10px;border-radius:999px;
+  transition:background .15s,color .15s;user-select:none;
+}
+label.tog:hover{color:var(--ink-2)}
+label.tog.on.strict{background:var(--warn-bg);color:var(--warn);font-weight:600}
+label.tog.on:not(.strict){background:var(--bad-bg);color:var(--bad);font-weight:600}
+label.tog input{display:none}
+
+#autoBanner{
+  display:none;padding:8px 16px;background:var(--bad-bg);color:var(--bad);
+  border-bottom:1px solid color-mix(in srgb,var(--bad) 30%,transparent);
+  font-size:12.5px;font-weight:600;text-align:center;letter-spacing:.01em;
+}
+#autoBanner.on{display:block}
+
+/* ============================================================
+   Chat log
+   ============================================================ */
+#log{flex:1;overflow:auto;padding:20px 0 12px;scroll-behavior:smooth}
+.col{max-width:880px;margin:0 auto;padding:0 24px}
+
+.msg{margin:12px 0;display:flex;animation:fadeIn .18s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.msg.user{justify-content:flex-end;flex-direction:column;align-items:flex-end}
+.msg.asst{flex-direction:column;align-items:flex-start}
+
+.bubble{
+  padding:10px 14px;border-radius:14px;max-width:88%;
+  white-space:pre-wrap;word-wrap:break-word;line-height:1.6;
+}
+.user .bubble{
+  background:var(--user);border-bottom-right-radius:4px;
+  border:1px solid color-mix(in srgb,var(--accent) 15%,transparent);
+}
+.asst .bubble{
+  background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;
+  white-space:normal;max-width:100%;box-shadow:var(--shadow-sm);
+}
 .asst.mid .bubble{box-shadow:none;color:var(--muted);background:transparent;border-style:dashed}
-.bubble p{margin:.4em 0} .bubble p:first-child{margin-top:0} .bubble p:last-child{margin-bottom:0}
-.bubble ul,.bubble ol{margin:.4em 0;padding-left:1.4em}
-.bubble h1,.bubble h2,.bubble h3{margin:.6em 0 .3em;font-size:1.05em}
-.bubble code{background:var(--tool);padding:1px 5px;border-radius:5px;font:12.5px ui-monospace,Menlo,Consolas,monospace}
-.bubble pre{background:var(--code);color:var(--code-ink);padding:10px 12px;border-radius:10px;overflow:auto;margin:.5em 0}
-.bubble pre code{background:none;padding:0;color:inherit}
-.tool{margin:4px 0;background:var(--tool);border-radius:10px;border:1px solid var(--line);font-size:12.5px}
-.tool summary{padding:6px 10px;cursor:pointer;display:flex;gap:8px;align-items:center;list-style:none}
+
+.bubble p{margin:.5em 0} .bubble p:first-child{margin-top:0} .bubble p:last-child{margin-bottom:0}
+.bubble ul,.bubble ol{margin:.5em 0;padding-left:1.5em}
+.bubble li{margin:.2em 0}
+.bubble h1,.bubble h2,.bubble h3{margin:.7em 0 .3em;font-size:1.05em;letter-spacing:-.01em}
+.bubble code{
+  background:var(--tool);padding:1px 6px;border-radius:5px;
+  font:12.5px ui-monospace,Menlo,Consolas,monospace;
+}
+.bubble pre{
+  background:var(--code);color:var(--code-ink);padding:12px 14px;
+  border-radius:var(--radius);overflow:auto;margin:.6em 0;
+  font-size:12.5px;line-height:1.55;
+}
+.bubble pre code{background:none;padding:0;color:inherit;font-size:inherit}
+
+/* ============================================================
+   Tool cards
+   ============================================================ */
+.tool{
+  margin:6px 0;background:var(--tool);border-radius:var(--radius);
+  border:1px solid var(--line);border-left:3px solid var(--muted-2);
+  font-size:12.5px;transition:border-left-color .15s;
+}
+.tool[data-status="ok"]{border-left-color:var(--ok)}
+.tool[data-status="bad"]{border-left-color:var(--bad)}
+.tool[data-status="run"]{border-left-color:var(--warn)}
+.tool summary{
+  padding:8px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;
+  list-style:none;border-radius:var(--radius);
+}
+.tool summary:hover{background:color-mix(in srgb,var(--line) 40%,transparent)}
 .tool summary::-webkit-details-marker{display:none}
-.tool summary .n{font-weight:600} .tool summary .a{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-family:ui-monospace,Menlo,Consolas,monospace}
-.tool .st{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none} .tool .st.ok{background:var(--ok)} .tool .st.bad{background:var(--bad)}
-.tool pre{margin:0;padding:8px 12px;border-top:1px solid var(--line);overflow:auto;max-height:260px;white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,Consolas,monospace}
-.note{margin:6px 0;font-size:12.5px;color:var(--warn);padding-left:4px}
-.note.err{color:var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent);border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);padding:8px 12px;border-radius:10px;white-space:pre-wrap}
-.note.verify{color:#b7791f;background:color-mix(in srgb,#b7791f 8%,transparent);
-  border:1px solid color-mix(in srgb,#b7791f 30%,transparent);
-  padding:8px 12px;border-radius:10px;white-space:pre-wrap;margin:6px 0}
-.empty{max-width:560px;margin:12vh auto 0;text-align:center;color:var(--muted)} .empty h2{color:var(--ink);margin:0 0 6px}
-.empty .ex{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
-#composer{padding:10px 0 16px;background:linear-gradient(transparent,var(--bg) 30%)}
-.box{display:flex;gap:8px;align-items:flex-end;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px;box-shadow:var(--shadow)}
-.box textarea{flex:1;border:0;resize:none;max-height:200px;padding:6px;background:transparent} .box textarea:focus{outline:none}
-.status{margin:0 0 6px}
-.status-card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow)}
+.tool summary .n{font-weight:600;color:var(--ink)}
+.tool summary .a{
+  color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
+}
+.tool summary .d{
+  font-size:11px;color:var(--muted-2);font-variant-numeric:tabular-nums;
+  padding:1px 6px;border-radius:4px;background:var(--panel);border:1px solid var(--line);
+}
+.tool .st{
+  width:8px;height:8px;border-radius:50%;background:var(--muted-2);flex:none;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--muted-2) 20%,transparent);
+}
+.tool .st.ok{background:var(--ok);box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 20%,transparent)}
+.tool .st.bad{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 20%,transparent)}
+.tool pre{
+  margin:0;padding:10px 14px;border-top:1px solid var(--line);
+  overflow:auto;max-height:280px;white-space:pre-wrap;word-break:break-word;
+  font:12px ui-monospace,Menlo,Consolas,monospace;line-height:1.5;
+}
+
+/* ============================================================
+   Notes / banners
+   ============================================================ */
+.note{margin:8px 0;font-size:12.5px;color:var(--warn);padding-left:6px}
+.note.err{
+  color:var(--bad);background:var(--bad-bg);
+  border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);
+  padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap;
+}
+.note.verify{
+  color:var(--warn);background:var(--warn-bg);
+  border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
+  padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap;margin:8px 0;
+}
+
+/* ============================================================
+   Empty state
+   ============================================================ */
+.empty{max-width:680px;margin:10vh auto 0;text-align:center;color:var(--muted)}
+.empty h2{
+  color:var(--ink);margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-.02em;
+}
+.empty h2::before{content:"✨  ";font-weight:400}
+.empty .ex{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:12px;margin-top:24px;text-align:left;
+}
+.empty .ex button{
+  padding:14px 16px;text-align:left;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius-lg);color:var(--ink);
+  transition:border-color .15s,transform .15s,box-shadow .15s;
+  display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+  white-space:normal;
+}
+.empty .ex button:hover{
+  border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow);
+  background:var(--panel);
+}
+.empty .ex .t{font-weight:600;font-size:13.5px;color:var(--ink)}
+.empty .ex .s{font-size:12px;color:var(--muted);line-height:1.5}
+
+/* ============================================================
+   Composer
+   ============================================================ */
+#composer{
+  padding:12px 0 20px;background:var(--bg);
+  border-top:1px solid var(--line);position:relative;
+}
+#composer .col{position:relative}
+.box{
+  display:flex;gap:10px;align-items:flex-end;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px;
+  box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s;
+}
+.box:focus-within{
+  border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent), var(--shadow-sm);
+}
+.box textarea{
+  flex:1;border:0;resize:none;max-height:220px;padding:8px 4px;background:transparent;
+  line-height:1.55;
+}
+.box textarea:focus{outline:none;box-shadow:none;border-color:transparent}
+#attach{
+  padding:8px 10px;border-radius:var(--radius-sm);font-size:16px;
+  transition:background .15s;background:transparent;border:0;
+}
+#attach:hover{background:var(--bg-2)}
+#send,#stop{padding:8px 16px;border-radius:var(--radius-sm)}
+
+/* Status card */
+.status{margin:0 0 8px}
+.status-card{
+  border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);
+  padding:12px 14px;box-shadow:var(--shadow-sm);
+}
 .status-card .title{display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:4px}
-.status-card .title .spin{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite}
+.status-card .title .spin{
+  width:10px;height:10px;border-radius:50%;background:var(--accent);
+  animation:pulse 1.2s infinite;flex:none;
+}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
 .status-card .detail{color:var(--muted);font-size:12.5px}
-.status-card ul{margin:6px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;max-height:100px;overflow:auto}
-.status-card .foot{display:flex;justify-content:flex-end;margin-top:6px}
-.msg-actions{display:flex;gap:8px;margin-top:4px;opacity:0;transition:opacity .2s}
-.msg:hover .msg-actions{opacity:1}
-.msg.user{flex-direction:column;align-items:flex-end}
-.msg.asst{flex-direction:column;align-items:flex-start}
-.msg-actions button{padding:3px 8px;font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:6px;cursor:pointer;transition:all .2s}
-.msg-actions button:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.copy-code{position:absolute;top:8px;right:8px;padding:2px 6px;font-size:11px;opacity:0;transition:opacity .2s;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--muted)}
+.status-card ul{
+  margin:8px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;
+  max-height:120px;overflow:auto;
+}
+.status-card .foot{display:flex;justify-content:flex-end;margin-top:8px}
+
+/* ============================================================
+   Message actions
+   ============================================================ */
+.msg-actions{display:flex;gap:6px;margin-top:6px;opacity:0;transition:opacity .2s}
+.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1}
+@media (hover:none){.msg-actions{opacity:1}}
+.msg-actions button{
+  padding:3px 9px;font-size:11px;border:1px solid var(--line);
+  background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);
+  transition:all .2s;font-weight:500;
+}
+.msg-actions button:hover{
+  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+}
+.copy-code{
+  position:absolute;top:10px;right:10px;padding:3px 8px;font-size:11px;
+  opacity:0;transition:opacity .2s;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.15);border-radius:var(--radius-sm);
+  color:var(--code-ink);font-weight:500;
+}
 div:hover>.copy-code{opacity:1}
 .copy-code:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.tabs{display:flex;border-bottom:1px solid var(--line)} .tabs button{flex:1;border:0;border-radius:0;background:none;padding:11px;color:var(--muted);border-bottom:2px solid transparent}
+
+/* ============================================================
+   Right panel (Keys / MCP / Files)
+   ============================================================ */
+.tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel-2)}
+.tabs button{
+  flex:1;border:0;border-radius:0;background:none;padding:12px 8px;
+  color:var(--muted);border-bottom:2px solid transparent;
+  font-weight:500;transition:color .15s,border-color .15s,background .15s;
+}
+.tabs button:hover{color:var(--ink-2);background:var(--bg-2)}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
-.pane{overflow:auto;padding:12px;flex:1;display:none} .pane.on{display:block}
-.card{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;background:var(--panel)}
-.card h3{margin:0 0 6px;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.row{display:flex;gap:6px;margin:6px 0;align-items:center;flex-wrap:wrap} .row>input{flex:1}
-.small{font-size:12px;color:var(--muted)}
-.badge{font-size:11px;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--muted)}
-.badge.g{color:var(--ok);border-color:currentColor} .badge.w{color:var(--warn);border-color:currentColor} .badge.r{color:var(--bad);border-color:currentColor}
-.keys{margin-top:6px;border-top:1px dashed var(--line);padding-top:6px;max-height:260px;overflow:auto}
-.k{display:flex;gap:8px;align-items:center;padding:3px 0;font-size:12.5px}
-.k .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok)} .k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn)} .k .dot.quota{background:#e8590c} .k .dot.auth,.k .dot.billing{background:var(--bad)}
-.k .nm{width:90px;font-weight:600} .k .mk{width:88px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px} .k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.k button{padding:0 6px;font-size:12px}
-.k input{padding:2px 6px;font-size:12px;max-width:200px}
-textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,monospace}
-.files a{color:var(--accent);text-decoration:none} .files .f{display:flex;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:13px} .files .f span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mcp-row{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}
-.mcp-row .nm{font-weight:600;flex:1}
-#modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:20;padding:16px} #modal.on{display:flex}
-#modal .dlg{background:var(--panel);border-radius:14px;max-width:640px;width:100%;padding:18px;box-shadow:var(--shadow);border:1px solid var(--line)}
-#modal pre{background:var(--code);color:var(--code-ink);padding:10px 12px;border-radius:10px;overflow:auto;max-height:40vh;white-space:pre-wrap;word-break:break-all;font:12.5px ui-monospace,Menlo,Consolas,monospace}
-#toasts{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;z-index:30;max-width:90vw;align-items:center}
-.toast{background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;opacity:0;transition:opacity .2s;max-width:90vw}
-.toast.on{opacity:1}
-#browse .dlg{max-width:800px}
-.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 0;font-size:12.5px}
-.crumbs .crumb{padding:1px 6px;border-radius:6px}
-.recent{display:flex;gap:6px;flex-wrap:wrap;padding:4px 0}
-#browse .listing{max-height:48vh;overflow:auto;margin-top:8px;border:1px solid var(--line);border-radius:10px}
-#browse .listing .f{display:flex;gap:8px;padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px;align-items:center}
+
+.pane{overflow:auto;padding:14px;flex:1;display:none;background:var(--bg)}
+.pane.on{display:block}
+
+/* Card */
+.card{
+  border:1px solid var(--line);border-radius:var(--radius-lg);
+  padding:14px 16px;margin-bottom:14px;background:var(--panel);
+  box-shadow:var(--shadow-sm);
+}
+.card h3{
+  margin:0 0 10px;font-size:13.5px;font-weight:600;letter-spacing:-.01em;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink);
+}
+
+/* Rows */
+.row{display:flex;gap:8px;margin:8px 0;align-items:center;flex-wrap:wrap}
+.row>input{flex:1;min-width:0}
+.row>label.tog{display:inline-flex}
+
+.small{font-size:12px;color:var(--muted);line-height:1.5}
+
+/* Badges */
+.badge{
+  font-size:11px;border-radius:999px;padding:2px 9px;
+  border:1px solid var(--line);color:var(--muted);font-weight:500;
+  background:var(--bg);line-height:1.4;
+}
+.badge.g{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:var(--ok-bg)}
+.badge.w{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:var(--warn-bg)}
+.badge.r{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);background:var(--bad-bg)}
+
+/* Key list */
+.keys{
+  margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;
+  max-height:320px;overflow:auto;
+}
+.k{
+  display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:12.5px;
+  border-radius:var(--radius-sm);transition:background .12s;
+}
+.k:hover{background:var(--bg)}
+.k .dot{
+  width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 20%,transparent);
+}
+.k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn);box-shadow:0 0 0 2px color-mix(in srgb,var(--warn) 20%,transparent)}
+.k .dot.quota{background:#ea580c;box-shadow:0 0 0 2px rgba(234,88,12,.2)}
+.k .dot.auth,.k .dot.billing{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 20%,transparent)}
+.k .nm{
+  width:100px;font-weight:600;font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:12px;
+}
+.k .mk{
+  width:100px;color:var(--muted);
+  font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
+  padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--line);
+}
+.k .info{
+  flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;font-size:12px;
+}
+.k button{padding:2px 8px;font-size:11.5px;min-height:24px}
+.k input{padding:3px 8px;font-size:12px;max-width:200px;font-family:ui-monospace,Menlo,Consolas,monospace}
+
+/* Keys textarea */
+textarea.keysbox{
+  width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,monospace;
+  line-height:1.5;resize:vertical;
+}
+
+/* Files */
+.files .f{
+  display:flex;gap:10px;padding:8px 6px;border-bottom:1px solid var(--line);
+  font-size:13px;align-items:center;border-radius:var(--radius-sm);
+  transition:background .12s;
+}
+.files .f:hover{background:var(--bg)}
+.files .f span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files a{color:var(--accent);text-decoration:none;font-weight:500}
+.files a:hover{text-decoration:underline}
+
+/* MCP rows */
+.mcp-row{
+  display:flex;gap:10px;align-items:center;padding:8px 4px;
+  border-bottom:1px dashed var(--line);
+}
+.mcp-row:last-child{border-bottom:0}
+.mcp-row .nm{font-weight:600;flex:1;font-size:13px}
+.mcp-row > span[style]{flex:none !important}
+
+/* ============================================================
+   Modals
+   ============================================================ */
+#modal,#confirm{
+  position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);
+  display:none;align-items:center;justify-content:center;z-index:20;padding:20px;
+}
+#modal.on,#confirm.on{display:flex}
+#modal .dlg,#confirm .dlg{
+  background:var(--panel);border-radius:var(--radius-xl);width:100%;
+  padding:22px;box-shadow:var(--shadow-lg);border:1px solid var(--line);
+  animation:pop .15s ease;display:flex;flex-direction:column;
+}
+#modal .dlg{max-width:640px}
+#confirm .dlg{max-width:460px}
+@keyframes pop{from{opacity:0;transform:scale(.97) translateY(4px)}to{opacity:1;transform:none}}
+#modal h3,#confirm h3{
+  margin:0 0 12px !important;font-size:16px;letter-spacing:-.01em;color:var(--ink);
+}
+#modal pre{
+  background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);
+  overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;
+  font:12.5px ui-monospace,Menlo,Consolas,monospace;line-height:1.55;
+}
+#confirm .msg{color:var(--ink-2);margin:0 0 20px;white-space:pre-wrap;line-height:1.6;font-size:13.5px}
+#confirm .actions{display:flex;justify-content:flex-end;gap:8px}
+
+/* ============================================================
+   Toasts
+   ============================================================ */
+#toasts{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:8px;z-index:30;max-width:90vw;align-items:center;
+}
+.toast{
+  background:var(--ink);color:var(--bg);padding:10px 16px;
+  border-radius:var(--radius);opacity:0;transition:opacity .2s,transform .2s;
+  max-width:90vw;font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);
+  transform:translateY(4px);
+}
+.toast.on{opacity:1;transform:none}
+
+/* Scroll-to-bottom pill */
+#scrollDown{
+  position:fixed;right:24px;bottom:130px;z-index:15;
+  border-radius:999px;padding:8px 16px;background:var(--panel);
+  border:1px solid var(--line);box-shadow:var(--shadow);
+  display:none;font-size:12px;font-weight:500;
+}
+#scrollDown.on{display:inline-flex}
+#scrollDown:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+
+/* ============================================================
+   Workspace browser modal
+   ============================================================ */
+#browse .dlg{
+  background:var(--panel);border-radius:var(--radius-xl);
+  border:1px solid var(--line);padding:22px;width:100%;max-width:840px;
+  box-shadow:var(--shadow-lg);display:flex;flex-direction:column;
+}
+.crumbs{
+  display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 0;
+  font-size:12.5px;min-width:0;
+}
+.crumbs .crumb{padding:2px 8px;border-radius:var(--radius-sm);font-size:12.5px}
+.crumbs .crumb.cur{color:var(--ink);font-weight:600;background:var(--accent-soft)}
+.recent{display:flex;gap:6px;flex-wrap:wrap;padding:4px 0;align-items:center}
+.recent button{padding:3px 10px;font-size:12px}
+
+#browse .listing{
+  max-height:48vh;overflow:auto;margin-top:10px;
+  border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--panel-2);
+}
+#browse .listing .f{
+  display:flex;gap:10px;padding:8px 12px;cursor:pointer;
+  border-bottom:1px solid var(--line);font-size:13px;align-items:center;
+  transition:background .1s;
+}
+#browse .listing .f:last-child{border-bottom:0}
 #browse .listing .f:hover{background:var(--bg)}
-#browse .listing .f.sel{background:var(--user)}
+#browse .listing .f.sel{background:var(--accent-soft);color:var(--ink)}
+#browse .listing .f:focus{outline:2px solid var(--accent);outline-offset:-2px}
 #browse .listing .f .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
 @media (max-width:900px){
   #app,#app.rightopen{grid-template-columns:0 minmax(0,1fr) 0}
-  #left{position:fixed;inset:0 auto 0 0;width:260px;z-index:10;transform:translateX(-100%);transition:transform .2s} #app.leftopen #left{transform:none;box-shadow:var(--shadow)}
-  #right{position:fixed;inset:0;z-index:12;display:none;width:100%} #app.rightopen #right{display:flex}
+  #left{
+    position:fixed;inset:0 auto 0 0;width:280px;z-index:10;
+    transform:translateX(-100%);transition:transform .2s;
+  }
+  #app.leftopen #left{transform:none;box-shadow:var(--shadow-lg)}
+  #right{position:fixed;inset:0;z-index:12;display:none;width:100%}
+  #app.rightopen #right{display:flex}
+  .col{padding:0 16px}
+  header{padding:10px 14px 10px 52px}
 }
 @media (min-width:901px){.only-small{display:none}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}
+}
 </style>
 </head>
 <body>
 <div id="app">
   <aside id="left">
-    <button id="left-toggle" title="Collapse sidebar">◀</button>
+    <button id="left-toggle" title="Collapse sidebar" aria-label="Collapse sidebar">◀</button>
     <div class="brand"><i></i> Omni</div>
-    <div style="padding:0 12px 8px"><button class="primary" id="newChat" style="width:100%">+ New chat</button></div>
+    <div class="side-section"><button class="primary" id="newChat">New chat</button></div>
+    <div class="side-section"><input id="sessSearch" placeholder="Search chats…" aria-label="Search chats"></div>
+    <div class="side-label">Recent</div>
     <div id="sessions"></div>
   </aside>
 
   <main>
-    <button id="expand-left" class="ghost" title="Expand sidebar">☰</button>
+    <button id="expand-left" class="ghost" title="Expand sidebar" aria-label="Expand sidebar">☰</button>
     <header>
-      <button class="ghost only-small" id="menuBtn" title="Chats">☰</button>
-      <span class="chip" id="wsChip" title="Click to change the agent's workspace (browse your whole PC)"></span>
-      <span class="chip" id="routeChip" title="Click for the full route (pool, model, key)">no request yet</span>
+      <button class="ghost only-small" id="menuBtn" title="Chats" aria-label="Chats">☰</button>
+      <button class="chip" id="wsChip" title="Click to change the agent's workspace (browse your entire PC)"></button>
+      <button class="chip" id="routeChip" title="Click for the full route (pool, model, key)">no request yet</button>
       <span class="sp"></span>
-      <label class="tog strict" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
-      <label class="tog" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
+      <div class="toggle-group">
+        <label class="tog strict" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
+        <label class="tog" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
+      </div>
       <button id="keysBtn">Keys &amp; models</button>
     </header>
+    <div id="autoBanner">⚠ auto-approve is ON — the agent runs shell commands and writes files without asking. Turn it off in the header.</div>
     <div id="log"><div class="col" id="msgs"></div></div>
+    <button id="scrollDown" title="New messages">↓ new messages</button>
     <div id="composer"><div class="col">
       <div id="working"></div>
       <div class="box">
-        <button class="ghost" id="attach" title="Upload a file into the workspace">📎</button>
+        <button class="ghost" id="attach" title="Upload a file into the workspace" aria-label="Upload a file">📎</button>
         <input type="file" id="fileIn" hidden multiple>
         <textarea id="inp" rows="1" placeholder="Ask Omni to read, edit, run, research…  (Enter = send, Shift+Enter = new line)"></textarea>
         <button class="primary" id="send">Send</button>
@@ -182,7 +664,7 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
       <button class="on" data-tab="keys">Keys</button>
       <button data-tab="mcp">MCP</button>
       <button data-tab="files">Files</button>
-      <button id="closeRight" style="flex:0 0 44px">✕</button>
+      <button id="closeRight" style="flex:0 0 44px" aria-label="Close panel">✕</button>
     </div>
     <div class="pane on" id="pane-keys"></div>
     <div class="pane" id="pane-mcp"></div>
@@ -190,17 +672,27 @@ textarea.keysbox{width:100%;height:70px;font:12px ui-monospace,Menlo,Consolas,mo
   </aside>
 </div>
 
-<div id="modal"><div class="dlg">
-  <h3 style="margin:0 0 8px">Omni wants to do this</h3>
+<div id="modal"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <h3 id="modalTitle">Omni wants to do this</h3>
   <pre id="modalAction"></pre>
-  <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--muted)">
+  <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12.5px;color:var(--muted)">
     <input type="checkbox" id="modalRemember"> Don't ask again for this tool this session
   </label>
-  <div class="row" style="justify-content:flex-end;margin-top:12px">
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
     <button id="deny" class="danger">Deny</button>
     <button id="allow" class="primary">Allow</button>
   </div>
 </div></div>
+
+<div id="confirm"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <h3 id="confirmTitle">Confirm</h3>
+  <div class="msg" id="confirmMsg"></div>
+  <div class="actions">
+    <button id="confirmNo">Cancel</button>
+    <button id="confirmYes" class="primary">OK</button>
+  </div>
+</div></div>
+
 <div id="toasts"></div>
 
 <script>
@@ -213,7 +705,7 @@ function h(tag, props, ...kids) {
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (k === "class") el.className = v;
     else if (k === "text") el.textContent = v;
-    else if (k in el && k !== "list") el[k] = v;
+    else if (k in el && k !== "list" && k !== "form") el[k] = v;
     else el.setAttribute(k, v === true ? "" : v);
   }
   for (const c of kids.flat()) if (c !== null && c !== undefined && c !== false)
@@ -232,6 +724,10 @@ async function api(path, body, opt = {}) {
     : { method: "POST", headers: { "X-Omni": "1", "Content-Type": "application/json" },
         body: JSON.stringify(body || {}) };
   const r = await fetch(path, init);
+  if (r.status === 401) {
+    toast("Session expired — reopen the link printed in the terminal", 6000);
+    throw new Error("not authorised");
+  }
   let d = {}; try { d = await r.json(); } catch (_) {}
   if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
   return d;
@@ -307,21 +803,34 @@ let lastRoute = null;
 store.set("omni_sid", sid);
 const msgs = $("#msgs"), logEl = $("#log"), toolEls = {};
 function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140; }
+function scrollToBottom() { logEl.scrollTop = logEl.scrollHeight; $("#scrollDown").classList.remove("on"); }
+function maybeShowScrollDown() {
+  if (busy && !atBottom()) $("#scrollDown").classList.add("on");
+  else $("#scrollDown").classList.remove("on");
+}
+logEl.addEventListener("scroll", maybeShowScrollDown);
+$("#scrollDown").onclick = scrollToBottom;
+
 function add(el) {
   const stick = atBottom(); clearEmpty(); msgs.append(el);
-  if (stick) logEl.scrollTop = logEl.scrollHeight;
+  if (stick) scrollToBottom();
   return el;
 }
 function clearEmpty() { const e = $("#emptyState"); if (e) e.remove(); }
 function showEmpty() {
+  const examples = [
+    ["Summarise my Documents folder", "Lists files and reads the ones that matter (asks for approval).", "Summarise the files in my Documents folder (will ask for approval)"],
+    ["Review the code here", "Reads the sources, runs the tests, writes REVIEW.md.", "Review the code here and write REVIEW.md"],
+    ["Create a Word report from my notes", "Builds a .docx with headings, keeping your content.", "Create a Word report from my notes"],
+    ["Clean up a spreadsheet", "Edits .xlsx cells in place without touching the layout.", "In report.xlsx set B2 to the sum of B3:B9"],
+  ];
   msgs.append(h("div", { class: "empty", id: "emptyState" },
     h("h2", { text: "What should Omni work on?" }),
     h("div", { text: "Reads and edits code and Office files, runs commands, browses pages, and (if configured) talks to MCP servers. Full PC access with approval." }),
-    h("div", { class: "ex" }, ...[
-      "Summarise the files in my Documents folder (will ask for approval)",
-      "Review the code here and write REVIEW.md",
-      "Create a Word report from my notes"].map(t =>
-      h("button", { text: t, onclick: () => { $("#inp").value = t; $("#inp").focus(); } })))));
+    h("div", { class: "ex" }, ...examples.map(([t, s, prompt]) =>
+      h("button", { type: "button", onclick: () => { $("#inp").value = prompt; $("#inp").focus(); autoGrow(); } },
+        h("div", { class: "t", text: t }),
+        h("div", { class: "s", text: s }))))));
 }
 
 /* Human-readable labels for the internal cooldown kinds shown in the
@@ -378,6 +887,7 @@ function setBusy(b, reset = true) {
   $("#stop").style.display = b ? "" : "none";
   if (reset) statusState = {};
   renderStatus();
+  maybeShowScrollDown();
 }
 
 /* Build the actions row for any message. Always shows Copy; Retry on
@@ -424,9 +934,11 @@ function render(ev) {
         args = Object.entries(o).map(([k, v]) =>
           k + "=" + (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ")).join("  ");
       } catch (_) {}
-      const d = h("details", { class: "tool" },
+      const t0 = performance.now();
+      const d = h("details", { class: "tool", "data-status": "run" },
         h("summary", {}, h("span", { class: "st" }), h("span", { class: "n", text: ev.name }),
-          h("span", { class: "a", text: args.slice(0, 160) })),
+          h("span", { class: "a", text: args.slice(0, 160) }),
+          h("span", { class: "d", "data-t0": String(t0) })),
         h("pre", { text: pretty }));
       if (ev.id) toolEls[ev.id] = d;
       return add(d);
@@ -434,6 +946,12 @@ function render(ev) {
     case "tool_result": {
       const d = toolEls[ev.id]; if (!d) return;
       d.querySelector(".st").classList.add(ev.ok ? "ok" : "bad");
+      d.dataset.status = ev.ok ? "ok" : "bad";
+      const dt = d.querySelector(".d");
+      if (dt && dt.dataset.t0) {
+        const s = ((performance.now() - Number(dt.dataset.t0)) / 1000).toFixed(1);
+        dt.textContent = s + "s";
+      }
       if (!d.querySelector("pre.stream")) d.append(h("pre", { text: ev.text }));
       else if (!ev.ok) d.append(h("pre", { text: "ERROR (see stream above):\n" + ev.text }));
       return;
@@ -443,7 +961,8 @@ function render(ev) {
       let pre = d.querySelector("pre.stream");
       if (!pre) { pre = h("pre", { class: "stream" }); d.append(pre); }
       pre.textContent += ev.text;
-      if (atBottom()) logEl.scrollTop = logEl.scrollHeight;
+      if (atBottom()) scrollToBottom();
+      else maybeShowScrollDown();
       return;
     }
     case "notice": return add(h("div", { class: "note", text: "↪ " + ev.text }));
@@ -476,9 +995,10 @@ async function poll() {
       let d;
       try { d = await api(`/api/poll?session=${sid}&after=${cursor}&wait=15`); fails = 0; }
       catch (e) {
-        if (/authoris/.test(e.message)) { toast("Session expired — reopen the link from the terminal"); setBusy(false); break; }
+        if (/not authorised|authoris/.test(e.message)) { toast("Session expired — reopen the link from the terminal"); setBusy(false); break; }
         if (++fails >= 5) { toast("Lost connection to the Omni server: " + e.message, 6000); setBusy(false); break; }
-        await new Promise(r => setTimeout(r, 1500)); continue;
+        await new Promise(r => setTimeout(r, Math.min(1000 * 2 ** fails, 8000)));
+        continue;
       }
       cursor = d.next;
       let done = false;
@@ -488,27 +1008,30 @@ async function poll() {
       }
       if (done || (!d.busy && !d.events.length)) {
         setBusy(false); refreshKeys(); loadSessions();
-        // Don't re-render the whole conversation (that flashed and lost
-        // scroll position). The live events already carried `idx`.
         break;
       }
     }
-  } finally { polling = false; }
+  } finally {
+    polling = false;
+  }
 }
 
 async function send() {
-  const t = $("#inp").value.trim(); if (!t || busy) return;
+  const inp = $("#inp");
+  const t = inp.value.trim(); if (!t || busy) return;
+  const restore = inp.value;
+  inp.value = ""; autoGrow();
   try {
     const r = await api("/api/chat", { session: sid, text: t });
-    // Render the user bubble with its history index so Edit/Delete appear
-    // immediately instead of after a reload.
     render({ type: "user", text: t, idx: (typeof r.user_idx === "number" ? r.user_idx : undefined) });
-    $("#inp").value = ""; autoGrow();
     cursor = r.cursor;
     statusState = { title: "Sending…" };
     setBusy(true, false);
     poll();
-  } catch (e) { toast(e.message, 5000); }
+  } catch (e) {
+    inp.value = restore; autoGrow();      // put their text back on failure
+    toast(e.message, 5000);
+  }
 }
 async function doStop() {
   try { await api("/api/stop", { session: sid }); toast("Stopping…"); }
@@ -526,13 +1049,14 @@ async function loadChat() {
     d.items.forEach(render); if (!d.items.length) showEmpty();
     cursor = d.cursor;
     $("#autoBox").checked = d.auto; $("#autoTog").classList.toggle("on", d.auto);
+    $("#autoBanner").classList.toggle("on", d.auto);
     if (typeof d.strict === "boolean") {
       $("#strictBox").checked = d.strict;
       $("#strictTog").classList.toggle("on", d.strict);
     }
     d.pending.forEach(p => askApproval({ id: p.id, text: p.action, tool: p.tool }));
     if (d.busy) { setBusy(true, false); poll(); } else setBusy(false);
-    if (stick) logEl.scrollTop = logEl.scrollHeight;
+    if (stick) scrollToBottom();
   } catch (e) { showEmpty(); toast(e.message, 5000); }
 }
 function timeAgo(sec) {
@@ -541,29 +1065,54 @@ function timeAgo(sec) {
   if (sec < 86400) return Math.round(sec / 3600) + "h ago";
   return Math.round(sec / 86400) + "d ago";
 }
+let sessionsCache = [];
 async function loadSessions() {
   try {
-    const list = await api("/api/sessions");
-    const box = $("#sessions"); box.replaceChildren();
-    for (const s of list) {
-      const t = Math.max(1, Math.round((Date.now() / 1000) - (s.mtime || 0)));
-      box.append(h("div", { class: "sess" + (s.id === sid ? " on" : ""), onclick: () => switchTo(s.id) },
-        h("span", { text: s.title, title: s.title }),
-        h("span", { class: "t", text: timeAgo(t) }),
-        h("button", { title: "Delete chat", text: "✕", onclick: async e => {
-          e.stopPropagation();
-          if (!confirm("Delete this chat?")) return;
-          await api("/api/session/delete", { session: s.id });
-          if (s.id === sid) newChat(); else loadSessions();
-        } })));
-    }
+    sessionsCache = await api("/api/sessions");
+    renderSessions();
   } catch (_) {}
 }
+function renderSessions() {
+  const box = $("#sessions"); box.replaceChildren();
+  const q = ($("#sessSearch").value || "").toLowerCase();
+  for (const s of sessionsCache) {
+    if (q && !s.title.toLowerCase().includes(q)) continue;
+    const t = Math.max(1, Math.round((Date.now() / 1000) - (s.mtime || 0)));
+    box.append(h("div", { class: "sess" + (s.id === sid ? " on" : ""), onclick: () => switchTo(s.id) },
+      h("span", { class: "nm", text: s.title, title: s.title }),
+      h("span", { class: "t", text: timeAgo(t) }),
+      h("button", { title: "Delete chat", text: "✕", "aria-label": "Delete chat", onclick: async e => {
+        e.stopPropagation();
+        if (!(await confirmDlg("Delete chat?", "This chat will be removed permanently.", "Delete"))) return;
+        await api("/api/session/delete", { session: s.id });
+        if (s.id === sid) newChat(); else loadSessions();
+      } })));
+  }
+}
+$("#sessSearch").addEventListener("input", renderSessions);
 function switchTo(id) {
   sid = id; store.set("omni_sid", sid);
   $("#app").classList.remove("leftopen"); loadChat(); loadSessions();
 }
 function newChat() { switchTo(rid()); }
+
+/* ---- real confirm dialog (replaces window.confirm / window.prompt) ---- */
+let _confirmResolve = null;
+function confirmDlg(title, msg, yesText = "OK") {
+  $("#confirmTitle").textContent = title;
+  $("#confirmMsg").textContent = msg;
+  $("#confirmYes").textContent = yesText;
+  $("#confirm").classList.add("on");
+  return new Promise(resolve => { _confirmResolve = resolve; });
+}
+function closeConfirm(result) {
+  $("#confirm").classList.remove("on");
+  const r = _confirmResolve; _confirmResolve = null;
+  if (r) r(result);
+}
+$("#confirmYes").onclick = () => closeConfirm(true);
+$("#confirmNo").onclick = () => closeConfirm(false);
+$("#confirm").onclick = e => { if (e.target.id === "confirm") closeConfirm(false); };
 
 let pendingApproval = null;
 function askApproval(ev) {
@@ -572,6 +1121,7 @@ function askApproval(ev) {
   $("#modalRemember").checked = false;
   $("#modalRemember").parentElement.style.display = ev.tool ? "" : "none";
   $("#modal").classList.add("on");
+  setTimeout(() => $("#allow").focus(), 0);
 }
 function closeModal() { pendingApproval = null; $("#modal").classList.remove("on"); }
 async function answer(allow) {
@@ -581,6 +1131,13 @@ async function answer(allow) {
   try { await api("/api/approve", { session: sid, id: p.id, allow, remember }); }
   catch (e) { toast(e.message); }
 }
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if ($("#modal").classList.contains("on")) answer(false);
+    else if ($("#confirm").classList.contains("on")) closeConfirm(false);
+    else if ($("#browse")) $("#browse").remove();
+  }
+});
 
 function entrable(input, action) {
   input.addEventListener("keydown", e => {
@@ -633,7 +1190,7 @@ async function refreshKeys(force, keepFocus = true) {
 }
 function renderKeys() {
   const pane = $("#pane-keys");
-  const openKeys = new Set([...pane.querySelectorAll("details.kl[open]")].map(d => d.dataset.pool));
+  const openKeys = new Set([...pane.querySelectorAll("details.kl")].filter(d => d.open).map(d => d.dataset.pool));
   const savedScroll = pane.scrollTop;
   const savedInputs = snapshotInputs();
   pane.replaceChildren();
@@ -718,7 +1275,7 @@ function poolCard(p, idx, open, savedInputs) {
   entrable(fbIn, saveFb);
 
   const c = p.counts;
-  const keysList = h("details", { class: "kl", "data-pool": p.pool, open },
+  const keysList = h("details", { class: "kl", "data-pool": p.pool, open: open || undefined },
     h("summary", { class: "small", text: p.keys.length + " key(s) — show / hide" }),
     h("div", { class: "keys" }, ...p.keys.map(k => h("div", { class: "k" },
       h("span", { class: "dot " + k.status, title: k.status }),
@@ -729,9 +1286,6 @@ function poolCard(p, idx, open, savedInputs) {
           ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
           : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}` }),
       (() => {
-        // Typeable datalist input — Gemini and OpenRouter have 100+ models,
-        // so a native <select> is unusable. The datalist is shared with the
-        // pool's model input.
         const sel = h("input", { value: k.model || "", list: "dl-" + p.pool,
           placeholder: "model id", spellcheck: false,
           "data-persist": "key-model-" + k.name,
@@ -754,8 +1308,8 @@ function poolCard(p, idx, open, savedInputs) {
             .finally(() => ev.target.textContent = "test");
         } }),
       h("button", { class: "danger", text: "✕", title: "Remove this key",
-        onclick: () => {
-          if (confirm("Remove " + k.name + "?"))
+        onclick: async () => {
+          if (await confirmDlg("Remove key?", "Remove " + k.name + " from the pool?", "Remove"))
             act(() => api("/api/keys/remove", { name: k.name }), "Removed");
         } })))));
 
@@ -777,13 +1331,13 @@ function poolCard(p, idx, open, savedInputs) {
       c.cooling ? badge(c.cooling + " cooling", "w") : null,
       c.invalid ? badge(c.invalid + " invalid", "r") : null,
       h("span", { style: "flex:1" }),
-      h("button", { class: "ghost", title: "Higher priority", text: "▲", disabled: idx === 0,
+      h("button", { class: "ghost", title: "Higher priority", "aria-label": "Higher priority", text: "▲", disabled: idx === 0,
         onclick: () => act(() => {
           const n = S.pools.map(x => x.pool);
           [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
           return api("/api/pool/order", { names: n });
         }, null) }),
-      h("button", { class: "ghost", title: "Lower priority", text: "▼", disabled: idx === S.pools.length - 1,
+      h("button", { class: "ghost", title: "Lower priority", "aria-label": "Lower priority", text: "▼", disabled: idx === S.pools.length - 1,
         onclick: () => act(() => {
           const n = S.pools.map(x => x.pool);
           [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]];
@@ -819,8 +1373,10 @@ function poolCard(p, idx, open, savedInputs) {
         onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }),
                             "Cooldowns cleared") }),
       h("button", { class: "danger", text: "Remove service",
-        onclick: () => {
-          if (confirm("Remove " + p.pool + " and all its " + p.keys.length + " keys?"))
+        onclick: async () => {
+          if (await confirmDlg("Remove service?",
+                               "Remove " + p.pool + " and all its " + p.keys.length + " keys?",
+                               "Remove service"))
             act(() => api("/api/pool/remove", { pool: p.pool }), "Removed");
         } })),
     keysList,
@@ -968,28 +1524,56 @@ async function upload(files) {
   loadFiles();
 }
 
+/* ------------------------------------------------------------------
+   Workspace picker.
+   Improvements vs. the previous version:
+     * editable path bar (paste a path, Enter to go),
+     * native "Browse…" button that calls /api/workspace/pick (opens the
+       OS folder dialog on the server, which is the same machine here),
+     * Home goes to ~ (not the current workspace),
+     * Up works at filesystem roots,
+     * keyboard nav (arrows, Enter, Backspace),
+     * keeps the hidden-files toggle between opens,
+     * server rejects roots and data/ ancestors (same rule as the API).
+   ------------------------------------------------------------------ */
+let browseKeyHandler = null;
 function openBrowser(startPath, cb) {
+  document.getElementById("browse")?.remove();
   const overlay = h("div", { id: "browse",
-    style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
+    style: "position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:25;padding:16px" });
 
   const crumbs = h("div", { class: "crumbs" });
   const recent = h("div", { class: "recent" });
-  const listing = h("div", { class: "listing" });
+  const listing = h("div", { class: "listing", tabindex: "0" });
   const filterIn = h("input", { placeholder: "Filter…", style: "flex:1" });
   const deepBox = h("input", { type: "checkbox" });
   const hiddenBox = h("input", { type: "checkbox" });
+  hiddenBox.checked = store.get("omni_ws_hidden") === "1";
+  hiddenBox.addEventListener("change", () => {
+    store.set("omni_ws_hidden", hiddenBox.checked ? "1" : "0");
+    go(curPath);
+  });
   const drivesBox = h("div", { class: "row" });
   let allEntries = [];
   let curPath = "";
+  let selIndex = -1;
   const history = [];
+
+  const pathIn = h("input", {
+    spellcheck: false, style: "flex:2;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px",
+    "aria-label": "Current path",
+  });
+  pathIn.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); go(pathIn.value.trim() || curPath); }
+  });
 
   function renderEntries() {
     const f = filterIn.value.toLowerCase();
     const filtered = f && !deepBox.checked
       ? allEntries.filter(en => en.name.toLowerCase().includes(f))
       : allEntries;
-    listing.replaceChildren(...filtered.slice(0, 500).map(en => {
-      const row = h("div", { class: "f", title: en.path },
+    listing.replaceChildren(...filtered.slice(0, 500).map((en, i) => {
+      const row = h("div", { class: "f", title: en.path, tabindex: "0", "data-idx": i },
         h("span", { text: en.dir ? "📁" : "📄" }),
         h("span", { class: "nm", text: en.name }),
         en.dir ? null : h("span", { class: "small",
@@ -997,13 +1581,29 @@ function openBrowser(startPath, cb) {
       row.addEventListener("click", () => {
         listing.querySelectorAll(".f.sel").forEach(x => x.classList.remove("sel"));
         row.classList.add("sel");
+        selIndex = i;
       });
       row.addEventListener("dblclick", () => {
         if (en.dir) go(en.path);
       });
+      row.addEventListener("keydown", e => {
+        if (e.key === "Enter") { e.preventDefault(); if (en.dir) go(en.path); }
+      });
       return row;
     }));
+    selIndex = -1;
   }
+
+  listing.addEventListener("keydown", e => {
+    const rows = [...listing.querySelectorAll(".f")];
+    if (!rows.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); selIndex = Math.min(rows.length - 1, selIndex + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); selIndex = Math.max(0, selIndex - 1); }
+    else if (e.key === "Enter" && selIndex >= 0) { e.preventDefault(); rows[selIndex].dispatchEvent(new MouseEvent("dblclick")); return; }
+    else return;
+    rows.forEach((r, i) => r.classList.toggle("sel", i === selIndex));
+    rows[selIndex].scrollIntoView({ block: "nearest" });
+  });
 
   filterIn.addEventListener("input", () => {
     if (deepBox.checked) return;
@@ -1017,26 +1617,31 @@ function openBrowser(startPath, cb) {
     const parts = p.split(/[\\/]/).filter(Boolean);
     let acc = isWin ? "" : "/";
     const home = h("button", { class: "ghost", text: "🏠", title: "Home",
-      onclick: () => go((S && S.workspace) || "") });
+      "aria-label": "Home", onclick: () => go((S && S.home) || "") });
     crumbs.append(home);
     parts.forEach((part, i) => {
       if (i === 0 && isWin) acc = part + "\\";
       else if (isWin) acc = acc.replace(/\\?$/, "\\") + part;
       else acc = acc.replace(/\/?$/, "/") + part;
       const target = acc;
+      const isLast = i === parts.length - 1;
       crumbs.append(h("span", { text: isWin ? "\\" : "/" }));
-      crumbs.append(h("button", { class: "ghost crumb", text: part,
-        onclick: () => go(target) }));
+      crumbs.append(h("button", { class: "ghost crumb" + (isLast ? " cur" : ""), text: part,
+        title: target, onclick: () => go(target) }));
     });
   }
 
   function renderRecent() {
     let rec = [];
     try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
-    recent.replaceChildren(...rec.slice(0, 6).map(r =>
-      h("button", { class: "ghost", title: r,
-        text: r.split(/[\\/]/).filter(Boolean).pop() || r,
-        onclick: () => go(r) })));
+    recent.replaceChildren(
+      rec.length ? h("span", { class: "small", text: "Recent:" }) : null,
+      ...rec.slice(0, 6).map(r =>
+        h("button", { class: "ghost", title: r,
+          text: r.split(/[\\/]/).filter(Boolean).pop() || r,
+          onclick: () => go(r) })),
+      rec.length ? h("button", { class: "ghost small", text: "clear",
+        onclick: () => { store.set("omni_recent_ws", "[]"); renderRecent(); } }) : null);
   }
   function pushRecent(p) {
     let rec = [];
@@ -1054,6 +1659,7 @@ function openBrowser(startPath, cb) {
     try {
       const d = await api("/api/browse?" + q);
       curPath = d.path;
+      pathIn.value = d.path;
       setCrumbs(d.path);
       allEntries = d.entries;
       renderEntries();
@@ -1062,44 +1668,76 @@ function openBrowser(startPath, cb) {
     } catch (e) { toast(e.message); }
   }
 
-  const backBtn = h("button", { text: "←", title: "Back",
+  const backBtn = h("button", { text: "←", title: "Back", "aria-label": "Back",
     onclick: () => { if (history.length) go(history.pop()); } });
+
+  const upBtn = h("button", { text: "⬆ Up", title: "Parent folder",
+    onclick: () => {
+      const p = (curPath || "").replace(/[\\/]+$/, "");
+      const isWin = /^[A-Za-z]:$/.test(p);
+      const up = isWin ? p + "\\" : (p.replace(/[\\/][^\\/]*$/, "") || (osWinPath() ? "C:\\" : "/"));
+      go(up);
+    } });
+
+  const browseBtn = h("button", { text: "📂 Browse…", title: "Open the OS folder picker on this machine",
+    onclick: async () => {
+      toast("Opening the folder picker on the Omni machine…");
+      try {
+        const r = await api("/api/workspace/pick", {});
+        if (r.cancelled) return;
+        pushRecent(r.workspace);
+        toast("Workspace changed to " + r.workspace);
+        overlay.remove();
+        cleanupKeyHandler();
+        if (cb) { /* caller refreshes */ }
+        await refreshKeys(true);
+      } catch (e) { toast(e.message, 6000); }
+    } });
 
   const useBtn = h("button", { class: "primary", text: "Use this folder",
     onclick: async () => {
-      if (!confirm(`Make "${curPath}" the workspace?\n\nFiles under this folder will be treated as "inside" the workspace and won't prompt for approval when the agent writes to them.`)) return;
-      if (cb) await cb(curPath);
-      pushRecent(curPath);
-      overlay.remove();
+      const ok = await confirmDlg(
+        "Change workspace?",
+        `Make "${curPath}" the workspace?\n\nFiles under this folder will be treated as "inside" and won't prompt for approval when the agent writes to them.`,
+        "Use this folder");
+      if (!ok) return;
+      try {
+        if (cb) await cb(curPath);
+        pushRecent(curPath);
+        overlay.remove();
+        cleanupKeyHandler();
+      } catch (e) { toast(e.message); }
     } });
-  const pathBar = h("div", { class: "row" },
-    backBtn,
-    h("button", { text: "⬆ Up",
-      onclick: () => go((curPath || "").replace(/[\\/][^\\/]*$/, "") ||
-        (curPath.match(/^[A-Za-z]:/) ? curPath.slice(0, 3) : "/")) }),
-    crumbs,
-    h("span", { style: "flex:1" }),
-    useBtn);
 
-  const dlg = h("div", { class: "dlg",
-    style: "background:var(--panel);border-radius:14px;border:1px solid var(--line);padding:18px;width:100%;max-width:800px;box-shadow:var(--shadow)" },
-    h("h3", { style: "margin:0 0 4px", text: "Choose workspace" }),
+  const pathBar = h("div", { class: "row" },
+    backBtn, upBtn, pathIn, browseBtn, useBtn);
+
+  const dlg = h("div", { class: "dlg" },
+    h("h3", { style: "margin:0 0 12px !important;font-size:16px", text: "Choose workspace" }),
     recent,
     pathBar,
+    h("div", { class: "row", style: "margin-top:6px" }, crumbs),
     h("div", { class: "row", style: "margin-top:6px" },
       filterIn,
       h("label", { class: "tog" }, deepBox, " deep search"),
       h("label", { class: "tog" }, hiddenBox, " hidden")),
     drivesBox,
     listing,
-    h("div", { class: "row", style: "justify-content:flex-end;margin-top:10px" },
-      h("button", { text: "Cancel", onclick: () => overlay.remove() })));
+    h("div", { class: "row", style: "justify-content:flex-end;margin-top:12px" },
+      h("button", { text: "Cancel", onclick: () => { overlay.remove(); cleanupKeyHandler(); } })));
   overlay.append(dlg);
-  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); cleanupKeyHandler(); } };
   document.body.append(overlay);
   renderRecent();
   go(startPath || (S && S.workspace) || "");
+
+  browseKeyHandler = e => { if (e.key === "Escape") { overlay.remove(); cleanupKeyHandler(); } };
+  document.addEventListener("keydown", browseKeyHandler);
+  function cleanupKeyHandler() {
+    if (browseKeyHandler) { document.removeEventListener("keydown", browseKeyHandler); browseKeyHandler = null; }
+  }
 }
+function osWinPath() { return /^[A-Za-z]:[\\/]/.test((S && S.workspace) || ""); }
 
 function copyText(t) { navigator.clipboard.writeText(t); toast("Copied to clipboard"); }
 async function retryMsg(e, ev) {
@@ -1113,7 +1751,7 @@ async function retryMsg(e, ev) {
 async function editMsg(e, ev) {
   e.stopPropagation();
   if (busy) return toast("Agent is busy");
-  const newText = prompt("Edit message:", ev.text);
+  const newText = window.prompt("Edit message:", ev.text);
   if (newText === null || newText.trim() === ev.text) return;
   try {
     const r = await api("/api/chat/edit", { session: sid, index: ev.idx, text: newText.trim() });
@@ -1122,7 +1760,7 @@ async function editMsg(e, ev) {
 }
 async function deleteMsg(e, ev) {
   e.stopPropagation();
-  if (!confirm("Delete this message?")) return;
+  if (!(await confirmDlg("Delete message?", "This message will be removed from the chat history.", "Delete"))) return;
   try { await api("/api/message/delete", { session: sid, index: ev.idx }); loadChat(); }
   catch (e) { toast(e.message); }
 }
@@ -1140,11 +1778,15 @@ $("#expand-left").onclick = () => $("#app").classList.remove("leftcollapsed");
 $("#allow").onclick = () => answer(true);
 $("#deny").onclick = () => answer(false);
 $("#autoBox").onchange = async e => {
-  if (e.target.checked && !confirm("Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust. Turn on?")) {
+  if (e.target.checked && !(await confirmDlg(
+      "Enable auto-approve?",
+      "Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust.",
+      "Enable"))) {
     e.target.checked = false; return;
   }
   const d = await api("/api/auto", { session: sid, on: e.target.checked });
   $("#autoTog").classList.toggle("on", d.auto);
+  $("#autoBanner").classList.toggle("on", d.auto);
 };
 $("#strictBox").onchange = async e => {
   const d = await api("/api/strict", { on: e.target.checked });
@@ -1171,6 +1813,7 @@ $("#inp").addEventListener("drop", e => {
 
 function openRight(tab) {
   $("#app").classList.add("rightopen");
+  store.set("omni_tab", tab);
   document.querySelectorAll(".tabs [data-tab]").forEach(b =>
     b.classList.toggle("on", b.dataset.tab === tab));
   document.querySelectorAll(".pane").forEach(p =>
@@ -1193,11 +1836,6 @@ $("#routeChip").onclick = () => {
         (lastRoute.fallback ? ` (fallback: ${lastRoute.reason})` : ""), 5000);
 };
 
-/* NOTE: the 5-second auto-refresh of the keys panel has been removed.
-   The panel now refreshes on open, on any action (via act()), and manually
-   (via the Refresh all model lists button). */
-
-$("#wsChip").style.cursor = "pointer";
 $("#wsChip").addEventListener("click", () => {
   openBrowser((S && S.workspace) || "", async (p) => {
     const r = await api("/api/workspace/set", { path: p });

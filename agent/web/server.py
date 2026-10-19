@@ -5,7 +5,8 @@ Security model:
   * binds to 127.0.0.1 by default,
   * requires a per-start token (URL once, then HttpOnly SameSite=Strict cookie),
   * checks the Host header (blocks DNS-rebinding),
-  * never sends API keys to the browser (only masked tails).
+  * never sends API keys to the browser (only masked tails),
+  * refuses to use a filesystem root or a parent of data/ as the workspace.
 """
 import fnmatch
 import hmac
@@ -15,6 +16,7 @@ import os
 import re
 import secrets
 import string
+import sys
 import threading
 import time
 import webbrowser
@@ -49,6 +51,32 @@ MAX_POLL_EVENTS = 200
 STREAM_COALESCE_SECONDS = 0.1
 
 
+# ---------------------------------------------------------------- workspace guard
+def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
+    """Refuse filesystem roots and ancestors of data/ as the workspace.
+
+    A filesystem root would make every path "inside" and silently disable the
+    outside-workspace approval guard. An ancestor of data/ would let the
+    agent's own file tools read data/providers.json and exfiltrate the keys.
+    """
+    try:
+        new_ws = new_ws.resolve()
+    except OSError:
+        pass
+    try:
+        data = data_dir.resolve()
+    except OSError:
+        data = data_dir
+    if new_ws == new_ws.parent:
+        raise ValueError(
+            "refusing a filesystem root as the workspace "
+            "(it would disable the outside-workspace approval guard)")
+    if new_ws == data or new_ws in data.parents:
+        raise ValueError(
+            "refusing a parent of data/ as the workspace "
+            "(the agent could read its own API keys)")
+
+
 # ---------------------------------------------------------------- chat sessions
 class Session:
     def __init__(self, cfg, sid, history=None):
@@ -58,7 +86,9 @@ class Session:
         self.cond = threading.Condition()
         self.busy = False
         self.cancel = threading.Event()
-        self.auto = False
+        # Inherit the process-level auto-approve setting. The per-session
+        # toggle in the UI can still turn it off/on without touching the env.
+        self.auto = bool(getattr(cfg, "auto_approve", False))
         self.approvals = {}
         self.allowed_tools = set()
         self.touched = time.time()
@@ -264,6 +294,7 @@ class App:
                 })
         return {
             "workspace": str(self.cfg.workspace),
+            "home": str(self.cfg.home) if self.cfg.home else "",
             "strategy": pm.strategy,
             "strategies": list(STRATEGIES),
             "max_wait": pm.max_wait,
@@ -742,6 +773,51 @@ def make_handler(app):
             new_ws = Path(b.get("path", "")).expanduser().resolve()
             if not new_ws.is_dir():
                 raise ValueError(f"not a directory: {new_ws}")
+            _validate_workspace(new_ws, app.cfg.data_dir)
+            app.cfg.workspace = new_ws
+            self._send(200, {"workspace": str(new_ws)})
+
+        def api_workspace_pick(self, q):
+            """Open the OS folder picker on the machine running the server.
+
+            This is the only way to get a native 'Browse…' dialog for a path
+            on the *server's* machine. Browsers can't return an absolute path
+            from <input webkitdirectory> or showDirectoryPicker(). On a
+            headless Linux box or when tkinter is missing, returns 501 so the
+            UI can tell the user to type the path instead.
+            """
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+            except Exception as e:
+                return self._err(501, f"no GUI available on the server: {e}")
+            try:
+                root = tk.Tk()
+            except Exception as e:
+                return self._err(501, f"no display on the server: {e}")
+            root.withdraw()
+            try:
+                root.attributes("-topmost", True)
+            except Exception:
+                pass
+            try:
+                chosen = filedialog.askdirectory(
+                    initialdir=str(app.cfg.workspace),
+                    title="Choose the Omni workspace folder",
+                    mustexist=True,
+                )
+            finally:
+                try:
+                    root.destroy()
+                except Exception:
+                    pass
+            if not chosen:
+                return self._send(200, {"cancelled": True})
+            new_ws = Path(chosen).expanduser().resolve()
+            try:
+                _validate_workspace(new_ws, app.cfg.data_dir)
+            except ValueError as e:
+                return self._err(400, str(e))
             app.cfg.workspace = new_ws
             self._send(200, {"workspace": str(new_ws)})
 

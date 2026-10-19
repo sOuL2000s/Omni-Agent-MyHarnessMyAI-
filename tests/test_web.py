@@ -81,6 +81,10 @@ class WebTests(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertNotIn("secret-key-123456", json.dumps(d))
         self.assertEqual(d["pools"][0]["keys"][0]["masked"], "secr...456")
+        # And the new `home` field is exposed for the workspace picker's Home
+        # button. It may be "" when cfg.home isn't set (test fixtures don't
+        # set it); the key must still be present.
+        self.assertIn("home", d)
 
     def test_manage_keys_and_models(self):
         self.assertEqual(self.req("POST", "/api/keys/add", {"pool": "mock", "keys": "k2\nk3, k4 k2"})[1], {"added": 3, "duplicates": 1})
@@ -101,17 +105,60 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/keys/add", {"pool": "bad name!", "keys": "x"})[0], 400)
         self.assertEqual(self.req("POST", "/api/keys/remove", {"name": "mock-2"})[0], 200)
 
-    def test_workspace_set_accepts_any_directory(self):
-        # The old guards are gone: any real directory is accepted, including
-        # roots and the data/ folder itself. Only a non-directory is refused.
+    def test_workspace_set_rejects_unsafe_paths(self):
+        """A normal directory is accepted. Filesystem roots, data/ and its
+        ancestors, and non-directories are refused.
+
+        (The old version of this test asserted that data/ *was* accepted,
+        contradicting the README's safety rules. Those rules are now
+        enforced in server._validate_workspace().)
+        """
+        # 1. A normal temp folder is accepted.
         with tempfile.TemporaryDirectory() as other:
             st, d, _ = self.req("POST", "/api/workspace/set", {"path": other})
             self.assertEqual(st, 200, d)
             self.assertEqual(Path(d["workspace"]), Path(other).resolve())
+
+        # 2. data/ itself is refused (the agent must not read its own keys).
         st, d, _ = self.req("POST", "/api/workspace/set", {"path": str(self.cfg.data_dir)})
-        self.assertEqual(st, 200, d)
+        self.assertEqual(st, 400, d)
+        self.assertIn("data/", d["error"])
+
+        # 3. A parent of data/ is refused for the same reason.
+        st, d, _ = self.req("POST", "/api/workspace/set", {"path": str(Path(self.tmp.name))})
+        self.assertEqual(st, 400, d)
+        self.assertIn("data/", d["error"])
+
+        # 4. A filesystem root is refused (it would disable the
+        #    outside-workspace approval guard).
+        root = "C:\\" if sys.platform == "win32" else "/"
+        st, d, _ = self.req("POST", "/api/workspace/set", {"path": root})
+        self.assertEqual(st, 400, d)
+        self.assertIn("root", d["error"].lower())
+
+        # 5. A non-directory is refused with a different message.
         missing = str(Path(self.tmp.name) / "does-not-exist")
-        self.assertEqual(self.req("POST", "/api/workspace/set", {"path": missing})[0], 400)
+        st, d, _ = self.req("POST", "/api/workspace/set", {"path": missing})
+        self.assertEqual(st, 400, d)
+        self.assertIn("not a directory", d["error"])
+
+    def test_workspace_pick_without_gui_returns_501(self):
+        """The /api/workspace/pick endpoint opens a tkinter dialog on the
+        server. On CI (headless) it must fail cleanly with 501, not crash."""
+        try:
+            import tkinter  # noqa: F401
+            import os
+            has_display = bool(os.environ.get("DISPLAY")) or sys.platform in ("win32", "darwin")
+        except Exception:
+            has_display = False
+        st, d, _ = self.req("POST", "/api/workspace/pick", {})
+        if has_display:
+            # On a machine with a display the dialog blocks; the test can't
+            # drive it, so we only assert the endpoint exists (not 404).
+            self.assertNotEqual(st, 404, d)
+        else:
+            self.assertEqual(st, 501, d)
+            self.assertIn("no", d["error"].lower())
 
     def test_chat_with_approval_flow(self):
         st, d, _ = self.req("POST", "/api/chat", {"session": SID, "text": "run echo"})
@@ -180,6 +227,20 @@ class WebTests(unittest.TestCase):
         self.assertFalse(any(e["type"] == "approval" for e in got))
         self.assertIn("hello-from-shell", next(e["text"] for e in got if e["type"] == "tool_result"))
 
+    def test_session_auto_inherits_config(self):
+        """A new Session inherits cfg.auto_approve by default, so
+        AGENT_AUTO_APPROVE=1 starts the web UI with auto-approve ON for
+        every chat. The per-session toggle can still change it."""
+        # Default config has auto_approve=False, so a new session starts off.
+        s = server.Session(self.cfg, SID)
+        self.assertFalse(s.auto)
+        # Flip the process-level flag and create a new session.
+        self.cfg.auto_approve = True
+        s2 = server.Session(self.cfg, SID)
+        self.assertTrue(s2.auto)
+        # The existing session is unaffected (its per-session flag is local).
+        self.assertFalse(s.auto)
+
     def test_chat_without_keys_gives_clear_error(self):
         self.cfg.providers.remove_pool("mock")
         st, d, _ = self.req("POST", "/api/chat", {"session": SID, "text": "hi"})
@@ -201,6 +262,10 @@ class WebTests(unittest.TestCase):
         st, body, _ = self.req("GET", "/")
         self.assertEqual(st, 200)
         self.assertIn(b"<title>Omni</title>", body)
+        # The new workspace-picker "Browse…" button is present in the HTML.
+        self.assertIn(b"/api/workspace/pick", body)
+        # The auto-approve banner element exists.
+        self.assertIn(b'id="autoBanner"', body)
 
 
 if __name__ == "__main__":
