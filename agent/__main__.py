@@ -1,5 +1,6 @@
 import argparse
 import sys
+import threading
 import time
 from . import config, loop, llm, commands
 
@@ -9,10 +10,38 @@ def chat_repl(cfg):
     pools = pm.pool_names()
     print(f"Omni agent  |  primary pool={pools[0] if pools else 'none'}  |  keys={len(pm.items)}  |  strategy={pm.strategy}\n"
           f"workspace={cfg.workspace}\n"
-          "Type /help for key/model commands (key rotation + failover is automatic).  Prefer a browser?  run:  omni ui\n")
+          "Type /help for key/model commands (key rotation + failover is automatic).  Prefer a browser?  run:  omni ui\n"
+          "Long task?  prefix it with /bg to run in the background and keep typing.\n"
+          "Backgrounded shell jobs survive /exit and Ctrl+C. "
+          "Use /bg <task> for agent jobs and background=true for shell servers.\n")
     if pm.load_error:
         print("WARNING:", pm.load_error, "\n")
     hist = loop.new_history(cfg)
+    jobs = {}       # id -> {"stop": Event, "out": list, "thread": Thread, "label": str}
+
+    def launch_bg(text):
+        job_id = str(len(jobs) + 1)
+        while job_id in jobs:
+            job_id = str(int(job_id) + 1)
+        stop = threading.Event()
+        out = []
+
+        def run():
+            try:
+                result = loop.run(cfg, loop.new_history(cfg), text,
+                                  on_event=lambda k, t="", **e: out.append(t) if t else None,
+                                  cancel=stop)
+                out.append(result)
+            except Exception as e:
+                out.append(f"[error] {e}")
+            finally:
+                out.append("[done]")
+
+        t = threading.Thread(target=run, daemon=True, name=f"omni-bg-{job_id}")
+        jobs[job_id] = {"stop": stop, "out": out, "thread": t, "label": text[:60]}
+        t.start()
+        return job_id
+
     while True:
         try:
             q = input("you> ").strip()
@@ -22,10 +51,45 @@ def chat_repl(cfg):
         if not q:
             continue
         if q in ("/exit", "/quit"):
+            running_agents = any(j["thread"].is_alive() for j in jobs.values())
+            from .tools import shell as _shell_mod
+            running_shells = [d for d in _shell_mod.list_detached() if d["alive"]]
+            if running_agents or running_shells:
+                print("(some background jobs are still running - use /kill N first if you want them gone)")
             return
         if q == "/reset":
             hist = loop.new_history(cfg)
             print("history cleared")
+            continue
+        if q == "/jobs":
+            from .tools import shell as _shell_mod
+            detached = _shell_mod.list_detached()
+            if not jobs and not detached:
+                print("no background jobs")
+            for jid, j in jobs.items():
+                status = "running" if j["thread"].is_alive() else "done"
+                tail = "".join(j["out"])[-300:].replace("\n", " ")
+                print(f"  agent {jid}: {status}  {j['label']}  {tail}")
+            for d in detached:
+                status = "running" if d["alive"] else "exited"
+                print(f"  shell {d['id']}: {status}  {d['cmd'][:80]}  log={d['log']}")
+            continue
+        if q.startswith("/kill "):
+            jid = q[6:].strip()
+            if jid in jobs:
+                jobs[jid]["stop"].set()
+                print(f"kill signal sent to agent job {jid}")
+                continue
+            from .tools import shell as _shell_mod
+            print(_shell_mod.kill_detached(jid))
+            continue
+        if q.startswith("/bg "):
+            text = q[4:].strip()
+            if not text:
+                print("usage: /bg <task>")
+                continue
+            jid = launch_bg(text)
+            print(f"started job {jid} in background; /jobs to check, /kill {jid} to stop")
             continue
         if q.startswith("/"):
             print(commands.handle(cfg, q))

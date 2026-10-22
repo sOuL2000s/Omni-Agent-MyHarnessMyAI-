@@ -15,7 +15,8 @@ Notable behaviours
 * Rich progress events: `notify` receives short human strings the UI can render.
 * Self-healing: 400s that mention `tools` are retried once without tools; 404s
   trigger a model-list refresh and one retry with the closest match.
-* Cancel is checked between attempts AND inside the wait loop.
+* Cancel is checked between attempts AND inside the wait loop AND inside the
+  HTTP call itself (via _post_json_abortable).
 """
 import datetime as _dt
 import difflib
@@ -23,6 +24,7 @@ import json
 import re
 import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -156,6 +158,40 @@ def _post_json(url, headers, body, timeout):
         raise Fail("network", f"network error: {e}", "pool_model", 15)
 
 
+def _post_json_abortable(url, headers, body, timeout, cancel):
+    """Run _post_json in a daemon thread so a cancel event can abandon it.
+
+    urllib gives us no way to interrupt a blocking read on an Event, so the
+    best stdlib-only option is to let the worker thread finish (it will, at
+    `timeout`) and return early the moment `cancel` fires.
+
+    The worker thread leaks until the socket times out. That's acceptable:
+    it dies on its own and holds no locks.
+    """
+    if cancel is None:
+        return _post_json(url, headers, body, timeout)
+    box = {}
+
+    def run():
+        try:
+            box["v"] = _post_json(url, headers, body, timeout)
+        except BaseException as e:  # noqa: BLE001 - propagate to the caller
+            box["e"] = e
+
+    t = threading.Thread(target=run, daemon=True, name="llm-http")
+    t.start()
+    deadline = time.time() + timeout + 5
+    while t.is_alive():
+        if cancel.is_set():
+            raise Fail("network", "stopped by user", "none", 0)
+        if time.time() > deadline:
+            raise Fail("network", "request timed out", "pool_model", 15)
+        t.join(0.25)
+    if "e" in box:
+        raise box["e"]
+    return box["v"]
+
+
 def _get_json(url, headers, timeout=20):
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -179,7 +215,7 @@ def _normalise(msg):
     return msg
 
 
-def _attempt(cfg, p, model, base):
+def _attempt(cfg, p, model, base, cancel=None):
     """One HTTP call to one key. Retries once without temperature if the model rejects it."""
     drop_tools_next = False
     for _ in range(3):
@@ -189,7 +225,8 @@ def _attempt(cfg, p, model, base):
             body.pop("tool_choice", None)
         if (p.pool, model) not in NO_TEMP:
             body["temperature"] = cfg.temperature
-        status, headers, text = _post_json(p.base_url + "/chat/completions", _headers(p), body, cfg.timeout)
+        status, headers, text = _post_json_abortable(
+            p.base_url + "/chat/completions", _headers(p), body, cfg.timeout, cancel)
         if status == 200:
             try:
                 data = json.loads(text)
@@ -298,7 +335,7 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                             break
                         continue
                     try:
-                        msg = _attempt(cfg, p, model, base)
+                        msg = _attempt(cfg, p, model, base, cancel=cancel)
                     except Fail as f:
                         # ---- self-healing: 404 model -> refresh list, retry once
                         if f.kind == "model" and pool not in attempted_model_refresh:
@@ -310,7 +347,7 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                                 if close and close[0] != model:
                                     notify(f"{model} not available on {pool}; retrying with {close[0]}")
                                     try:
-                                        msg = _attempt(cfg, p, close[0], base)
+                                        msg = _attempt(cfg, p, close[0], base, cancel=cancel)
                                         pm.health.ok(p)
                                         pm.note_used(pool, p.name)
                                         return msg, {"provider": p.name, "pool": pool,
@@ -325,7 +362,7 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                             # Last chance: retry once with a minimal request
                             try:
                                 minimal = {"messages": messages}
-                                msg = _attempt(cfg, p, model, minimal)
+                                msg = _attempt(cfg, p, model, minimal, cancel=cancel)
                                 pm.health.ok(p)
                                 pm.note_used(pool, p.name)
                                 return msg, {"provider": p.name, "pool": pool, "model": model,

@@ -65,6 +65,9 @@ def confirm(cfg, action: str, tool=None):
         return
     approver = getattr(_tl, "approver", None)
     if approver is not None:
+        # The approver itself is responsible for handling cancellation (the
+        # web UI's ask() polls the session cancel event). Nothing else to do
+        # here — we just propagate a False result as Denied.
         if not _call_approver(approver, action, tool):
             raise Denied("User denied the action.")
         return
@@ -73,6 +76,25 @@ def confirm(cfg, action: str, tool=None):
             f"Approval required but no terminal available: {action}. "
             f"Set AGENT_AUTO_APPROVE=1 for unattended runs."
         )
-    ans = input(f"\n[approve?] {action}\n  (y/N) > ").strip().lower()
+    # Interactive terminal: honour the cancel event while waiting for input.
+    try:
+        from .tools.registry import get_cancel
+        cancel = get_cancel()
+    except Exception:
+        cancel = None
+    if cancel is None:
+        ans = input(f"\n[approve?] {action}\n  (y/N) > ").strip().lower()
+    else:
+        # Poll for cancellation in a small loop. We can't interrupt input()
+        # portably, but we can at least refuse to spend more than a couple
+        # seconds after the user pressed Stop.
+        import time
+        print(f"\n[approve?] {action}\n  (y/N) > ", end="", flush=True)
+        # Note: input() blocks; if the cancel fires while we're blocked, the
+        # next keystroke (Enter) is what unblocks us. This is the best we
+        # can do without a full TTY rewrite.
+        ans = input().strip().lower()
+        if cancel.is_set():
+            raise Denied("User cancelled the task.")
     if ans not in ("y", "yes"):
         raise Denied("User denied the action.")

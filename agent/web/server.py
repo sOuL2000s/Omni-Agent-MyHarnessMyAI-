@@ -60,6 +60,11 @@ STREAM_COALESCE_SECONDS = 0.1
 # still sent to the model; only the rendered preview is truncated.
 MAX_RENDER_CHARS = 20000
 
+# How long a single approval dialog may block the agent. Long enough for a
+# human to read the action, short enough that a forgotten tab doesn't pin a
+# session for ten minutes.
+APPROVAL_TIMEOUT = 120
+
 
 # ---------------------------------------------------------------- workspace guard
 def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
@@ -96,6 +101,8 @@ class Session:
         self.allowed_tools = set()
         self.touched = time.time()
         self.deleted = False
+        # Optional override title; empty string = derive from history.
+        self._title = self._load_title()
         # tool_stream coalescing: one buffer per stream id
         self._stream_buf = {}
         self._stream_last = {}
@@ -105,6 +112,34 @@ class Session:
         d = self.cfg.data_dir / "sessions"
         d.mkdir(exist_ok=True)
         return d / f"{self.id}.json"
+
+    @property
+    def meta_file(self):
+        return self.file.with_suffix(".meta.json")
+
+    def _load_title(self) -> str:
+        try:
+            if self.meta_file.exists():
+                d = json.loads(self.meta_file.read_text(encoding="utf-8"))
+                return str(d.get("title") or "")[:80]
+        except Exception:
+            pass
+        return ""
+
+    def set_title(self, text: str):
+        self._title = (text or "").strip()[:80]
+        try:
+            self.meta_file.write_text(json.dumps({"title": self._title}), encoding="utf-8")
+        except Exception:
+            pass
+
+    def title(self):
+        if self._title:
+            return self._title
+        for m in self.history:
+            if m.get("role") == "user":
+                return str(m.get("content", ""))[:60]
+        return "New chat"
 
     def emit(self, kind, text="", **extra):
         """Emit an event. For messages that will persist in history, attach
@@ -175,12 +210,6 @@ class Session:
         except Exception:
             pass
 
-    def title(self):
-        for m in self.history:
-            if m.get("role") == "user":
-                return str(m.get("content", ""))[:60]
-        return "New chat"
-
     def render(self):
         out = []
         for i, m in enumerate(self.history):
@@ -225,6 +254,9 @@ class Session:
         for rec in list(self.approvals.values()):
             rec["allow"] = False
             rec["event"].set()
+        # Wake any client blocked in poll() so it notices busy=False faster.
+        with self.cond:
+            self.cond.notify_all()
 
 
 class App:
@@ -252,6 +284,23 @@ class App:
             s.touched = time.time()
             return s
 
+    # ---------------------------------------------------------- workspace
+    def set_workspace(self, path: str) -> Path:
+        """Validate, set cfg.workspace, and refresh the system prompt on every
+        live session so the model is not told to use a stale folder."""
+        new_ws = Path(path).expanduser().resolve()
+        if not new_ws.is_dir():
+            raise ValueError(f"not a directory: {new_ws}")
+        _validate_workspace(new_ws, self.cfg.data_dir)
+        self.cfg.workspace = new_ws
+        with self.lock:
+            for s in self.sessions.values():
+                if s.history and s.history[0].get("role") == "system":
+                    s.history[0]["content"] = loop.system_prompt(self.cfg)
+                    s.save()
+        return new_ws
+
+    # ---------------------------------------------------------- chat run
     def run_chat(self, sess, text):
         def ask(action, tool_name=None):
             if sess.auto:
@@ -263,7 +312,15 @@ class App:
                    "allow": False, "remember": False, "tool": tool_name}
             sess.approvals[aid] = rec
             sess.emit("approval", action, id=aid, tool=tool_name)
-            rec["event"].wait(600)
+            # Cancel-aware wait: if the user presses Stop, bail out
+            # immediately instead of blocking for the full timeout.
+            deadline = time.time() + APPROVAL_TIMEOUT
+            while time.time() < deadline:
+                if rec["event"].wait(0.25):
+                    break
+                if sess.cancel.is_set():
+                    rec["allow"] = False
+                    break
             sess.approvals.pop(aid, None)
             if rec["remember"] and tool_name:
                 sess.allowed_tools.add(tool_name)
@@ -454,7 +511,8 @@ def make_handler(app):
             self._send(200, {"items": s.render(), "cursor": len(s.events),
                              "busy": s.busy, "pending": pending,
                              "auto": s.auto, "strict": app.cfg.strict,
-                             "allowed_tools": sorted(s.allowed_tools)})
+                             "allowed_tools": sorted(s.allowed_tools),
+                             "title": s.title()})
         api_history.method = "GET"
 
         def api_sessions(self, q):
@@ -462,14 +520,24 @@ def make_handler(app):
             out = []
             if d.exists():
                 for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:40]:
+                    if f.name.endswith(".meta.json"):
+                        continue
                     try:
                         hist = json.loads(f.read_text(encoding="utf-8"))
-                        t = next((str(m["content"])[:60] for m in hist if m.get("role") == "user"), "")
-                        if t:
-                            out.append({"id": f.stem, "title": t,
-                                        "mtime": int(f.stat().st_mtime)})
                     except Exception:
                         continue
+                    sid = f.stem
+                    s = app.sessions.get(sid)
+                    title = s.title() if s else next(
+                        (str(m["content"])[:60] for m in hist if m.get("role") == "user"), "")
+                    if not title:
+                        continue
+                    out.append({
+                        "id": sid,
+                        "title": title,
+                        "mtime": int(f.stat().st_mtime),
+                        "busy": bool(s and s.busy),
+                    })
             self._send(200, out)
         api_sessions.method = "GET"
 
@@ -577,17 +645,33 @@ def make_handler(app):
             s.auto = bool(b.get("on"))
             self._send(200, {"auto": s.auto})
 
+        def api_strict(self, q):
+            b = self._json_body()
+            app.cfg.strict = bool(b.get("on"))
+            self._send(200, {"strict": app.cfg.strict})
+
         def api_session_delete(self, q):
             sid = self._json_body().get("session", "")
             s = app.session(sid)
             s.stop()
             s.deleted = True
             app.sessions.pop(sid, None)
-            try:
-                s.file.unlink()
-            except FileNotFoundError:
-                pass
+            for f in (s.file, s.meta_file):
+                try:
+                    f.unlink()
+                except FileNotFoundError:
+                    pass
             self._send(200, {"ok": True})
+
+        def api_session_rename(self, q):
+            b = self._json_body()
+            sid = b.get("session", "")
+            title = (b.get("title") or "").strip()
+            if not title:
+                raise ValueError("title is empty")
+            s = app.session(sid)
+            s.set_title(title)
+            self._send(200, {"ok": True, "title": s.title()})
 
         def api_message_delete(self, q):
             b = self._json_body()
@@ -615,6 +699,17 @@ def make_handler(app):
                 i += 1
             dest.write_bytes(data)
             self._send(200, {"path": dest.name, "size": len(data)})
+
+        # ---- shell jobs (background=true dev servers)
+        def api_shell_jobs(self, q):
+            from ..tools import shell as _sh
+            self._send(200, {"jobs": _sh.list_detached()})
+        api_shell_jobs.method = "GET"
+
+        def api_shell_jobs_kill(self, q):
+            b = self._json_body()
+            from ..tools import shell as _sh
+            self._send(200, {"ok": True, "result": _sh.kill_detached(b.get("job_id", ""))})
 
         # ---- keys / models
         def api_pool_model(self, q):
@@ -793,11 +888,7 @@ def make_handler(app):
 
         def api_workspace_set(self, q):
             b = self._json_body()
-            new_ws = Path(b.get("path", "")).expanduser().resolve()
-            if not new_ws.is_dir():
-                raise ValueError(f"not a directory: {new_ws}")
-            _validate_workspace(new_ws, app.cfg.data_dir)
-            app.cfg.workspace = new_ws
+            new_ws = app.set_workspace(b.get("path", ""))
             self._send(200, {"workspace": str(new_ws)})
 
         def api_workspace_pick(self, q):
@@ -836,18 +927,11 @@ def make_handler(app):
                     pass
             if not chosen:
                 return self._send(200, {"cancelled": True})
-            new_ws = Path(chosen).expanduser().resolve()
             try:
-                _validate_workspace(new_ws, app.cfg.data_dir)
+                new_ws = app.set_workspace(chosen)
             except ValueError as e:
                 return self._err(400, str(e))
-            app.cfg.workspace = new_ws
             self._send(200, {"workspace": str(new_ws)})
-
-        def api_strict(self, q):
-            b = self._json_body()
-            app.cfg.strict = bool(b.get("on"))
-            self._send(200, {"strict": app.cfg.strict})
 
         # ---- MCP
         def api_mcp_restart(self, q):

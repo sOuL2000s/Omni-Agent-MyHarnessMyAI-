@@ -23,6 +23,11 @@ CORE RULES - do not break these:
   docx_read then docx_edit_paragraph / docx_replace_text so formatting is preserved.
 - Work step by step: plan briefly, use tools, verify results (re-read the file, run tests), then
   report concisely. When you run a command, quote its actual output.
+- DEV SERVERS (npm run dev, vite, next dev, flask run, uvicorn, python manage.py runserver,
+  cargo watch, dotnet watch, etc.) MUST be launched with run_shell(..., background=true).
+  Foreground servers get killed by Stop and by the session timeout; background ones survive
+  and keep serving. After starting one, call tail_background(job_id=...) after a few seconds
+  to read its log and report the actual URL to the user.
 - Make the smallest change that satisfies the request. Do not rewrite whole files unless asked.
 - If a tool call fails, DIAGNOSE it: wrong path? missing arg? different tool needed? Fix and retry.
   Do NOT repeat the exact same failing call.
@@ -61,6 +66,19 @@ def system_prompt(cfg):
 
 def new_history(cfg):
     return [{"role": "system", "content": system_prompt(cfg)}]
+
+
+def refresh_system_prompt(cfg, history):
+    """Rewrite history[0] if the workspace (or memory) changed since it was
+    created. Cheap and idempotent — safe to call at the top of every turn.
+    Returns True if it changed anything."""
+    if not history or history[0].get("role") != "system":
+        return False
+    new_sp = system_prompt(cfg)
+    if history[0].get("content") == new_sp:
+        return False
+    history[0]["content"] = new_sp
+    return True
 
 
 def _trim(history, limit=180_000, protect_from=None):
@@ -124,6 +142,15 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
 
 
 def _run_inner(cfg, history, user_text, on_event, cancel):
+    # If the workspace (or saved memory) changed since this session's system
+    # prompt was built, rewrite it in place so the model isn't told to use a
+    # stale path.
+    if refresh_system_prompt(cfg, history):
+        try:
+            on_event("notice", "workspace changed — system prompt updated")
+        except Exception:
+            pass
+
     turn_start = len(history)  # protect this turn's tool outputs from trimming
     history.append({"role": "user", "content": user_text})
     last_route = None
