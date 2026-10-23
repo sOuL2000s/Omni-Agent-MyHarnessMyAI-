@@ -11,6 +11,16 @@ Security model:
     in agent/safety.py).
   * /api/mcp_registry proxies the official MCP Registry (cached on disk);
     nothing from it is executed until the user clicks "Add & connect".
+
+MCP endpoints (all under /api/mcp):
+  GET    /api/mcp           -> {servers: [{name, ready, tools, error, command,
+                                            args, url, env_keys, header_keys, enabled}]}
+  POST   /api/mcp/add       -> add a new server; start + register tools
+  POST   /api/mcp/update    -> edit an existing server; stop + restart
+  POST   /api/mcp/delete    -> stop and remove a server (config + memory)
+  POST   /api/mcp/start     -> start (already-configured) server
+  POST   /api/mcp/stop      -> stop but keep config
+  POST   /api/mcp/restart   -> stop + start
 """
 import fnmatch
 import hmac
@@ -54,27 +64,14 @@ MAX_EVENTS = 2000
 MAX_POLL_EVENTS = 200
 STREAM_COALESCE_SECONDS = 0.1
 
-# Cap how much text a single message can render into the browser. A huge
-# message (e.g. a pasted document) would build thousands of DOM nodes in
-# index.html and freeze the tab. The full text is still in history and is
-# still sent to the model; only the rendered preview is truncated.
+# Cap how much text a single message can render into the browser.
 MAX_RENDER_CHARS = 20000
 
-# How long a single approval dialog may block the agent. Long enough for a
-# human to read the action, short enough that a forgotten tab doesn't pin a
-# session for ten minutes.
+# How long a single approval dialog may block the agent.
 APPROVAL_TIMEOUT = 120
 
 
-# ---------------------------------------------------------------- workspace guard
 def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
-    """Refuse a filesystem root as the workspace.
-
-    A filesystem root would make every path "inside" and silently disable the
-    outside-workspace approval guard. Any other directory (including data/ and
-    its parents) is allowed — see the secret-file guard in agent/safety.py for
-    the credential protection that used to live here.
-    """
     try:
         new_ws = new_ws.resolve()
     except OSError:
@@ -85,7 +82,6 @@ def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
             "(it would disable the outside-workspace approval guard)")
 
 
-# ---------------------------------------------------------------- chat sessions
 class Session:
     def __init__(self, cfg, sid, history=None):
         self.cfg, self.id = cfg, sid
@@ -94,16 +90,12 @@ class Session:
         self.cond = threading.Condition()
         self.busy = False
         self.cancel = threading.Event()
-        # Inherit the process-level auto-approve setting. The per-session
-        # toggle in the UI can still turn it off/on without touching the env.
         self.auto = bool(getattr(cfg, "auto_approve", False))
         self.approvals = {}
         self.allowed_tools = set()
         self.touched = time.time()
         self.deleted = False
-        # Optional override title; empty string = derive from history.
         self._title = self._load_title()
-        # tool_stream coalescing: one buffer per stream id
         self._stream_buf = {}
         self._stream_last = {}
 
@@ -142,17 +134,10 @@ class Session:
         return "New chat"
 
     def emit(self, kind, text="", **extra):
-        """Emit an event. For messages that will persist in history, attach
-        the current history index as `idx` so the client can offer Edit /
-        Delete even before the run finishes and history is re-fetched."""
         with self.cond:
-            # Coalesce streaming tool output so the poller isn't woken up
-            # hundreds of times per second on a chatty shell command.
             if kind == "tool_stream":
                 sid = extra.get("id")
-                if sid is None:
-                    pass
-                else:
+                if sid is not None:
                     buf = self._stream_buf.setdefault(sid, [])
                     buf.append(text)
                     now = time.time()
@@ -171,7 +156,6 @@ class Session:
             self.cond.notify_all()
 
     def _cap_events(self):
-        """Keep the events list bounded, dropping the oldest tool_stream chunks."""
         if len(self.events) <= MAX_EVENTS:
             return
         overflow = len(self.events) - MAX_EVENTS
@@ -192,8 +176,6 @@ class Session:
         with self.cond:
             if len(self.events) <= after and wait > 0:
                 self.cond.wait(wait)
-            # Cap per-response payload; skip stale streaming chunks if the
-            # client fell far behind.
             if after < 0:
                 after = 0
             chunk = self.events[after:after + MAX_POLL_EVENTS]
@@ -237,8 +219,6 @@ class Session:
 
     @staticmethod
     def _clip(text):
-        """Truncate a rendered message. Does NOT change history; the full text
-        is still saved and still sent to the model on the next turn."""
         s = str(text)
         if len(s) <= MAX_RENDER_CHARS:
             return s
@@ -254,7 +234,6 @@ class Session:
         for rec in list(self.approvals.values()):
             rec["allow"] = False
             rec["event"].set()
-        # Wake any client blocked in poll() so it notices busy=False faster.
         with self.cond:
             self.cond.notify_all()
 
@@ -264,6 +243,10 @@ class App:
         self.cfg, self.token, self.hosts = cfg, token, hosts
         self.sessions = {}
         self.lock = threading.Lock()
+        # MCP: single source of truth for the on-disk config file. Guarded
+        # by self.mcp_lock so concurrent add/update/delete calls can't
+        # clobber each other.
+        self.mcp_lock = threading.RLock()
 
     def session(self, sid, create=True):
         if not SID_RE.match(sid or ""):
@@ -284,10 +267,7 @@ class App:
             s.touched = time.time()
             return s
 
-    # ---------------------------------------------------------- workspace
     def set_workspace(self, path: str) -> Path:
-        """Validate, set cfg.workspace, and refresh the system prompt on every
-        live session so the model is not told to use a stale folder."""
         new_ws = Path(path).expanduser().resolve()
         if not new_ws.is_dir():
             raise ValueError(f"not a directory: {new_ws}")
@@ -300,7 +280,6 @@ class App:
                     s.save()
         return new_ws
 
-    # ---------------------------------------------------------- chat run
     def run_chat(self, sess, text):
         def ask(action, tool_name=None):
             if sess.auto:
@@ -312,8 +291,6 @@ class App:
                    "allow": False, "remember": False, "tool": tool_name}
             sess.approvals[aid] = rec
             sess.emit("approval", action, id=aid, tool=tool_name)
-            # Cancel-aware wait: if the user presses Stop, bail out
-            # immediately instead of blocking for the full timeout.
             deadline = time.time() + APPROVAL_TIMEOUT
             while time.time() < deadline:
                 if rec["event"].wait(0.25):
@@ -346,22 +323,216 @@ class App:
                 sess.save()
                 sess.emit("done")
 
-        # The caller is expected to have already set sess.busy = True and
-        # cleared sess.cancel (so the "is this session busy?" check is atomic).
         threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------------ MCP
+
+    def _mcp_config_path(self) -> Path:
+        return self.cfg.data_dir / "mcp.json"
+
+    def _mcp_read_config(self) -> dict:
+        p = self._mcp_config_path()
+        if not p.exists():
+            return {"servers": {}}
+        try:
+            data = json.loads(p.read_text(encoding="utf-8-sig"))
+        except Exception:
+            return {"servers": {}}
+        if not isinstance(data, dict):
+            return {"servers": {}}
+        data.setdefault("servers", {})
+        return data
+
+    def _mcp_write_config(self, data: dict) -> None:
+        p = self._mcp_config_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        # ensure_ascii=False so env values that contain non-ASCII survive
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+
+    def mcp_state(self) -> list:
+        """One row per server, for the UI. Includes editable config."""
+        mcp = getattr(self.cfg, "mcp", None)
+        rows = []
+        cfg_servers = self._mcp_read_config().get("servers", {})
+        # Live servers first (in registry order), then config-only entries
+        # that failed to start (so the user can edit/delete them).
+        seen = set()
+        if mcp:
+            for name, srv in mcp.servers.items():
+                seen.add(name)
+                spec = cfg_servers.get(name, {}) or {}
+                rows.append({
+                    "name": name,
+                    "ready": bool(srv.ready),
+                    "tools": len(srv.tools or []),
+                    "tool_names": [t.get("name") for t in (srv.tools or [])
+                                   if isinstance(t, dict)],
+                    "error": srv.last_error,
+                    "command": " ".join(getattr(srv, "cmd", []) or []),
+                    "args": list(getattr(srv, "cmd", [])[1:] if getattr(srv, "cmd", None) else []),
+                    "url": getattr(srv, "url", "") or "",
+                    "env_keys": sorted((spec.get("env") or {}).keys()),
+                    "header_keys": sorted((spec.get("headers") or {}).keys()),
+                    "enabled": spec.get("enabled", True),
+                    "transport": "http" if getattr(srv, "transport", "stdio") == "http" else "stdio",
+                })
+        for name, spec in cfg_servers.items():
+            if name in seen or not isinstance(spec, dict):
+                continue
+            rows.append({
+                "name": name,
+                "ready": False,
+                "tools": 0,
+                "tool_names": [],
+                "error": "not loaded (start it to use it)",
+                "command": spec.get("command") or "",
+                "args": list(spec.get("args") or []),
+                "url": spec.get("url") or "",
+                "env_keys": sorted((spec.get("env") or {}).keys()),
+                "header_keys": sorted((spec.get("headers") or {}).keys()),
+                "enabled": spec.get("enabled", True),
+                "transport": "http" if spec.get("url") else "stdio",
+            })
+        return rows
+
+    def _mcp_reload_tools(self):
+        from ..tools import mcp_bridge
+        mcp_bridge._registered_for = None
+        try:
+            mcp_bridge.register(self.cfg)
+        except Exception:
+            pass
+
+    def mcp_add(self, spec: dict) -> dict:
+        name = (spec.get("name") or "").strip()
+        command = (spec.get("command") or "").strip()
+        url = (spec.get("url") or "").strip()
+        if not name:
+            raise ValueError("name is required")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.\-]*", name):
+            raise ValueError("name must start with a letter and contain only letters, digits, _, ., -")
+        if not command and not url:
+            raise ValueError("either command (local stdio) or url (remote HTTP) is required")
+
+        args = list(spec.get("args") or [])
+        env = dict(spec.get("env") or {})
+        headers = dict(spec.get("headers") or {})
+        cwd = spec.get("cwd") or None
+
+        from ..mcp import MCPServer
+        srv = MCPServer(name, command or None, args, env, cwd,
+                        url=url or None, headers=headers)
+        try:
+            srv.start()
+        except Exception as e:
+            raise ValueError(f"could not start '{name}': {e}")
+
+        with self.mcp_lock:
+            data = self._mcp_read_config()
+            entry = {
+                "command": command or None,
+                "url": url or None,
+                "args": args,
+                "env": env,
+                "headers": headers,
+                "enabled": True,
+            }
+            if cwd:
+                entry["cwd"] = cwd
+            data["servers"][name] = entry
+            self._mcp_write_config(data)
+            if not getattr(self.cfg, "mcp", None):
+                from ..mcp import MCPRegistry
+                self.cfg.mcp = MCPRegistry()
+            self.cfg.mcp.servers[name] = srv
+            self._mcp_reload_tools()
+        return {"name": name, "tools": len(srv.tools or [])}
+
+    def mcp_update(self, old_name: str, spec: dict) -> dict:
+        old_name = (old_name or "").strip()
+        new_name = (spec.get("name") or old_name).strip()
+        if not old_name:
+            raise ValueError("old_name is required")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.\-]*", new_name):
+            raise ValueError("name must start with a letter and contain only letters, digits, _, ., -")
+        command = (spec.get("command") or "").strip()
+        url = (spec.get("url") or "").strip()
+        if not command and not url:
+            raise ValueError("either command (local stdio) or url (remote HTTP) is required")
+        args = list(spec.get("args") or [])
+        env = dict(spec.get("env") or {})
+        headers = dict(spec.get("headers") or {})
+        cwd = spec.get("cwd") or None
+
+        with self.mcp_lock:
+            # stop old if present
+            if getattr(self.cfg, "mcp", None):
+                old_srv = self.cfg.mcp.servers.pop(old_name, None)
+                if old_srv:
+                    try:
+                        old_srv.stop()
+                    except Exception:
+                        pass
+            data = self._mcp_read_config()
+            data["servers"].pop(old_name, None)
+            self._mcp_write_config(data)
+        # Now add as a fresh server under the (possibly new) name.
+        res = self.mcp_add({
+            "name": new_name, "command": command, "url": url,
+            "args": args, "env": env, "headers": headers, "cwd": cwd,
+        })
+        return res
+
+    def mcp_delete(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name is required")
+        with self.mcp_lock:
+            if getattr(self.cfg, "mcp", None):
+                srv = self.cfg.mcp.servers.pop(name, None)
+                if srv:
+                    try:
+                        srv.stop()
+                    except Exception:
+                        pass
+            data = self._mcp_read_config()
+            data["servers"].pop(name, None)
+            self._mcp_write_config(data)
+            self._mcp_reload_tools()
+
+    def mcp_start(self, name: str) -> dict:
+        name = (name or "").strip()
+        mcp = getattr(self.cfg, "mcp", None)
+        srv = mcp.servers.get(name) if mcp else None
+        if not srv:
+            # Build one from config.
+            data = self._mcp_read_config()
+            spec = data.get("servers", {}).get(name)
+            if not spec:
+                raise ValueError(f"no such MCP server: {name}")
+            from ..mcp import MCPServer
+            srv = MCPServer(name, spec.get("command"), list(spec.get("args") or []),
+                            dict(spec.get("env") or {}), spec.get("cwd"),
+                            url=spec.get("url"), headers=dict(spec.get("headers") or {}))
+            if not mcp:
+                from ..mcp import MCPRegistry
+                mcp = self.cfg.mcp = MCPRegistry()
+            mcp.servers[name] = srv
+        srv.stop()
+        srv.start()
+        self._mcp_reload_tools()
+        return {"name": name, "tools": len(srv.tools or [])}
+
+    def mcp_stop(self, name: str) -> None:
+        mcp = getattr(self.cfg, "mcp", None)
+        srv = mcp.servers.get(name) if mcp else None
+        if srv:
+            srv.stop()
 
     def state(self):
         pm = self.cfg.providers
-        mcp_state = []
-        if getattr(self.cfg, "mcp", None):
-            for name, srv in self.cfg.mcp.servers.items():
-                mcp_state.append({
-                    "name": name,
-                    "ready": srv.ready,
-                    "tools": len(srv.tools),
-                    "error": srv.last_error,
-                    "command": " ".join(srv.cmd),
-                })
         return {
             "workspace": str(self.cfg.workspace),
             "home": str(self.cfg.home) if self.cfg.home else "",
@@ -373,7 +544,8 @@ class App:
             "presets": [{"name": k, "base_url": v[0], "model": v[1]} for k, v in PRESETS.items()],
             "auto_approve_env": self.cfg.auto_approve,
             "strict": self.cfg.strict,
-            "mcp": mcp_state,
+            "shell_bg_default": _shell.default_background(),
+            "mcp": self.mcp_state(),
             "mcp_load_errors": list(getattr(self.cfg.mcp, "load_errors", [])) if self.cfg.mcp else [],
         }
 
@@ -386,7 +558,6 @@ class App:
         return out
 
 
-# ---------------------------------------------------------------- HTTP
 def make_handler(app):
     class H(BaseHTTPRequestHandler):
         server_version = "OmniUI/2.1"
@@ -397,7 +568,7 @@ def make_handler(app):
 
         def _send(self, code, body=b"", ctype="application/json", extra=()):
             if isinstance(body, (dict, list)):
-                body = json.dumps(body).encode()
+                body = json.dumps(body, ensure_ascii=False).encode()
             elif isinstance(body, str):
                 body = body.encode()
             if code >= 400:
@@ -435,7 +606,10 @@ def make_handler(app):
 
         def _json_body(self):
             raw = self._body()
-            return json.loads(raw.decode("utf-8")) if raw else {}
+            if not raw:
+                return {}
+            # utf-8-sig tolerates a BOM, which some clipboard buffers insert.
+            return json.loads(raw.decode("utf-8-sig"))
 
         def do_GET(self):
             self._route("GET")
@@ -465,9 +639,6 @@ def make_handler(app):
                     return self._err(401, "not authorised - open the link from the terminal again")
                 if method == "POST" and self.headers.get("X-Omni") != "1":
                     return self._err(403, "missing header")
-                # /api/keys/add -> api_keys_add. Hyphens and nested slashes
-                # won't match; if you ever need them, add an explicit route
-                # table here.
                 fn = getattr(self, "api_" + u.path[5:].replace("/", "_"), None)
                 if not fn or method != getattr(fn, "method", "POST"):
                     return self._err(404, "no such endpoint")
@@ -575,8 +746,6 @@ def make_handler(app):
                 return self._err(409, "this chat is still working")
             if not app.cfg.providers.items:
                 raise ValueError("No API keys yet - open the Keys panel and add one.")
-            # Claim the session BEFORE emitting or spawning, so a second
-            # concurrent request cannot slip past the busy check above.
             s.cancel.clear()
             s.busy = True
             user_idx = len(s.history)
@@ -650,6 +819,12 @@ def make_handler(app):
             app.cfg.strict = bool(b.get("on"))
             self._send(200, {"strict": app.cfg.strict})
 
+        def api_shell_bg(self, q):
+            b = self._json_body()
+            if "on" in b:
+                _shell.set_default_background(bool(b["on"]))
+            self._send(200, {"on": _shell.default_background()})
+
         def api_session_delete(self, q):
             sid = self._json_body().get("session", "")
             s = app.session(sid)
@@ -700,10 +875,10 @@ def make_handler(app):
             dest.write_bytes(data)
             self._send(200, {"path": dest.name, "size": len(data)})
 
-        # ---- shell jobs (background=true dev servers)
+        # ---- shell jobs
         def api_shell_jobs(self, q):
             from ..tools import shell as _sh
-            self._send(200, {"jobs": _sh.list_detached()})
+            self._send(200, {"jobs": _sh.list_detached(), "bg_default": _sh.default_background()})
         api_shell_jobs.method = "GET"
 
         def api_shell_jobs_kill(self, q):
@@ -793,10 +968,6 @@ def make_handler(app):
         def api_refresh_all(self, q):
             out = app.cfg.providers.refresh_all_models()
             summary = {k: (len(v) if isinstance(v, list) else str(v)) for k, v in out.items()}
-            # Also return the per-pool model list so the browser can fill its
-            # client-side modelCache in one round-trip. Without this the
-            # <datalist> dropdowns are rebuilt from an empty modelCache and
-            # the "Refresh all" button looks like it did nothing.
             by_pool = {}
             for pool in app.cfg.providers.pool_names():
                 try:
@@ -832,8 +1003,6 @@ def make_handler(app):
                 if search:
                     pat = f"*{search}*"
                     count = 0
-                    # os.walk lets us prune noise and stop early; rglob would
-                    # descend the whole tree before the filter is even applied.
                     for root, dirs, files in os.walk(p):
                         dirs[:] = [d for d in dirs
                                    if d not in ("node_modules", "__pycache__", ".git", ".venv")]
@@ -892,14 +1061,6 @@ def make_handler(app):
             self._send(200, {"workspace": str(new_ws)})
 
         def api_workspace_pick(self, q):
-            """Open the OS folder picker on the machine running the server.
-
-            This is the only way to get a native 'Browse…' dialog for a path
-            on the *server's* machine. Browsers can't return an absolute path
-            from <input webkitdirectory> or showDirectoryPicker(). On a
-            headless Linux box or when tkinter is missing, returns 501 so the
-            UI can tell the user to type the path instead.
-            """
             try:
                 import tkinter as tk
                 from tkinter import filedialog
@@ -933,45 +1094,41 @@ def make_handler(app):
                 return self._err(400, str(e))
             self._send(200, {"workspace": str(new_ws)})
 
-        # ---- MCP
-        def api_mcp_restart(self, q):
-            name = self._json_body().get("name", "")
-            if not getattr(app.cfg, "mcp", None):
-                return self._err(400, "no MCP configured")
-            msg = app.cfg.mcp.restart(name)
-            from ..tools import mcp_bridge
-            mcp_bridge._registered_for = None
-            mcp_bridge.register(app.cfg)
-            self._send(200, {"ok": True, "result": msg})
+        # ---- MCP: CRUD
+        def api_mcp(self, q):
+            self._send(200, {"servers": app.mcp_state()})
+        api_mcp.method = "GET"
 
-        def api_mcp_stop(self, q):
-            name = self._json_body().get("name", "")
-            srv = getattr(app.cfg, "mcp", None) and app.cfg.mcp.servers.get(name)
-            if srv:
-                srv.stop()
+        def api_mcp_add(self, q):
+            b = self._json_body()
+            self._send(200, app.mcp_add(b))
+
+        def api_mcp_update(self, q):
+            b = self._json_body()
+            old = b.get("old_name") or b.get("name") or ""
+            self._send(200, app.mcp_update(old, b))
+
+        def api_mcp_delete(self, q):
+            b = self._json_body()
+            app.mcp_delete(b.get("name", ""))
             self._send(200, {"ok": True})
 
         def api_mcp_start(self, q):
-            name = self._json_body().get("name", "")
-            srv = getattr(app.cfg, "mcp", None) and app.cfg.mcp.servers.get(name)
-            if not srv:
-                return self._err(404, "no such MCP server")
-            try:
-                srv.start()
-                from ..tools import mcp_bridge
-                mcp_bridge._registered_for = None
-                mcp_bridge.register(app.cfg)
-                self._send(200, {"ok": True, "tools": len(srv.tools)})
-            except Exception as e:
-                self._err(500, str(e))
+            b = self._json_body()
+            self._send(200, app.mcp_start(b.get("name", "")))
+
+        def api_mcp_stop(self, q):
+            b = self._json_body()
+            app.mcp_stop(b.get("name", ""))
+            self._send(200, {"ok": True})
+
+        def api_mcp_restart(self, q):
+            b = self._json_body()
+            name = b.get("name", "")
+            app.mcp_stop(name)
+            self._send(200, app.mcp_start(name))
 
         def api_mcp_registry(self, q):
-            """List MCP servers from the official registry (cached on disk).
-
-            ?q=filter  ?refresh=1  ?limit=200
-            Never raises into the UI: network failures return an empty list
-            plus an `error` string so the panel can show a hint.
-            """
             from .. import mcp_registry
             cache = app.cfg.data_dir / "mcp_registry.json"
             if q.get("refresh") == "1":
@@ -992,48 +1149,13 @@ def make_handler(app):
                                            limit=limit, installed=installed)
                 self._send(200, {"servers": rows, "cached": cache.exists()})
             except Exception as e:
+                # Never a 500 for a flaky third party.
                 self._send(200, {"servers": [], "error": str(e)})
         api_mcp_registry.method = "GET"
-
-        def api_mcp_add(self, q):
-            b = self._json_body()
-            name = (b.get("name") or "").strip()
-            command = (b.get("command") or "").strip()
-            url = (b.get("url") or "").strip()
-            if not name or (not command and not url):
-                raise ValueError("name and either command or url are required")
-            cfg_path = app.cfg.data_dir / "mcp.json"
-            try:
-                data = json.loads(cfg_path.read_text(encoding="utf-8-sig")) if cfg_path.exists() else {"servers": {}}
-            except Exception:
-                data = {"servers": {}}
-            data.setdefault("servers", {})[name] = {
-                "command": command or None,
-                "url": url or None,
-                "args": b.get("args") or [],
-                "env": b.get("env") or {},
-                "headers": b.get("headers") or {},
-                "enabled": True,
-            }
-            cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            from ..mcp import MCPServer
-            srv = MCPServer(name, command or None, b.get("args") or [],
-                            b.get("env") or {}, b.get("cwd"),
-                            url=url or None, headers=b.get("headers") or {})
-            try:
-                srv.start()
-                app.cfg.mcp.servers[name] = srv
-                from ..tools import mcp_bridge
-                mcp_bridge._registered_for = None
-                mcp_bridge.register(app.cfg)
-                self._send(200, {"ok": True, "tools": len(srv.tools)})
-            except Exception as e:
-                self._err(500, str(e))
 
     return H
 
 
-# ---------------------------------------------------------------- entry
 def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
     token = os.environ.get("AGENT_UI_TOKEN") or secrets.token_urlsafe(18)
     loopback = host in ("127.0.0.1", "localhost", "::1")

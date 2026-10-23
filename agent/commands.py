@@ -1,5 +1,8 @@
 # agent/commands.py
-"""Slash commands to manage keys/models without leaving the harness (terminal; the web UI has the same powers)."""
+"""Slash commands to manage keys/models/workspace without leaving the harness.
+
+The web UI has the same powers (plus a folder picker).
+"""
 import getpass
 import shlex
 from pathlib import Path
@@ -22,6 +25,8 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /refresh [key|pool|all]            re-fetch the model list for a key/pool/everything
   /keymodel <key-name> <model>       set the model for ONE key (overrides the pool default)
   /autodetect <key>                  guess the provider from the key format
+  /workspace [path]                  show or change the agent's workspace (relative or absolute)
+  /bgauto on|off                     when on, every run_shell call runs in the background
   /reset  /exit  /help"""
 
 
@@ -168,6 +173,45 @@ def handle(cfg, line):
                 return "usage: /keymodel <key-name> <model>   — set the model for one key only"
             pm.set_model_for_key(args[0], " ".join(args[1:]))
             return f"{args[0]} now uses {pm.get(args[0]).model}"
+
+        # ---- workspace -----------------------------------------------------
+        if c in ("workspace", "ws", "cd", "cwd"):
+            if not args:
+                return f"workspace: {cfg.workspace}"
+            raw = " ".join(args).strip().strip('"').strip("'")
+            p = Path(raw).expanduser()
+            if not p.is_absolute():
+                p = (cfg.workspace / p)
+            try:
+                p = p.resolve()
+            except OSError:
+                return f"error: cannot resolve {raw}"
+            if not p.is_dir():
+                return f"error: not a directory: {p}"
+            # Same guard as config.load(): refuse a filesystem root, because
+            # that would silently disable the outside-workspace approval.
+            if p == p.parent:
+                return f"error: refusing a filesystem root ({p}) as the workspace"
+            cfg.workspace = p
+            # Rewrite the system prompt on the caller's history if any.
+            try:
+                from . import loop as _loop
+                # If the caller has a live history, refresh it. We don't have
+                # it here, but the loop refreshes on the next turn anyway.
+                _ = _loop
+            except Exception:
+                pass
+            return f"workspace -> {p}\n(the next turn will use this path; the web UI is updated too)"
+
+        # ---- background-shell default -------------------------------------
+        if c in ("bgauto", "bg-shell", "bgshell", "shell-bg"):
+            from .tools import shell as _shell
+            if not args:
+                return f"background shell executions = {_shell.default_background()}"
+            on = args[0].lower() in ("on", "1", "true", "yes")
+            _shell.set_default_background(on)
+            return f"background shell executions = {on}"
+
         return "unknown command. /help"
     except (ValueError, IndexError, OSError, llm.LLMError) as e:
         return f"error: {e}"

@@ -40,6 +40,7 @@ data/*.tmp
 workspace/*
 !workspace/.gitkeep
 .env
+.*-mcp/
 
 # IDE / OS
 .vscode/

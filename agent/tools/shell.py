@@ -1,17 +1,21 @@
 # agent/tools/shell.py
 """Cancellable, streaming shell execution.
 
-Two ways to run:
+Three ways to run:
 
-* foreground (default) — streams stdout live, cancellable with Stop.
-* background=True      — returns immediately with a job id; the process
-                         keeps running on its own after Omni's Stop and
-                         after the session ends. Use this for dev servers
-                         (`npm run dev`, `flask run`, `uvicorn ...`).
+* foreground (default)  — streams stdout live, cancellable with Stop.
+* background=True       — returns immediately with a job id; the process
+                          keeps running on its own after Omni's Stop and
+                          after the session ends. Use this for dev servers
+                          (`npm run dev`, `flask run`, `uvicorn ...`).
+* background-by-default — set the global toggle (UI header or
+                          `/bgauto on`) and every run_shell call that does
+                          not explicitly say `background=false` will run
+                          detached. Perfect for a "no foreground hang" mode.
 
 Detached jobs are tracked in `_DETACHED` and are NEVER touched by
 `kill_all()`, which is what `Session.stop()` calls. That means pressing
-Stop does not kill a dev server that was started with `background=true`.
+Stop does not kill a dev server that was started in the background.
 Use the `stop_background` tool or `/kill <id>` to stop one explicitly.
 """
 import os
@@ -50,6 +54,23 @@ _DETACHED: dict = {}     # id -> {proc, cmd, started, log_path}
 _ACTIVE_LOCK = threading.RLock()
 
 _tl = threading.local()
+
+# Global default for "run everything in the background". Set by the UI
+# toggle or /bgauto on. Defaults to off so a first-time user still sees
+# live output for short commands.
+_DEFAULT_BG = True
+_DEFAULT_LOCK = threading.Lock()
+
+
+def default_background() -> bool:
+    with _DEFAULT_LOCK:
+        return _DEFAULT_BG
+
+
+def set_default_background(on: bool) -> None:
+    global _DEFAULT_BG
+    with _DEFAULT_LOCK:
+        _DEFAULT_BG = bool(on)
 
 
 def set_emitter(fn):
@@ -162,17 +183,25 @@ def _run_detached(cfg, command, cwd):
     "Run a shell command in the workspace. "
     "For long-running servers use background=true: it returns immediately "
     "with a job id and the process keeps running (Stop will NOT kill it). "
-    "Foreground commands stream output and can be cancelled with Stop.",
+    "Foreground commands stream output and can be cancelled with Stop. "
+    "If the user has enabled the global background-shell toggle, a call "
+    "with background omitted will run detached.",
     {"command": {"type": "string"},
      "timeout": {"type": "integer"},
      "background": {"type": "boolean"},
      "cwd": {"type": "string"}},
     ["command"],
 )
-def run_shell(cfg, command, timeout=120, background=False, cwd=None):
+def run_shell(cfg, command, timeout=120, background=None, cwd=None):
     for b in BLOCK:
         if re.search(b, command):
             raise Denied("Command blocked by safety rules.")
+
+    # Resolve the effective background flag:
+    #   explicit true/false wins
+    #   otherwise fall back to the global default
+    if background is None:
+        background = default_background()
 
     confirm(cfg, f"Run shell: {command}", tool="run_shell")
 

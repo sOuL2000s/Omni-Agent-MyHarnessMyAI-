@@ -8,7 +8,9 @@ OpenRouter, OpenAI, Anthropic, Groq, DeepSeek, Ollama, LM Studio, OmniRoute, or
 your own gateway. It reads and edits code, edits Word/Excel/PowerPoint files,
 runs shell commands, browses the web, browses **your entire PC**, and remembers
 things across sessions. It rotates API keys and falls back across models by
-itself, so one dead key or exhausted free quota never stops your work.
+itself, so one dead key or exhausted free quota never stops your work. It can
+also connect to **MCP servers** (Model Context Protocol) so the model gains new
+tools without you writing a line of code.
 
 ---
 
@@ -26,11 +28,12 @@ itself, so one dead key or exhausted free quota never stops your work.
 10. [Configuration reference (`.env`)](#10-configuration-reference-env)
 11. [Safety model](#11-safety-model)
 12. [Reducing hallucination (strict mode)](#12-reducing-hallucination-strict-mode)
-13. [Extending Omni — adding your own tools](#13-extending-omni--adding-your-own-tools)
-14. [Running the tests](#14-running-the-tests)
-15. [Troubleshooting](#15-troubleshooting)
-16. [FAQ](#16-faq)
-17. [Design notes & limitations (read this)](#17-design-notes--limitations-read-this)
+13. [MCP servers](#13-mcp-servers)
+14. [Extending Omni — adding your own tools](#14-extending-omni--adding-your-own-tools)
+15. [Running the tests](#15-running-the-tests)
+16. [Troubleshooting](#16-troubleshooting)
+17. [FAQ](#17-faq)
+18. [Design notes & limitations (read this)](#18-design-notes--limitations-read-this)
 
 ---
 
@@ -45,21 +48,23 @@ itself, so one dead key or exhausted free quota never stops your work.
   a paid Claude key, a local Ollama model — Omni picks whichever is available
   right now and rotates between them automatically.
 - **A GUI-first desktop app** (built on tkinter, bundled into one `.exe`) with
-  a **full web UI** for chat, key management, and file handling.
+  a **full web UI** for chat, key management, file handling, and MCP servers.
 - **Standard-library core.** The agent itself uses only Python's standard
   library. The extra pip packages (`python-docx`, `openpyxl`, `python-pptx`)
   are only for Word/Excel/PowerPoint editing — you can ignore them and still
-  use the agent for everything else.
+  use the agent for everything else. `selenium` is opt-in for JS-rendered
+  pages.
 
 ### What Omni is not
 
 - **Not a hosted service.** Nothing is sent anywhere except the LLM calls you
-  make. Your keys, files, and history live in a `data/` folder next to the exe.
+  make and the MCP servers you explicitly connect. Your keys, files, and
+  history live in a `data/` folder next to the exe.
 - **Not a wrapper around someone else's agent.** No LangChain, no AutoGen, no
   framework. It's a small, readable, auditable codebase.
 - **Not immune to hallucination.** No LLM is. Omni forces the model to call a
   tool before asserting facts about your machine, and strict mode flags
-  unverified claims in the answer — but see [§17](#17-design-notes--limitations-read-this).
+  unverified claims in the answer — but see [§18](#18-design-notes--limitations-read-this).
 - **Not a magic replacement for judgment.** If you enable auto-approve and let
   it run shell commands unreviewed, it can delete your files. See [§11](#11-safety-model).
 
@@ -81,14 +86,17 @@ itself, so one dead key or exhausted free quota never stops your work.
 | **Full filesystem access** | Reads and writes *anywhere on your PC*, with a confirmation prompt outside the workspace. A filesystem root (`/`, `C:\`) is refused as a workspace because it would silently disable this guard. |
 | **Word / Excel / PowerPoint** | Edits `.docx`, `.xlsx`, `.pptx` while preserving formatting. |
 | **Shell** | Runs commands in a shell, with a blocklist for catastrophic ones (`rm -rf /`, `mkfs`, fork bombs). It is a **speed bump, not a guard** — approval prompts are the real protection. |
+| **Background shells** | A header toggle (or `/bgauto on`) makes every `run_shell` call detach by default — dev servers survive Stop. |
 | **Web fetch** | Reads any URL, strips HTML, returns plain text. Fast (`urllib`) by default. Set `AGENT_BROWSER=selenium` to render JavaScript pages with a headless Chrome (source installs only — see §9.3). |
 | **Long-term memory** | Save facts, preferences, notes; they come back in every future session. |
 | **Chat history** | Every session is persisted in `data/sessions/`; the sidebar switches between them. |
+| **MCP servers** | Connect any Model Context Protocol server (filesystem, github, sqlite, youtube, browser automation, …) — add, edit, and delete them from the web UI, or pick one from the live registry. |
 | **Strict mode** | After a tool-using answer, a second model call verifies factual claims and flags unverified ones. |
 | **Approval flow** | Shell commands and writes outside the workspace pop up an Allow/Deny dialog. |
 | **Auto-approve** | One toggle (or env var) skips all prompts. For sandboxes and trusted workspaces. |
 | **Workspace picker** | Click the workspace chip in the header to browse your entire PC and change the root on the fly. A confirmation explains what "inside" means before applying. |
-| **Stop button** | Cancels a running task mid-flight, releases pending approvals, kills child processes. |
+| **Responsive sidebar** | Session list and shell jobs each scroll independently; on narrow screens the sidebar is an overlay. |
+| **Stop button** | Cancels a running task mid-flight, releases pending approvals, kills foreground child processes (detached jobs keep running). |
 | **Zero-config start** | Install, add one key, start working. Everything else is optional. |
 
 ---
@@ -311,21 +319,26 @@ data/
 ├── settings.json    ← strategy, fallbacks, max_wait
 ├── state.json       ← cooldowns (so a daily quota hit is remembered after restart)
 ├── memory.jsonl     ← long-term memory (what you told it to remember)
+├── mcp.json         ← MCP server definitions (added via UI, never auto-run)
+├── mcp_registry.json← cache of the official MCP registry (1h TTL)
+├── jobs/            ← logs of detached shell jobs (uuid.log)
 └── sessions/
     ├── <id>.json    ← one file per chat
-    └── ...
+    └── <id>.meta.json  ← optional title override
 ```
 
 **Treat `data/` as a secret.** `providers.json` contains your keys in plain
-text. If you back up your PC, exclude this folder or encrypt it. The
-`.gitignore` already excludes it from version control.
+text, and `mcp.json` may contain API tokens for MCP servers. If you back up
+your PC, exclude this folder or encrypt it. The `.gitignore` already excludes
+it from version control.
 
 ---
 
 ## 6. The web UI, in detail
 
 The web UI is Omni's primary interface. Everything you can do in the terminal
-you can do here, plus file uploads and a live keys panel.
+you can do here, plus file uploads, a live keys panel, and full MCP
+management.
 
 ### 6.1 Layout
 
@@ -333,31 +346,54 @@ you can do here, plus file uploads and a live keys panel.
 ┌───────────┬──────────────────────────────────────────┬──────────────┐
 │           │  workspace chip    answering: gemini ·   │              │
 │  + New    │                    gemini-2.5-flash     │  Keys &      │
-│  chat     │                          strict  auto   │  models      │
+│  chat     │     strict  auto-approve  bg-shell       │  models      │
 │           ├──────────────────────────────────────────┤              │
 │  session  │                                          │  Rotation    │
 │  list     │  Chat messages and tool cards appear      │  ────────    │
-│           │  here                                     │  gemini  ★   │
+│  (scroll) │  here                                    │  gemini  ★   │
 │           │                                          │  [model]     │
-│           │                                          │  [fallback]  │
-│           │                                          │  keys...     │
-│           ├──────────────────────────────────────────┤              │
+│  shell    │                                          │  [fallback]  │
+│  jobs     │                                          │  keys...     │
+│  (scroll) ├──────────────────────────────────────────┤              │
 │           │  📎  [type here…]           Send / Stop   │  Files       │
 └───────────┴──────────────────────────────────────────┴──────────────┘
 ```
 
-- **Left sidebar** — your chat sessions. `✕` deletes one. Long titles end in
-  `…`.
+- **Left sidebar** — `+ New chat`, a **Search chats…** box, then two
+  independently scrollable sections:
+  - **Shell jobs** — every detached `run_shell` process. Shows command, a
+    ● running / ○ exited dot, and a `stop` button. Live-refreshed every 5
+    seconds.
+  - **Recent** — chat sessions. `✎` renames, `✕` deletes, `●` marks a chat
+    that's still working. Long titles end in `…`.
 - **Header** — workspace chip (click to browse your PC and change the root),
   a chip showing which pool/model answered last (click for the full route:
-  pool · key · model · reason), the **strict** toggle, the **auto-approve**
-  toggle, and the **Keys & models** button.
+  pool · key · model · reason), and the **strict** / **auto-approve** /
+  **bg-shell** toggle group, then the **Keys & models** button.
 - **Center** — the conversation. Tool calls show as collapsible cards. Shell
   commands and outside-workspace writes pop up an Allow/Deny dialog.
-- **Right panel** — keys, models, files. Opens with the **Keys & models**
-  button.
+- **Right panel** — Keys (default), MCP, Files. Opens with the **Keys &
+  models** button or the three tabs.
 
-### 6.2 Chat
+### 6.2 The header toggles
+
+- **strict** (on by default) — after a tool-using answer, a second model call
+  checks every factual claim against the tool outputs. Unverified ones are
+  flagged. Costs a small amount of extra tokens per answer.
+- **auto-approve** (off by default) — skips all Allow/Deny dialogs. **Only
+  enable in a workspace you trust.** A red banner reminds you when it's on.
+- **bg-shell** (off by default) — makes every `run_shell` call start as a
+  **detached background job**. It returns immediately with a job id and the
+  process keeps running even after you press Stop. Useful for dev servers
+  (`npm run dev`, `uvicorn`, `flask run`, `dotnet watch`). Individual calls
+  can override it by passing `background=false`, and the model's system
+  prompt still tells it to use `background=true` for servers regardless of
+  the global setting. See §6.3 for the escape hatches.
+
+Each toggle is a pill you can click; state is kept per-process (bg-shell) or
+per-session (strict, auto-approve) — see §8.7 for why.
+
+### 6.3 Chat
 
 Type in the box, press Enter (Shift+Enter for a newline). Everything else is
 automatic:
@@ -383,7 +419,7 @@ Every message has **Copy** (and **Retry** on assistant/final answers); user
 messages also have **Edit** and **Delete**. The user bubble is rendered with
 its history index immediately, so Edit/Delete work before the run finishes.
 
-### 6.3 The **Keys & models** panel
+### 6.4 The **Keys & models** panel
 
 **Rotation card** — choose `round_robin` (spread calls over all keys) or
 `failover` (always start with the first key, use the rest only when it fails).
@@ -423,21 +459,28 @@ leave the name blank, fetches the model list, and picks a sensible default.
 When there are no pools yet, this card is shown **at the top** of the panel so
 a first-time user lands directly on it.
 
-### 6.4 The **Files** panel
+### 6.5 The **Files** panel
 
 - **Upload…** or drag-and-drop files (onto the chat area or the composer) to
   upload them into the workspace. Files larger than 2 MB show upload progress.
 - The list shows every file in the workspace with size and a download link.
 - Uploaded files appear in the chat box as `[file in workspace: name.docx]`
   so you can immediately ask Omni to work on them.
+- **Pasting or dropping more than ~20 KB of text** is intercepted and uploaded
+  as a file (`pasted-<timestamp>.txt`) so the chat box stays responsive and
+  the model doesn't choke on a 500 KB prompt.
 
-### 6.5 The workspace picker
+### 6.6 The workspace picker
 
 Click the **workspace chip** in the header. A modal opens showing your whole
 PC:
 
 - **⬆ Up** to go to the parent directory; **←** to go back to the previous
   location.
+- **📂 Browse…** opens the OS folder picker on the **server's** machine (the
+  only reliable way to get a native dialog for a path on the server's
+  filesystem from a browser). If the server has no display, this returns 501
+  and you type the path instead.
 - **Drive buttons** on Windows to jump between `C:\`, `D:\`, etc.
 - **Filter…** to search the current folder; tick **deep search** to search
   recursively (prunes `node_modules`, `__pycache__`, `.git`, `.venv` and stops
@@ -449,8 +492,48 @@ PC:
   outside-workspace approval guard. `data/` (and its parents) may be chosen,
   but `data/providers.json`, `data/state.json` and `data/memory.jsonl` are
   always refused by the file tools so the agent cannot read its own keys.
+- **Recent folders** are remembered per browser so you can jump back quickly.
 
-### 6.6 Strict mode and auto-approve toggles
+### 6.7 The **MCP** panel
+
+The MCP tab has three sections:
+
+1. **Installed servers** — one card per configured server. The card shows
+   status (● running / ○ stopped), tool count, transport (stdio / http), the
+   command or URL, the tool names, and any error from the last start attempt.
+   - **Start / Stop** — toggles the subprocess (or the HTTP client).
+   - **Restart** — stops and starts again with the same config.
+   - **Delete** — removes the entry from `data/mcp.json`, stops the process,
+     and unregisters its tools.
+   - **▲ Edit** — expands an inline form to rename, change the command, args,
+     URL, env vars, or HTTP headers, then **Save & restart**. The update path
+     is stop → delete → add, so a broken config can't wedge the running one.
+
+2. **Add an MCP server** — a full form with:
+   - **Name**, **Command**, **Args** for a local stdio server.
+   - **URL** for a remote Streamable-HTTP server. Leave the command blank
+     and only the URL is used; the transport is inferred.
+   - **Environment variables** — one `KEY=VALUE` per line. Values can contain
+     `=` — the split is on the first `=`.
+   - **HTTP headers** — one `Header: value` per line, for remote servers that
+     need `Authorization: Bearer …`.
+
+3. **Browse the official registry** — the live catalog from
+   `registry.modelcontextprotocol.io`. Each row shows the server's **title,
+   canonical name, description, runtime badge** (`npx` / `uvx` / `docker` /
+   `http`), its **categories**, and its **required environment variables**
+   (badged with `*`). Clicking a row **autofills** the Add form above:
+   - For npm/pypi/docker packages: command (`npx` / `uvx` / `docker`), args,
+     and env var names as `KEY=` so you know what to fill in.
+   - For remote entries: the URL, and the transport switches to HTTP.
+   - **↻ Refresh catalog** forces a re-fetch (it's cached for 1 hour).
+   - Search matches name, title, description, categories, and runtime.
+
+The registry endpoint never returns a 500 to the UI — a network failure
+returns `{servers: [], error: "..."}` so the panel shows a hint and the
+"Add an MCP server" form still works.
+
+### 6.8 Strict mode and auto-approve toggles
 
 - **strict** (on by default) — after a tool-using answer, a second model call
   checks every factual claim against the tool outputs. Unverified ones are
@@ -458,13 +541,14 @@ PC:
   speed, on for accuracy. See [§12](#12-reducing-hallucination-strict-mode).
 - **auto-approve** (off by default) — skips all Allow/Deny dialogs. **Only
   enable in a workspace you trust.** See [§11](#11-safety-model).
+- **bg-shell** (off by default) — detach every shell call. See §6.2.
 
 ---
 
 ## 7. The terminal, in detail
 
 The terminal chat is a REPL. Type a task, get a result. Type `/` commands to
-manage keys and models without leaving the session.
+manage keys, models, workspace, and shell behaviour without leaving the session.
 
 ### 7.1 Slash commands
 
@@ -489,11 +573,49 @@ manage keys and models without leaving the session.
 /refresh [key|pool|all]            re-fetch model lists
 /keymodel <key> <model>            set the model for ONE key
 /autodetect <key>                  guess the provider from key format
+/workspace [path]                  show or change the agent's workspace
+/bgauto on|off                     every run_shell call detaches in the background
+/bg <task>                         run the task in the background (agent job)
+/jobs                              list background agent + shell jobs
+/kill <id>                         stop one background job by id
 /reset                             clear chat history
 /exit                              quit
 ```
 
-### 7.2 Example session
+### 7.2 The `/workspace` commandTwo forms:
+
+```
+/workspace                          # prints the current workspace
+/workspace C:\projects\my-app       # absolute
+/workspace ../sibling               # relative to the current workspace
+/workspace "my folder with spaces"  # quoted
+```
+
+The guard is the same as the one at startup: a **filesystem root** (`/`,
+`C:\`) is refused because that would silently disable the outside-workspace
+approval prompt. `data/` and its parents are allowed; the credential files
+inside `data/` are always blocked by `agent/safety.py`. A successful change:
+
+- updates `cfg.workspace` for this process,
+- refreshes the system prompt on the **next turn** (the loop already does
+  this),
+- is reflected immediately in the web UI's workspace chip if that process is
+  also running (they share `data/`, but not the live `cfg`; you'd change it
+  again in the UI if you want them to match).
+
+### 7.3 The `/bgauto` command
+
+```
+/bgauto            # shows the current state
+/bgauto on         # every run_shell call without explicit background runs detached
+/bgauto off        # back to foreground streaming
+```
+
+Same effect as the **bg-shell** toggle in the header. Explicit
+`background=false` in a tool call still wins; explicit `background=true`
+always detaches. See §6.2 for why the default is off.
+
+### 7.4 Example session
 
 ```
 you> /add AIzaSyABC...your-gemini-key
@@ -502,19 +624,32 @@ added 'gemini-1' to pool 'gemini'. 47 models cached, using gemini-2.5-flash. /te
 you> /test gemini-1
 gemini-1 OK (gemini-2.5-flash): 'pong'
 
+you> /workspace C:\projects\my-site
+workspace -> C:\projects\my-site
+(the next turn will use this path; the web UI is updated too)
+
 you> Summarise the Python files in my project and write a summary.md
   → list_dir(path=".", depth=2)
   → search_files(pattern=".*", glob="*.py")
   → read_file(path="main.py")
   → read_file(path="utils.py")
   → write_file(path="summary.md", content="...")
-Wrote 1234 chars to /home/you/project/summary.md
+Wrote 1234 chars to C:\projects\my-site\summary.md
 Done. I read 4 Python files and wrote summary.md with a short overview of each.
 
+you> /bgauto on
+background shell executions = True
+
+you> Start the dev server and tell me the URL
+  → run_shell(command="npm run dev", background=true)      (auto-detach)
+  → tail_background(job_id="a3f1c8e2")
+Dev server is up at http://localhost:5173 — see the log in the Shell jobs panel.
+
 you> /exit
+(some background jobs are still running - use /kill N first if you want them gone)
 ```
 
-### 7.3 One-shot mode
+### 7.5 One-shot mode
 
 ```
 omni.exe run "In report.docx replace 'Q2' with 'Q3' and save as report_q3.docx"
@@ -524,7 +659,7 @@ Runs the task, prints the answer, exits. Useful in scripts, cron jobs, CI.
 Combine with `AGENT_AUTO_APPROVE=1` in `.env` for fully unattended runs —
 see the warning in [§11](#11-safety-model).
 
-### 7.4 Scheduled mode
+### 7.6 Scheduled mode
 
 ```
 omni.exe schedule -f workflows/daily_notes_cleanup.md --every 86400
@@ -535,7 +670,7 @@ For real scheduling, use your OS's task scheduler (Windows Task Scheduler,
 `cron`, `launchd`) and call `omni.exe run -f ...` — that's cleaner than
 keeping a long-lived process.
 
-### 7.5 Task files (workflows)
+### 7.7 Task files (workflows)
 
 Anything you'd type can live in a Markdown file. Two examples ship in
 `workflows/`:
@@ -629,6 +764,17 @@ all model lists** if a provider adds models. The pool's default model (top of
 the card) applies to any key without an override. **A refresh never silently
 replaces a model you chose** — the auto-pick only fires when a key has no model
 at all.
+
+### 8.7 Per-session vs per-process state
+
+- **strict** is per-process (`cfg.strict`): flipping it in the header affects
+  every chat that isn't already mid-answer.
+- **auto-approve** is per-session: each chat has its own toggle so a trusted
+  chat can auto-approve while another asks.
+- **bg-shell** is per-process (like `strict`): every `run_shell` from every
+  chat follows the same default. This is deliberate — it's a "mode" of the
+  shell tool, not a property of one conversation. Explicit `background=true`
+  or `background=false` in a call still overrides it.
 
 ---
 
@@ -746,6 +892,7 @@ Values already exported in your shell take precedence (the loader uses
 | `AGENT_ALLOW_OUTSIDE` | `1` | `1` = allow read/write anywhere on the PC (still asks for approval). |
 | `AGENT_AUTO_APPROVE` | `0` | `1` = skip all prompts. **Dangerous.** See §11. |
 | `AGENT_STRICT` | `1` | `1` = verify factual claims in answers (see §12). |
+| `AGENT_SHELL_BG` | `0` | `1` = every `run_shell` call detaches in the background by default, same as the header toggle. Requires the patch in §6.2. |
 | `AGENT_MAX_TURNS` | `60` | Max tool-call rounds per task. |
 | `AGENT_TEMPERATURE` | `0.2` | Model temperature. Lower = less creative, more factual. |
 | `AGENT_TIMEOUT` | `180` | Seconds per HTTP call to the LLM. |
@@ -754,6 +901,7 @@ Values already exported in your shell take precedence (the loader uses
 | `AGENT_UI_TOKEN` | *(random)* | Fixed token for the web UI link. Useful for bookmarks. |
 | `AGENT_BROWSER` | *(unset)* | `selenium` = use a headless Chrome for `web_fetch` / `web_search` (opt-in; see §9.3). |
 | `OMNI_NO_GUI` | *(unset)* | `1` = skip the launcher and go straight to the terminal. |
+| `OMNI_NO_REFRESH` | *(unset)* | `1` = don't ping `/models` on key add (useful in tests). |
 
 Keys live in `data/providers.json`, not in `.env`. Add them via the UI or the
 CLI. Treat the whole `data/` folder as a secret.
@@ -786,6 +934,11 @@ a real capability with real risks. Here's exactly how the safety layers work.
    when `AGENT_WORKSPACE` points at a filesystem root. The workspace picker
    applies the same rule. The credential files inside `data/` are refused by
    `agent/safety.py` even when `data/` is the workspace.
+6. **MCP servers** — never started implicitly. Every server must be added
+   explicitly from the UI (or `data/mcp.json`). The registry browser only
+   *prefills a form*; nothing connects until you click **Add & connect**.
+   Env vars and headers you enter are stored in `data/mcp.json`, so treat
+   that file as a secret too.
 
 ### 11.2 Auto-approve — read this before enabling
 
@@ -803,14 +956,30 @@ LLM acting autonomously as your user.
 A middle ground: leave auto-approve off, but run `omni.exe ui` and click
 **Allow** on the prompts. It's one click per dangerous action.
 
-### 11.3 `--host 0.0.0.0`
+### 11.3 Background shells and Stop
+
+`bg-shell` (the toggle) and `run_shell(background=true)` (explicit) **do not
+run shell commands as approvals-free**. They still go through the same
+approval flow when auto-approve is off — you'll see the Allow/Deny dialog
+before the process starts. What changes is that once approved:
+
+- The command returns immediately with a job id.
+- The process keeps running after **Stop** and after the chat is closed.
+- Its output goes to `data/jobs/<id>.log`.
+
+Use `tail_background` / `stop_background` (or the Shell jobs panel) to manage
+them. If you genuinely want no prompts *and* background execution, set both
+toggles — that's the "unattended dev server" mode, and it belongs in a
+sandbox.
+
+### 11.4 `--host 0.0.0.0`
 
 By default the UI listens only on `127.0.0.1`. Setting `--host 0.0.0.0` makes
 it reachable from your LAN. **Anyone with the link can run commands as you.**
 Only do this behind a VPN, or on a network you fully trust, and preferably
 with `AGENT_UI_TOKEN` set to a long random string.
 
-### 11.4 Where keys are stored
+### 11.5 Where keys are stored
 
 `data/providers.json`, plain text, `chmod 600` on Unix (`data/` itself is
 `chmod 700`). Back it up carefully or not at all. The `.gitignore` excludes it.
@@ -861,11 +1030,133 @@ average). Turn it off in the header toggle if you're optimizing cost or speed.
 
 ---
 
-## 13. Extending Omni — adding your own tools
+## 13. MCP servers
 
-Adding a tool takes two steps.
+Omni speaks the **Model Context Protocol** so the model can gain tools
+without you writing Python. Any server that implements MCP over stdio or
+Streamable HTTP works — the official Node/Python servers, a wrapper you
+wrote yourself, a cloud endpoint, anything.
 
-### 13.1 Define it
+### 13.1 How it works
+
+1. You add a server from the **MCP** tab (form or registry autofill), or the
+   server is already in `data/mcp.json` when Omni starts.
+2. Omni spawns its command (`npx`, `uvx`, `docker`, or a direct path) with
+   `env` you gave it, or POSTs to its URL for remote servers.
+3. Omni lists the server's tools and registers each as
+   `mcp__<server>__<tool>` (so they never collide with built-ins).
+4. From then on the model can call those tools like any other. Approval
+   prompts still apply — an MCP tool that runs a shell command goes through
+   `run_shell`'s confirm.
+
+### 13.2 The file format
+
+`data/mcp.json`:
+
+```json
+{
+  "servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/you"],
+      "enabled": true
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}
+    },
+    "remote-thing": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": {"Authorization": "Bearer eyJ..."}
+    }
+  }
+}
+```
+
+- `enabled: false` skips a server without deleting it (the UI's **Stop**
+  button is different — it stops the process but keeps the entry).
+- `env` values support `${VAR}` expansion from the current process's
+  environment, so you can keep secrets in `.env`.
+- `cwd` (optional) runs a stdio server from a specific directory.
+
+### 13.3 Adding from the registry
+
+The registry browser lists every published MCP server with its **title**,
+**description**, **runtime**, **required env vars** (badged with `*`), and
+**categories** (filesystem, database, browser, productivity, …). Clicking a
+row autofills the Add form:
+
+- npm/pypi/docker servers → `command`, `args`, and env var names seeded as
+  `KEY=` so you know what to fill in.
+- Remote-only servers → the URL, and the transport switches to HTTP.
+
+Review the prefill, fill in required env vars, click **Add & connect**. If
+the server fails to start, the error is shown on its card — click **▲ Edit**
+to fix and retry.
+
+### 13.4 Editing and deleting
+
+Every installed server has an **▲ Edit** button that opens an inline form
+for **name, command, args, URL, env vars, headers**. **Save & restart**
+applies the changes atomically (stop old → write config → start new). If the
+new config is broken, the old process is already stopped — click **Start** to
+retry after fixing, or **Delete** to remove it entirely. **Delete** removes
+the entry from `data/mcp.json` and stops the process.
+
+### 13.5 Reliability notes
+
+- **UTF-8 in subprocess pipes** is handled with `errors="replace"` in the
+  reader thread. Previous versions crashed the reader on a single invalid
+  byte (some `youtube` / `ffmpeg` MCP servers emit raw bytes on stdout) and
+  then every call hung. If a server writes log lines to stdout that aren't
+  JSON, they're appended to its `stderr_tail` instead of being dropped.
+- **Per-server startup lock** — restarting the same server twice in a row
+  can't race.
+- **Timeouts** — `initialize` gets 90 s (npx servers can be slow the first
+  time), tool calls get 180 s. If a tool call hangs, the call returns an
+  error and the server is left as-is; press **Restart** to reset it.
+- **Registry never blocks the UI** — the endpoint returns
+  `{servers: [], error: "..."}` on network failure, so the Add form keeps
+  working.
+
+### 13.6 Writing your own
+
+Any executable that speaks MCP over stdio works. A minimal Python server:
+
+```python
+import json, sys
+def send(m): sys.stdout.write(json.dumps(m) + "\n"); sys.stdout.flush()
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("method") == "initialize":
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "protocolVersion": "2024-11-05", "capabilities": {},
+            "serverInfo": {"name": "mine", "version": "1"}}})
+    elif msg.get("method") == "tools/list":
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": [{
+            "name": "echo",
+            "description": "Echo text back.",
+            "inputSchema": {"type": "object",
+                            "properties": {"text": {"type": "string"}},
+                            "required": ["text"]}}]}})
+    elif msg.get("method") == "tools/call":
+        text = msg["params"]["arguments"]["text"]
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "content": [{"type": "text", "text": text}]}})
+```
+
+Save as `echo_server.py`, add to `data/mcp.json` with
+`"command": "python", "args": ["echo_server.py"]`, restart Omni. The `echo`
+tool now appears to the model as `mcp__mine__echo`.
+
+---
+
+## 14. Extending Omni — adding your own tools
+
+Adding a built-in tool takes two steps.
+
+### 14.1 Define it
 
 Create or edit a file under `agent/tools/` (see `files.py` for examples):
 
@@ -887,7 +1178,7 @@ def word_count(cfg, path):
 The decorator registers the tool. The function receives `cfg` plus the JSON
 arguments the model provides. Return a string.
 
-### 13.2 Import it
+### 14.2 Import it
 
 Add your module to `agent/tools/__init__.py`:
 
@@ -897,7 +1188,7 @@ from . import files, shell, web, memory, office, your_module  # noqa: F401
 
 That's it. The model sees the new tool in the next request automatically.
 
-### 13.3 Good tool design
+### 14.3 Good tool design
 
 - **Name it clearly.** `word_count` not `wc2`. The model picks tools by name.
 - **Describe it in one sentence.** What it does, what it returns, when to use it.
@@ -909,7 +1200,7 @@ That's it. The model sees the new tool in the next request automatically.
 
 ---
 
-## 14. Running the tests
+## 15. Running the tests
 
 Three offline test suites ship with Omni. They spin up mock LLM servers and
 never touch your real `data/` folder or make real API calls.
@@ -917,7 +1208,7 @@ never touch your real `data/` folder or make real API calls.
 ```
 python tests/test_failover.py     # key rotation, quotas, model fallback, waiting, persistence
 python tests/test_agent.py        # tool loop, workspace guard, approvals
-python tests/test_web.py          # web server: auth, chat + approvals, key/model endpoints, workspace guard
+python tests/test_web.py          # web server: auth, chat + approvals, key/model endpoints, workspace guard, MCP CRUD
 ```
 
 Or all at once:
@@ -936,7 +1227,7 @@ them if you want to understand edge cases.
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 ### "All keys/providers failed"
 
@@ -959,12 +1250,12 @@ Fixes:
 
 ### "workspace is a filesystem root"
 
-Omni refuses to start when `AGENT_WORKSPACE` (or the workspace picker) points
-at `/` or `C:\`, because that would silently disable the outside-workspace
-approval guard: every path would become "inside". Set `AGENT_WORKSPACE` to a
-normal folder (your home, or a project dir) and restart. The web UI's
-workspace picker applies the same rule. `data/` and its parents are allowed;
-the credential files inside `data/` are always blocked by the file tools.
+Omni refuses to start when `AGENT_WORKSPACE` (or `/workspace`, or the
+workspace picker) points at `/` or `C:\`, because that would silently disable
+the outside-workspace approval guard: every path would become "inside". Set
+`AGENT_WORKSPACE` to a normal folder (your home, or a project dir) and
+restart. `data/` and its parents are allowed; the credential files inside
+`data/` are always blocked by the file tools.
 
 ### "Model not available / 404"
 
@@ -1009,14 +1300,53 @@ link across restarts, set `AGENT_UI_TOKEN` in `.env`.
 ### Agent can't find a file
 
 Path resolution: relative paths are anchored at the workspace (default:
-your home folder). If you meant a file elsewhere, use an absolute path or
-click the **workspace chip** in the UI and change the root.
+your home folder). If you meant a file elsewhere, use an absolute path, run
+`/workspace <path>` in the terminal, or click the **workspace chip** in the
+UI and change the root.
 
 ### Every answer triggers a ⚠ strict warning
 
 The verifier is conservative. Two options:
 1. Turn **strict** off in the header for that session.
 2. Use a stronger model — small models often "verify" their own mistakes.
+
+### The sidebar is too small to see all my chats
+
+The **Recent** section is its own scroll area — mousewheel over it. If you
+have dozens of chats, type in the **Search chats…** box. On narrow windows,
+tap ☰ (top-left) to open the sidebar as an overlay.
+
+### bg-shell is on and now every command returns "background job …"
+
+That's the point. Either:
+- Turn it off (header toggle or `/bgauto off`), or
+- Ask the model for output with **tail_background(job_id="…")** — every
+  background job returns its id.
+
+Some short commands are still fine in the background — the model can call
+`tail_background` immediately and read the finished log.
+
+### An MCP server shows "not loaded" or stays grey
+
+Open the MCP tab, look at its card. The error line has the real exception
+(e.g. `command not found: npx`, `HTTP 401: Unauthorized`). Common causes:
+
+- **`npx` / `uvx` / `docker` not on PATH** — install Node / uv / Docker.
+- **Wrong env var name** — the registry badges required vars with `*`; check
+  the exact spelling against the server's README.
+- **Remote server needs auth** — add `Authorization: Bearer …` in the
+  headers box.
+- **`npx` needs the package to exist** — check the identifier in the args.
+
+Click **Restart** after fixing. If it still fails, click **Delete**, add it
+again from the registry (autofill gets the args right).
+
+### An MCP tool hangs or times out
+
+Timeouts are 90 s for `initialize` and 180 s for tool calls. If a call hangs
+past that, Omni returns an error and leaves the server process running. Click
+**Restart** on the card to reset it. If it hangs on every call, the server
+itself is broken — check its stderr (the card shows the tail).
 
 ### `omni.exe` is slow to start (single-file build)
 
@@ -1034,7 +1364,7 @@ to rebuild with `--with-browser` if you need JS rendering.
 
 ---
 
-## 16. FAQ
+## 17. FAQ
 
 **Do I need Python?**
 Only if you're building the exe or running from source. End users of the exe
@@ -1047,7 +1377,9 @@ need internet.
 **Where are my files sent?**
 Only to the LLM provider you configured, and only when the model calls a tool
 whose output it needs to see (`read_file` returns file contents, etc.). Nothing
-goes to Omni's authors. Your keys, files, and history stay on your PC.
+goes to Omni's authors. If you add MCP servers, their processes may make
+network calls of their own — read their docs. Your keys, files, and history
+stay on your PC.
 
 **Can I use it for work / proprietary code?**
 Yes, but read the provider's privacy policy. Free tiers often train on your
@@ -1078,7 +1410,12 @@ Yes — they'll use different ports (`8765`, `8766`, ...). Each has its own
 `data/` if you keep them in separate folders.
 
 **Can I run it on a server?**
-Yes, but read §11.3 first. Use `--host 0.0.0.0` only behind a VPN.
+Yes, but read §11.4 first. Use `--host 0.0.0.0` only behind a VPN.
+
+**Can I make every shell call run in the background?**
+Yes — click **bg-shell** in the header (whole session), run `/bgauto on` in
+the terminal, or add `AGENT_SHELL_BG=1` to `.env` for a persistent default
+after the small patch in §6.2. See §6.2 for why it's off by default.
 
 **How do I uninstall?**
 Delete the folder. Nothing is installed system-wide except, optionally,
@@ -1086,58 +1423,68 @@ Nuitka's C toolchain if you built it.
 
 ---
 
-## 17. Design notes & limitations (read this)
+## 18. Design notes & limitations (read this)
 
 I want you to have accurate expectations.
 
-### 17.1 What "self-contained" means here
+### 18.1 What "self-contained" means here
 
 The exe has **no Python dependency**, but it still talks to remote LLM
 services. If your internet is down or your provider is down, Omni can't
 think. That's true of every LLM tool that isn't running a local model.
 
-### 17.2 Hallucination is not solvable
+### 18.2 Hallucination is not solvable
 
 Strict mode **reduces** it and **surfaces** it. It cannot eliminate it. If
 your workflow is high-stakes (legal, medical, financial), verify every
 answer independently. Use strict mode, use a strong model, keep temperature
 low, and treat every factual claim as a draft until confirmed.
 
-### 17.3 Shell access is real
+### 18.3 Shell access is real
 
 An LLM with shell on your PC can do anything you can. The blocklist catches
 obvious catastrophes; it does not catch subtle ones (`mv ~/Documents /tmp/x`
-is not on the blocklist). Approval prompts are your real safety net. Auto-
-approve is for sandboxes.
+is not on the blocklist). Approval prompts are your real safety net.
+`bg-shell` does **not** bypass those prompts — it changes *where* output goes,
+not whether the command is allowed.
 
-### 17.4 The build is unsigned
+### 18.4 The build is unsigned
 
 Nuitka/PyInstaller exes are unsigned by default and trigger SmartScreen.
 Signing costs money. For personal/team use, explain the warning to users.
 
-### 17.5 Onefile startup is slow
+### 18.5 Onefile startup is slow
 
 Packing 60 MB into one file means unpacking 60 MB to a temp folder every
 launch. Folder builds start in under a second. Prefer the folder build unless
 you specifically need a single file.
 
-### 17.6 Free-tier privacy
+### 18.6 Free-tier privacy
 
 Free Gemini / OpenRouter prompts can be used for training. For anything
 confidential: paid tier, or a local model.
 
-### 17.7 Antivirus false positives
+### 18.7 Antivirus false positives
 
 Unsigned Nuitka exes sometimes trip heuristics. If it happens, either code-
 sign, or add an exclusion. This is a known issue with any Python-to-exe
 tool.
 
-### 17.8 The core is small on purpose
+### 18.8 The core is small on purpose
 
-Roughly 4,500 lines of Python across the entire agent (the earlier "3,500"
-figure predates the health-scoring, MCP and streaming work). No framework, no
-abstraction layer, no magic. You can read it in an afternoon and change
-anything. That's a feature.
+Roughly 5,000 lines of Python across the entire agent (the earlier "3,500"
+figure predates the health-scoring, MCP, streaming, and web-UI work). No
+framework, no abstraction layer, no magic. You can read it in an afternoon
+and change anything. That's a feature.
+
+### 18.9 What the MCP integration does *not* do
+
+- It doesn't sandbox MCP servers. An MCP server is a process you asked Omni
+  to run — it has the same permissions Omni's own shell does.
+- It doesn't proxy the server's network. If a server you add makes HTTP calls,
+  they go out on your normal connection.
+- It doesn't cache tool *results* — every tool call is a fresh round trip to
+  the server. Some servers are slow. That's their problem.
 
 ---
 

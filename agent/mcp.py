@@ -1,5 +1,5 @@
 # agent/mcp.py
-"""Minimal MCP (Model Context Protocol) client over stdio.
+"""Minimal MCP (Model Context Protocol) client over stdio + Streamable HTTP.
 
 Loads `data/mcp.json`:
 
@@ -14,13 +14,18 @@ Loads `data/mcp.json`:
           "command": "npx",
           "args": ["-y", "@modelcontextprotocol/server-github"],
           "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}
-        }
+        },
+        "remote": {"url": "https://mcp.example.com/mcp"}
       }
     }
 
 Each server's tools are exposed to the agent as
     mcp__<server>__<tool>
 so names never collide with built-ins.
+
+Everything that reads a subprocess pipe or an HTTP body decodes UTF-8
+with `errors="replace"` — this is what makes `youtube` / `ffmpeg` style
+servers stop crashing the reader with a UnicodeDecodeError mid-stream.
 """
 import json
 import os
@@ -32,11 +37,22 @@ import threading
 import urllib.error
 import urllib.request
 
-MCP_PROTOCOL_VERSION = "2025-06-18"   # header sent on every POST
+MCP_PROTOCOL_VERSION = "2025-06-18"
+# Generous but bounded: some npx servers take 30-60s the first time.
+INIT_TIMEOUT = 90
+STDERR_MAX_LINES = 2000
 
 
 class MCPError(Exception):
     pass
+
+
+def _safe_decode(b) -> str:
+    if isinstance(b, str):
+        return b
+    if not b:
+        return ""
+    return b.decode("utf-8", errors="replace")
 
 
 class MCPServer:
@@ -47,57 +63,87 @@ class MCPServer:
         self.url = url
         self.http_headers = dict(headers or {})
         self.session_id = None
-        self.cmd = ([command] + (args or [])) if command else []
+        self.cmd = ([command] + list(args or [])) if command else []
         self.env = {**os.environ, **(env or {})}
         self.cwd = cwd
         self.proc = None
         self.seq = 0
         self.pending = {}
         self.lock = threading.RLock()
+        self._start_lock = threading.Lock()
         self.tools = []
         self.last_error = None
         self.ready = False
+        # Keep a rolling stderr tail so the UI can show *why* a server
+        # failed without digging in a terminal.
+        self.stderr_tail = []
+        self._stderr_lock = threading.Lock()
 
     # -- lifecycle
     def start(self):
-        if self.transport == "http":
-            self._start_http()
-        else:
-            self._start_stdio()
-        self._initialize()
-        self.ready = True
+        with self._start_lock:
+            if self.ready and self.proc and self.proc.poll() is None:
+                return
+            if self.transport == "http":
+                self._start_http()
+            else:
+                self._start_stdio()
+            self._initialize()
+            self.ready = True
+            self.last_error = None
 
     def _start_stdio(self):
-        self.proc = subprocess.Popen(
-            self.cmd,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, env=self.env, cwd=self.cwd,
-        )
+        if not self.cmd:
+            raise MCPError(f"MCP {self.name}: empty command")
+        try:
+            self.proc = subprocess.Popen(
+                self.cmd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,  # bytes; we decode ourselves with errors=replace
+                bufsize=0, env=self.env, cwd=self.cwd,
+            )
+        except FileNotFoundError as e:
+            raise MCPError(
+                f"MCP {self.name}: command not found: {self.cmd[0]!r}. "
+                f"Is it installed and on PATH? ({e})")
+        except Exception as e:
+            raise MCPError(f"MCP {self.name}: could not start: {e}")
         threading.Thread(target=self._reader, daemon=True,
                          name=f"mcp-{self.name}-out").start()
         threading.Thread(target=self._stderr, daemon=True,
                          name=f"mcp-{self.name}-err").start()
 
     def _start_http(self):
-        """No persistent connection for Streamable HTTP: every JSON-RPC
-        message is a fresh POST. We only verify the endpoint answers a
-        tools/list during _initialize()."""
         if not self.url:
             raise MCPError(f"MCP {self.name}: http transport requires a url")
 
+    def _push_stderr(self, line: str):
+        with self._stderr_lock:
+            self.stderr_tail.append(line)
+            if len(self.stderr_tail) > STDERR_MAX_LINES:
+                del self.stderr_tail[:len(self.stderr_tail) - STDERR_MAX_LINES]
+
     def _stderr(self):
-        for line in self.proc.stderr:
-            sys.stderr.write(f"[mcp:{self.name}] {line}")
+        try:
+            for line in self.proc.stderr:
+                text = _safe_decode(line)
+                self._push_stderr(text)
+                sys.stderr.write(f"[mcp:{self.name}] {text}")
+        except Exception:
+            pass
 
     def _reader(self):
         try:
             for line in self.proc.stdout:
-                line = line.strip()
-                if not line:
+                text = _safe_decode(line).strip()
+                if not text:
                     continue
                 try:
-                    msg = json.loads(line)
+                    msg = json.loads(text)
                 except ValueError:
+                    # Some servers print banners / logs on stdout. Keep going.
+                    self._push_stderr(text + "\n")
                     continue
                 rid = msg.get("id")
                 if rid is not None and rid in self.pending:
@@ -108,6 +154,8 @@ class MCPServer:
     def _rpc(self, method, params=None, timeout=60):
         if self.transport == "http":
             return self._rpc_http(method, params, timeout)
+        if not self.proc or self.proc.poll() is not None:
+            raise MCPError(f"MCP {self.name}: server is not running")
         with self.lock:
             self.seq += 1
             rid = self.seq
@@ -115,7 +163,7 @@ class MCPServer:
             self.pending[rid] = q
             payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
             try:
-                self.proc.stdin.write(json.dumps(payload) + "\n")
+                self.proc.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
                 self.proc.stdin.flush()
             except Exception as e:
                 self.pending.pop(rid, None)
@@ -129,7 +177,6 @@ class MCPServer:
         return resp.get("result") or {}
 
     def _rpc_http(self, method, params=None, timeout=60):
-        """One JSON-RPC request = one HTTP POST to the MCP endpoint."""
         with self.lock:
             self.seq += 1
             rid = self.seq
@@ -155,24 +202,22 @@ class MCPServer:
                 if sid:
                     self.session_id = sid
                 ctype = r.headers.get("Content-Type", "")
-                body = r.read().decode("utf-8", "replace")
+                body = r.read()
         except urllib.error.HTTPError as e:
-            txt = ""
             try:
-                txt = e.read().decode("utf-8", "replace")
+                txt = _safe_decode(e.read())
             except Exception:
-                pass
+                txt = ""
             raise MCPError(f"MCP {self.name}: HTTP {e.code}: {txt[:300]}")
         except Exception as e:
             raise MCPError(f"MCP {self.name}: request failed: {e}")
-        data = self._parse_http_body(body, ctype, rid)
+        data = self._parse_http_body(_safe_decode(body), ctype, rid)
         if "error" in data:
             raise MCPError(f"MCP {self.name}: {data['error']}")
         return data.get("result") or {}
 
     @staticmethod
     def _parse_http_body(body, ctype, rid):
-        """The server may reply with a single JSON object or an SSE stream."""
         if "text/event-stream" in ctype:
             for line in body.splitlines():
                 line = line.strip()
@@ -217,7 +262,7 @@ class MCPServer:
                 pass
             return
         try:
-            self.proc.stdin.write(json.dumps(payload) + "\n")
+            self.proc.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
             self.proc.stdin.flush()
         except Exception:
             pass
@@ -227,9 +272,9 @@ class MCPServer:
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {"name": "omni", "version": "2.0"},
-        }, timeout=30)
+        }, timeout=INIT_TIMEOUT)
         self._notify("notifications/initialized", {})
-        result = self._rpc("tools/list", {}, timeout=30)
+        result = self._rpc("tools/list", {}, timeout=INIT_TIMEOUT)
         self.tools = result.get("tools") or []
 
     def call(self, tool_name, arguments, timeout=180):
@@ -238,15 +283,15 @@ class MCPServer:
                            timeout=timeout)
         parts = []
         for c in result.get("content") or []:
-            t = c.get("type")
+            t = c.get("type") if isinstance(c, dict) else None
             if t == "text":
                 parts.append(c.get("text", ""))
             elif t == "resource":
-                parts.append(json.dumps(c.get("resource", c)))
+                parts.append(json.dumps(c.get("resource", c), ensure_ascii=False))
             elif t == "image":
                 parts.append(f"[image: {c.get('mimeType', 'unknown')}]")
             else:
-                parts.append(json.dumps(c))
+                parts.append(json.dumps(c, ensure_ascii=False))
         if result.get("isError"):
             return "ERROR: " + "\n".join(parts)
         return "\n".join(parts) if parts else "(no output)"
@@ -285,7 +330,6 @@ def _expand_env(value):
 
 
 def sanitize_name(name: str) -> str:
-    """MCP tool names can contain '/' and ':' - sanitize for OpenAI tool-name rules."""
     return re.sub(r"[^A-Za-z0-9_\-]", "_", name)[:64]
 
 
@@ -346,7 +390,6 @@ class MCPRegistry:
             s.stop()
 
     def register_tools(self):
-        """Register every MCP tool into the global registry as mcp__<server>__<tool>."""
         from .tools.registry import register_external
         count = 0
         for sname, srv in self.servers.items():

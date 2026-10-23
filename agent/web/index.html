@@ -6,9 +6,6 @@
 <title>Omni</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
 <style>
-/* ============================================================
-   Design tokens
-   ============================================================ */
 :root{
   --bg:#f7f8fa; --bg-2:#eef0f4; --panel:#ffffff; --panel-2:#fbfcfe;
   --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --muted-2:#94a3b8;
@@ -42,10 +39,6 @@
   --ok-bg:color-mix(in srgb,#34d399 14%,transparent);
   --sb-thumb:#334155; --sb-thumb-hover:#475569;
 }}
-
-/* ============================================================
-   Base + scrollbars
-   ============================================================ */
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{
@@ -53,21 +46,13 @@ body{
   font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
-
-/* Thin, themed scrollbars everywhere (Chromium/Safari) */
 *{scrollbar-width:thin;scrollbar-color:var(--sb-thumb) var(--sb-track)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:var(--sb-track)}
-::-webkit-scrollbar-thumb{
-  background:var(--sb-thumb);border-radius:10px;
-  border:2px solid transparent;background-clip:padding-box;
-}
+::-webkit-scrollbar-thumb{background:var(--sb-thumb);border-radius:10px;border:2px solid transparent;background-clip:padding-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--sb-thumb-hover);background-clip:padding-box;border:2px solid transparent}
 ::-webkit-scrollbar-corner{background:transparent}
 
-/* ============================================================
-   Form controls
-   ============================================================ */
 button,input,select,textarea{font:inherit;color:inherit}
 button{
   cursor:pointer;border:1px solid var(--line);background:var(--panel);
@@ -80,10 +65,7 @@ button:hover:not(:disabled){border-color:var(--line-2);background:var(--panel-2)
 button:active:not(:disabled){transform:translateY(.5px)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-button.primary{
-  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
-  font-weight:600;box-shadow:0 1px 0 rgba(0,0,0,.05) inset;
-}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 button.primary:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent-2)}
 button.danger{color:var(--bad)}
 button.danger:hover:not(:disabled){background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
@@ -95,88 +77,70 @@ input,select,textarea{
   padding:7px 10px;min-width:0;transition:border-color .15s,box-shadow .15s;
 }
 input:hover,select:hover,textarea:hover{border-color:var(--line-2)}
-input:focus,select:focus,textarea:focus{
-  outline:none;border-color:var(--accent);
-  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent);
-}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent)}
 input[type="checkbox"]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 
-/* ============================================================
-   Layout
-   ============================================================ */
 #app{display:grid;grid-template-columns:260px minmax(0,1fr) 0;height:100%;transition:grid-template-columns .25s ease}
 #app.leftcollapsed{grid-template-columns:0 minmax(0,1fr) 0}
 #app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 440px}
 #app.rightopen{grid-template-columns:260px minmax(0,1fr) 440px}
 
-/* ============================================================
-   Left sidebar
-   ============================================================ */
+/* ----------------------------------------------------------------
+   Left sidebar — the whole column is a flex parent, and the two
+   scrollable sections (#shelljobs + #sessions) each get their own
+   min-height:0 + overflow:auto so one growing never hides the other.
+   ---------------------------------------------------------------- */
 aside{
   background:var(--panel);border-right:1px solid var(--line);
   display:flex;flex-direction:column;min-height:0;overflow:hidden;
   position:relative;z-index:6;
 }
 #right{border-right:0;border-left:1px solid var(--line)}
-#left-toggle{
-  position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;
-  background:none;opacity:.4;cursor:pointer;transition:opacity .15s;
-}
+#left-toggle{position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;background:none;opacity:.4;cursor:pointer;transition:opacity .15s}
 #left-toggle:hover{opacity:1}
 #expand-left{position:fixed;top:14px;left:10px;z-index:5;display:none}
 #app.leftcollapsed #expand-left{display:block}
 #app.leftcollapsed header{padding-left:56px}
 #expand-left:hover{background:var(--bg-2)}
 
-.brand{
-  display:flex;align-items:center;gap:10px;padding:16px 36px 10px 16px;
-  font-weight:700;font-size:16px;letter-spacing:-.01em;
-}
-.brand i{
-  width:24px;height:24px;border-radius:8px;background:var(--accent);
-  display:inline-block;position:relative;
-  box-shadow:0 2px 8px -2px color-mix(in srgb,var(--accent) 60%,transparent);
-}
+.brand{display:flex;align-items:center;gap:10px;padding:16px 36px 10px 16px;font-weight:700;font-size:16px;letter-spacing:-.01em;flex:none}
+.brand i{width:24px;height:24px;border-radius:8px;background:var(--accent);display:inline-block;position:relative}
 .brand i:after{content:"";position:absolute;inset:6px;border:2.5px solid var(--accent-ink);border-radius:50%}
 
-.side-section{padding:0 12px 10px}
-#newChat{
-  width:100%;justify-content:flex-start;padding:9px 12px;font-weight:600;
-}
+.side-section{padding:0 12px 10px;flex:none}
+#newChat{width:100%;justify-content:flex-start;padding:9px 12px;font-weight:600}
 #newChat::before{content:"+";font-size:16px;line-height:1;margin-right:2px}
-
 #sessSearch{width:100%;font-size:12.5px;padding:6px 9px;background:var(--bg)}
 
-#sessions{overflow:auto;padding:4px 6px 12px;flex:1}
+/* Sections that scroll independently */
 .side-label{
   font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;
-  font-weight:600;padding:10px 12px 4px;
+  font-weight:600;padding:10px 12px 4px;flex:none;
 }
+.scroll-sec{
+  min-height:40px;overflow-y:auto;overflow-x:hidden;
+  padding:0 6px 8px;
+  /* keep the scrollbar thin inside narrow sidebar */
+  scrollbar-gutter:stable;
+}
+.scroll-sec.shells{flex:0 1 auto;max-height:28%}
+.scroll-sec.sessions{flex:1 1 auto;min-height:0}
+
 .sess{
   display:flex;align-items:center;gap:6px;border-radius:var(--radius-sm);
   padding:7px 10px;cursor:pointer;color:var(--ink-2);
-  transition:background .12s,color .12s;
-  position:relative;
+  transition:background .12s,color .12s;position:relative;
 }
 .sess:hover{background:var(--bg)}
 .sess.on{background:var(--accent-soft);color:var(--ink);font-weight:500}
-.sess.on::before{
-  content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;
-  border-radius:0 3px 3px 0;background:var(--accent);
-}
+.sess.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
 .sess .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sess .t{font-size:11px;color:var(--muted-2);margin-left:auto;font-variant-numeric:tabular-nums}
-.sess button{
-  opacity:0;padding:2px 5px;border:0;background:none;color:var(--muted);
-  border-radius:4px;transition:opacity .15s,background .15s;
-}
+.sess button{opacity:0;padding:2px 5px;border:0;background:none;color:var(--muted);border-radius:4px;transition:opacity .15s,background .15s}
 .sess:hover button,.sess:focus-within button{opacity:1}
 .sess button:hover{background:var(--bad-bg);color:var(--bad)}
 .sess button[aria-label="Rename chat"]:hover{background:var(--accent-soft);color:var(--accent)}
 
-/* ============================================================
-   Main column
-   ============================================================ */
 main{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
 
 header{
@@ -193,15 +157,11 @@ header .sp{flex:1}
   cursor:pointer;transition:border-color .15s,color .15s,background .15s;
   display:inline-flex;align-items:center;gap:6px;
 }
-.chip::before{
-  content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
-  opacity:.7;flex:none;
-}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:.7;flex:none}
 #routeChip::before{background:var(--ok)}
 .chip:hover{border-color:var(--accent);color:var(--ink);background:var(--panel)}
 .chip b{color:var(--ink);font-weight:600}
 
-/* Toggle group for strict / auto-approve */
 .toggle-group{
   display:inline-flex;align-items:center;border:1px solid var(--line);
   border-radius:999px;background:var(--bg);padding:2px;gap:0;
@@ -213,19 +173,13 @@ label.tog{
 }
 label.tog:hover{color:var(--ink-2)}
 label.tog.on.strict{background:var(--warn-bg);color:var(--warn);font-weight:600}
-label.tog.on:not(.strict){background:var(--bad-bg);color:var(--bad);font-weight:600}
+label.tog.on.auto{background:var(--bad-bg);color:var(--bad);font-weight:600}
+label.tog.on.bg{background:var(--ok-bg);color:var(--ok);font-weight:600}
 label.tog input{display:none}
 
-#autoBanner{
-  display:none;padding:8px 16px;background:var(--bad-bg);color:var(--bad);
-  border-bottom:1px solid color-mix(in srgb,var(--bad) 30%,transparent);
-  font-size:12.5px;font-weight:600;text-align:center;letter-spacing:.01em;
-}
+#autoBanner{display:none;padding:8px 16px;background:var(--bad-bg);color:var(--bad);border-bottom:1px solid color-mix(in srgb,var(--bad) 30%,transparent);font-size:12.5px;font-weight:600;text-align:center}
 #autoBanner.on{display:block}
 
-/* ============================================================
-   Chat log
-   ============================================================ */
 #log{flex:1;overflow:auto;padding:20px 0 12px;scroll-behavior:smooth}
 .col{max-width:880px;margin:0 auto;padding:0 24px}
 
@@ -234,391 +188,184 @@ label.tog input{display:none}
 .msg.user{justify-content:flex-end;flex-direction:column;align-items:flex-end}
 .msg.asst{flex-direction:column;align-items:flex-start}
 
-.bubble{
-  padding:10px 14px;border-radius:14px;max-width:88%;
-  white-space:pre-wrap;word-wrap:break-word;line-height:1.6;
-}
-.user .bubble{
-  background:var(--user);border-bottom-right-radius:4px;
-  border:1px solid color-mix(in srgb,var(--accent) 15%,transparent);
-}
-.asst .bubble{
-  background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;
-  white-space:normal;max-width:100%;box-shadow:var(--shadow-sm);
-}
+.bubble{padding:10px 14px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word;line-height:1.6}
+.user .bubble{background:var(--user);border-bottom-right-radius:4px;border:1px solid color-mix(in srgb,var(--accent) 15%,transparent)}
+.asst .bubble{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;white-space:normal;max-width:100%;box-shadow:var(--shadow-sm)}
 .asst.mid .bubble{box-shadow:none;color:var(--muted);background:transparent;border-style:dashed}
-
 .bubble p{margin:.5em 0} .bubble p:first-child{margin-top:0} .bubble p:last-child{margin-bottom:0}
 .bubble ul,.bubble ol{margin:.5em 0;padding-left:1.5em}
 .bubble li{margin:.2em 0}
 .bubble h1,.bubble h2,.bubble h3{margin:.7em 0 .3em;font-size:1.05em;letter-spacing:-.01em}
-.bubble code{
-  background:var(--tool);padding:1px 6px;border-radius:5px;
-  font:12.5px ui-monospace,Menlo,Consolas,monospace;
-}
-.bubble pre{
-  background:var(--code);color:var(--code-ink);padding:12px 14px;
-  border-radius:var(--radius);overflow:auto;margin:.6em 0;
-  font-size:12.5px;line-height:1.55;
-}
+.bubble code{background:var(--tool);padding:1px 6px;border-radius:5px;font:12.5px ui-monospace,Menlo,Consolas,monospace}
+.bubble pre{background:var(--code);color:var(--code-ink);padding:12px 14px;border-radius:var(--radius);overflow:auto;margin:.6em 0;font-size:12.5px;line-height:1.55}
 .bubble pre code{background:none;padding:0;color:inherit;font-size:inherit}
 
-/* ============================================================
-   Tool cards
-   ============================================================ */
-.tool{
-  margin:6px 0;background:var(--tool);border-radius:var(--radius);
-  border:1px solid var(--line);border-left:3px solid var(--muted-2);
-  font-size:12.5px;transition:border-left-color .15s;
-}
+.tool{margin:6px 0;background:var(--tool);border-radius:var(--radius);border:1px solid var(--line);border-left:3px solid var(--muted-2);font-size:12.5px;transition:border-left-color .15s}
 .tool[data-status="ok"]{border-left-color:var(--ok)}
 .tool[data-status="bad"]{border-left-color:var(--bad)}
 .tool[data-status="run"]{border-left-color:var(--warn)}
-.tool summary{
-  padding:8px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;
-  list-style:none;border-radius:var(--radius);
-}
+.tool summary{padding:8px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;list-style:none;border-radius:var(--radius)}
 .tool summary:hover{background:color-mix(in srgb,var(--line) 40%,transparent)}
 .tool summary::-webkit-details-marker{display:none}
 .tool summary .n{font-weight:600;color:var(--ink)}
-.tool summary .a{
-  color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
-}
-.tool summary .d{
-  font-size:11px;color:var(--muted-2);font-variant-numeric:tabular-nums;
-  padding:1px 6px;border-radius:4px;background:var(--panel);border:1px solid var(--line);
-}
-.tool .st{
-  width:8px;height:8px;border-radius:50%;background:var(--muted-2);flex:none;
-  box-shadow:0 0 0 2px color-mix(in srgb,var(--muted-2) 20%,transparent);
-}
+.tool summary .a{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.tool summary .d{font-size:11px;color:var(--muted-2);font-variant-numeric:tabular-nums;padding:1px 6px;border-radius:4px;background:var(--panel);border:1px solid var(--line)}
+.tool .st{width:8px;height:8px;border-radius:50%;background:var(--muted-2);flex:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--muted-2) 20%,transparent)}
 .tool .st.ok{background:var(--ok);box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 20%,transparent)}
 .tool .st.bad{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 20%,transparent)}
-.tool pre{
-  margin:0;padding:10px 14px;border-top:1px solid var(--line);
-  overflow:auto;max-height:280px;white-space:pre-wrap;word-break:break-word;
-  font:12px ui-monospace,Menlo,Consolas,monospace;line-height:1.5;
-}
+.tool pre{margin:0;padding:10px 14px;border-top:1px solid var(--line);overflow:auto;max-height:280px;white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,Consolas,monospace;line-height:1.5}
 
-/* ============================================================
-   Notes / banners
-   ============================================================ */
 .note{margin:8px 0;font-size:12.5px;color:var(--warn);padding-left:6px}
-.note.err{
-  color:var(--bad);background:var(--bad-bg);
-  border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);
-  padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap;
-}
-.note.verify{
-  color:var(--warn);background:var(--warn-bg);
-  border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
-  padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap;margin:8px 0;
-}
+.note.err{color:var(--bad);background:var(--bad-bg);border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap}
+.note.verify{color:var(--warn);background:var(--warn-bg);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap;margin:8px 0}
 
-/* ============================================================
-   Empty state
-   ============================================================ */
 .empty{max-width:680px;margin:10vh auto 0;text-align:center;color:var(--muted)}
-.empty h2{
-  color:var(--ink);margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-.02em;
-}
+.empty h2{color:var(--ink);margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-.02em}
 .empty h2::before{content:"✨  ";font-weight:400}
-.empty .ex{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-  gap:12px;margin-top:24px;text-align:left;
-}
-.empty .ex button{
-  padding:14px 16px;text-align:left;background:var(--panel);
-  border:1px solid var(--line);border-radius:var(--radius-lg);color:var(--ink);
-  transition:border-color .15s,transform .15s,box-shadow .15s;
-  display:flex;flex-direction:column;align-items:flex-start;gap:2px;
-  white-space:normal;
-}
-.empty .ex button:hover{
-  border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow);
-  background:var(--panel);
-}
+.empty .ex{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:24px;text-align:left}
+.empty .ex button{padding:14px 16px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);color:var(--ink);display:flex;flex-direction:column;align-items:flex-start;gap:2px;white-space:normal}
+.empty .ex button:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow);background:var(--panel)}
 .empty .ex .t{font-weight:600;font-size:13.5px;color:var(--ink)}
 .empty .ex .s{font-size:12px;color:var(--muted);line-height:1.5}
 
-/* ============================================================
-   Composer
-   ============================================================ */
-#composer{
-  padding:12px 0 20px;background:var(--bg);
-  border-top:1px solid var(--line);position:relative;
-}
+#composer{padding:12px 0 20px;background:var(--bg);border-top:1px solid var(--line);position:relative}
 #composer .col{position:relative}
-.box{
-  display:flex;gap:10px;align-items:flex-end;background:var(--panel);
-  border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px;
-  box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s;
-}
-.box:focus-within{
-  border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
-  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent), var(--shadow-sm);
-}
-.box textarea{
-  flex:1;border:0;resize:none;max-height:220px;padding:8px 4px;background:transparent;
-  line-height:1.55;
-}
+.box{display:flex;gap:10px;align-items:flex-end;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px;box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s}
+.box:focus-within{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent), var(--shadow-sm)}
+.box textarea{flex:1;border:0;resize:none;max-height:220px;padding:8px 4px;background:transparent;line-height:1.55}
 .box textarea:focus{outline:none;box-shadow:none;border-color:transparent}
-#attach{
-  padding:8px 10px;border-radius:var(--radius-sm);font-size:16px;
-  transition:background .15s;background:transparent;border:0;
-}
+#attach{padding:8px 10px;border-radius:var(--radius-sm);font-size:16px;background:transparent;border:0}
 #attach:hover{background:var(--bg-2)}
 #send,#stop{padding:8px 16px;border-radius:var(--radius-sm)}
 
-/* Status card */
 .status{margin:0 0 8px}
-.status-card{
-  border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);
-  padding:12px 14px;box-shadow:var(--shadow-sm);
-}
+.status-card{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow-sm)}
 .status-card .title{display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:4px}
-.status-card .title .spin{
-  width:10px;height:10px;border-radius:50%;background:var(--accent);
-  animation:pulse 1.2s infinite;flex:none;
-}
+.status-card .title .spin{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite;flex:none}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
 .status-card .detail{color:var(--muted);font-size:12.5px}
-.status-card ul{
-  margin:8px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;
-  max-height:120px;overflow:auto;
-}
+.status-card ul{margin:8px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;max-height:120px;overflow:auto}
 .status-card .foot{display:flex;justify-content:flex-end;margin-top:8px}
 
-/* ============================================================
-   Message actions
-   ============================================================ */
 .msg-actions{display:flex;gap:6px;margin-top:6px;opacity:0;transition:opacity .2s}
 .msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1}
 @media (hover:none){.msg-actions{opacity:1}}
-.msg-actions button{
-  padding:3px 9px;font-size:11px;border:1px solid var(--line);
-  background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);
-  transition:all .2s;font-weight:500;
-}
-.msg-actions button:hover{
-  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
-}
-.copy-code{
-  position:absolute;top:10px;right:10px;padding:3px 8px;font-size:11px;
-  opacity:0;transition:opacity .2s;background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.15);border-radius:var(--radius-sm);
-  color:var(--code-ink);font-weight:500;
-}
+.msg-actions button{padding:3px 9px;font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);transition:all .2s;font-weight:500}
+.msg-actions button:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.copy-code{position:absolute;top:10px;right:10px;padding:3px 8px;font-size:11px;opacity:0;transition:opacity .2s;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:var(--radius-sm);color:var(--code-ink);font-weight:500}
 div:hover>.copy-code{opacity:1}
 .copy-code:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 
-/* ============================================================
-   Right panel (Keys / MCP / Files)
-   ============================================================ */
 .tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel-2)}
-.tabs button{
-  flex:1;border:0;border-radius:0;background:none;padding:12px 8px;
-  color:var(--muted);border-bottom:2px solid transparent;
-  font-weight:500;transition:color .15s,border-color .15s,background .15s;
-}
+.tabs button{flex:1;border:0;border-radius:0;background:none;padding:12px 8px;color:var(--muted);border-bottom:2px solid transparent;font-weight:500;transition:color .15s,border-color .15s,background .15s}
 .tabs button:hover{color:var(--ink-2);background:var(--bg-2)}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
 
 .pane{overflow:auto;padding:14px;flex:1;display:none;background:var(--bg)}
 .pane.on{display:block}
 
-/* Card */
-.card{
-  border:1px solid var(--line);border-radius:var(--radius-lg);
-  padding:14px 16px;margin-bottom:14px;background:var(--panel);
-  box-shadow:var(--shadow-sm);
-}
-.card h3{
-  margin:0 0 10px;font-size:13.5px;font-weight:600;letter-spacing:-.01em;
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink);
-}
+.card{border:1px solid var(--line);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:14px;background:var(--panel);box-shadow:var(--shadow-sm)}
+.card h3{margin:0 0 10px;font-size:13.5px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink)}
 
-/* Rows */
 .row{display:flex;gap:8px;margin:8px 0;align-items:center;flex-wrap:wrap}
 .row>input{flex:1;min-width:0}
 .row>label.tog{display:inline-flex}
 
 .small{font-size:12px;color:var(--muted);line-height:1.5}
 
-/* Badges */
-.badge{
-  font-size:11px;border-radius:999px;padding:2px 9px;
-  border:1px solid var(--line);color:var(--muted);font-weight:500;
-  background:var(--bg);line-height:1.4;
-}
+.badge{font-size:11px;border-radius:999px;padding:2px 9px;border:1px solid var(--line);color:var(--muted);font-weight:500;background:var(--bg);line-height:1.4}
 .badge.g{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:var(--ok-bg)}
 .badge.w{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:var(--warn-bg)}
 .badge.r{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);background:var(--bad-bg)}
+.badge.i{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft)}
 
-/* Key list */
-.keys{
-  margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;
-  max-height:320px;overflow:auto;
-}
-.k{
-  display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:12.5px;
-  border-radius:var(--radius-sm);transition:background .12s;
-}
+.keys{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;max-height:320px;overflow:auto}
+.k{display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:12.5px;border-radius:var(--radius-sm);transition:background .12s}
 .k:hover{background:var(--bg)}
-.k .dot{
-  width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok);
-  box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 20%,transparent);
-}
+.k .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--ok);box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 20%,transparent)}
 .k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn);box-shadow:0 0 0 2px color-mix(in srgb,var(--warn) 20%,transparent)}
 .k .dot.quota{background:#ea580c;box-shadow:0 0 0 2px rgba(234,88,12,.2)}
 .k .dot.auth,.k .dot.billing{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 20%,transparent)}
-.k .nm{
-  width:100px;font-weight:600;font-family:ui-monospace,Menlo,Consolas,monospace;
-  font-size:12px;
-}
-.k .mk{
-  width:100px;color:var(--muted);
-  font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
-  padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--line);
-}
-.k .info{
-  flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap;font-size:12px;
-}
+.k .nm{width:100px;font-weight:600;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.k .mk{width:100px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--line)}
+.k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .k button{padding:2px 8px;font-size:11.5px;min-height:24px}
 .k input{padding:3px 8px;font-size:12px;max-width:200px;font-family:ui-monospace,Menlo,Consolas,monospace}
 
-/* Keys textarea */
-textarea.keysbox{
-  width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,monospace;
-  line-height:1.5;resize:vertical;
-}
+textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,monospace;line-height:1.5;resize:vertical}
 
-/* Files */
-.files .f{
-  display:flex;gap:10px;padding:8px 6px;border-bottom:1px solid var(--line);
-  font-size:13px;align-items:center;border-radius:var(--radius-sm);
-  transition:background .12s;
-}
+.files .f{display:flex;gap:10px;padding:8px 6px;border-bottom:1px solid var(--line);font-size:13px;align-items:center;border-radius:var(--radius-sm);transition:background .12s}
 .files .f:hover{background:var(--bg)}
 .files .f span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .files a{color:var(--accent);text-decoration:none;font-weight:500}
 .files a:hover{text-decoration:underline}
 
-/* MCP rows */
-.mcp-row{
-  display:flex;gap:10px;align-items:center;padding:8px 4px;
-  border-bottom:1px dashed var(--line);
-}
+/* MCP panel */
+.mcp-card{border:1px solid var(--line);border-radius:var(--radius-lg);padding:12px 14px;margin-bottom:12px;background:var(--panel);box-shadow:var(--shadow-sm)}
+.mcp-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mcp-hd .nm{font-weight:600;font-size:13.5px}
+.mcp-hd .tools{color:var(--muted);font-size:12px}
+.mcp-meta{font-size:12px;color:var(--muted);margin-top:4px;word-break:break-all}
+.mcp-form{display:grid;grid-template-columns:1fr;gap:6px;margin-top:10px}
+.mcp-form label{font-size:11.5px;color:var(--muted);font-weight:500}
+.mcp-form input,.mcp-form textarea{width:100%}
+.mcp-form textarea{font:12px ui-monospace,Menlo,Consolas,monospace;min-height:64px;resize:vertical}
+.mcp-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap}
+.mcp-reg{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-2);margin-top:8px}
+.mcp-row{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
 .mcp-row:last-child{border-bottom:0}
-.mcp-row .nm{font-weight:600;flex:1;font-size:13px}
-.mcp-row > span[style]{flex:none !important}
+.mcp-row:hover{background:var(--bg)}
+.mcp-row.sel{background:var(--accent-soft)}
+.mcp-row .body{flex:1;min-width:0}
+.mcp-row .t{font-weight:600;font-size:13px}
+.mcp-row .d{font-size:12px;color:var(--muted);margin-top:2px;word-break:break-word}
+.mcp-row .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
 
-/* ============================================================
-   Modals
-   ============================================================ */
-#modal,#confirm{
-  position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);
-  display:none;align-items:center;justify-content:center;z-index:50;padding:20px;
-}
+#modal,#confirm{position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
 #modal.on,#confirm.on{display:flex}
-#modal .dlg,#confirm .dlg{
-  background:var(--panel);border-radius:var(--radius-xl);width:100%;
-  padding:22px;box-shadow:var(--shadow-lg);border:1px solid var(--line);
-  animation:pop .15s ease;display:flex;flex-direction:column;
-}
+#modal .dlg,#confirm .dlg{background:var(--panel);border-radius:var(--radius-xl);width:100%;padding:22px;box-shadow:var(--shadow-lg);border:1px solid var(--line);animation:pop .15s ease;display:flex;flex-direction:column}
 #modal .dlg{max-width:640px}
 #confirm .dlg{max-width:460px}
 @keyframes pop{from{opacity:0;transform:scale(.97) translateY(4px)}to{opacity:1;transform:none}}
-#modal h3,#confirm h3{
-  margin:0 0 12px !important;font-size:16px;letter-spacing:-.01em;color:var(--ink);
-}
-#modal pre{
-  background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);
-  overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;
-  font:12.5px ui-monospace,Menlo,Consolas,monospace;line-height:1.55;
-}
+#modal h3,#confirm h3{margin:0 0 12px !important;font-size:16px;letter-spacing:-.01em;color:var(--ink)}
+#modal pre{background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;font:12.5px ui-monospace,Menlo,Consolas,monospace;line-height:1.55}
 #confirm .msg{color:var(--ink-2);margin:0 0 20px;white-space:pre-wrap;line-height:1.6;font-size:13.5px}
 #confirm .actions{display:flex;justify-content:flex-end;gap:8px}
 
-/* ============================================================
-   Toasts
-   ============================================================ */
-#toasts{
-  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-  display:flex;flex-direction:column;gap:8px;z-index:60;max-width:90vw;align-items:center;
-}
-.toast{
-  background:var(--ink);color:var(--bg);padding:10px 16px;
-  border-radius:var(--radius);opacity:0;transition:opacity .2s,transform .2s;
-  max-width:90vw;font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);
-  transform:translateY(4px);
-}
+#toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:60;max-width:90vw;align-items:center}
+.toast{background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--radius);opacity:0;transition:opacity .2s,transform .2s;max-width:90vw;font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);transform:translateY(4px)}
 .toast.on{opacity:1;transform:none}
 
-/* Scroll-to-bottom pill */
-#scrollDown{
-  position:fixed;right:24px;bottom:130px;z-index:15;
-  border-radius:999px;padding:8px 16px;background:var(--panel);
-  border:1px solid var(--line);box-shadow:var(--shadow);
-  display:none;font-size:12px;font-weight:500;
-}
+#scrollDown{position:fixed;right:24px;bottom:130px;z-index:15;border-radius:999px;padding:8px 16px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);display:none;font-size:12px;font-weight:500}
 #scrollDown.on{display:inline-flex}
 #scrollDown:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 
-/* ============================================================
-   Workspace browser modal
-   ============================================================ */
-#browse .dlg{
-  background:var(--panel);border-radius:var(--radius-xl);
-  border:1px solid var(--line);padding:22px;width:100%;max-width:840px;
-  box-shadow:var(--shadow-lg);display:flex;flex-direction:column;
-}
-.crumbs{
-  display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 0;
-  font-size:12.5px;min-width:0;
-}
+#browse .dlg{background:var(--panel);border-radius:var(--radius-xl);border:1px solid var(--line);padding:22px;width:100%;max-width:840px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column}
+.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 0;font-size:12.5px;min-width:0}
 .crumbs .crumb{padding:2px 8px;border-radius:var(--radius-sm);font-size:12.5px}
 .crumbs .crumb.cur{color:var(--ink);font-weight:600;background:var(--accent-soft)}
 .recent{display:flex;gap:6px;flex-wrap:wrap;padding:4px 0;align-items:center}
 .recent button{padding:3px 10px;font-size:12px}
-
-#browse .listing{
-  max-height:48vh;overflow:auto;margin-top:10px;
-  border:1px solid var(--line);border-radius:var(--radius);
-  background:var(--panel-2);
-}
-#browse .listing .f{
-  display:flex;gap:10px;padding:8px 12px;cursor:pointer;
-  border-bottom:1px solid var(--line);font-size:13px;align-items:center;
-  transition:background .1s;
-}
+#browse .listing{max-height:48vh;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-2)}
+#browse .listing .f{display:flex;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px;align-items:center;transition:background .1s}
 #browse .listing .f:last-child{border-bottom:0}
 #browse .listing .f:hover{background:var(--bg)}
 #browse .listing .f.sel{background:var(--accent-soft);color:var(--ink)}
 #browse .listing .f:focus{outline:2px solid var(--accent);outline-offset:-2px}
 #browse .listing .f .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* ============================================================
-   Responsive
-   ============================================================ */
 @media (max-width:900px){
   #app,#app.rightopen{grid-template-columns:0 minmax(0,1fr) 0}
-  #left{
-    position:fixed;inset:0 auto 0 0;width:280px;z-index:10;
-    transform:translateX(-100%);transition:transform .2s;
-  }
+  #left{position:fixed;inset:0 auto 0 0;width:280px;max-width:82vw;z-index:10;transform:translateX(-100%);transition:transform .2s}
   #app.leftopen #left{transform:none;box-shadow:var(--shadow-lg)}
   #right{position:fixed;inset:0;z-index:12;display:none;width:100%}
   #app.rightopen #right{display:flex}
   .col{padding:0 16px}
   header{padding:10px 14px 10px 52px}
+  .scroll-sec.shells{max-height:24%}
 }
 @media (min-width:901px){.only-small{display:none}}
-@media (prefers-reduced-motion:reduce){
-  *,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}
-}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}}
 </style>
 </head>
 <body>
@@ -629,9 +376,9 @@ textarea.keysbox{
     <div class="side-section"><button class="primary" id="newChat">New chat</button></div>
     <div class="side-section"><input id="sessSearch" placeholder="Search chats…" aria-label="Search chats"></div>
     <div class="side-label">Shell jobs</div>
-    <div id="shelljobs" class="side-section" style="padding:0 6px"></div>
+    <div id="shelljobs" class="scroll-sec shells"></div>
     <div class="side-label">Recent</div>
-    <div id="sessions"></div>
+    <div id="sessions" class="scroll-sec sessions"></div>
   </aside>
 
   <main>
@@ -643,7 +390,8 @@ textarea.keysbox{
       <span class="sp"></span>
       <div class="toggle-group">
         <label class="tog strict" id="strictTog" title="Verify factual claims in answers"><input type="checkbox" id="strictBox"> strict</label>
-        <label class="tog" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
+        <label class="tog auto" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
+        <label class="tog bg" id="bgTog" title="When on, every run_shell call executes in the background (survives Stop)"><input type="checkbox" id="bgBox"> bg-shell</label>
       </div>
       <button id="keysBtn">Keys &amp; models</button>
     </header>
@@ -727,10 +475,7 @@ async function api(path, body, opt = {}) {
     : { method: "POST", headers: { "X-Omni": "1", "Content-Type": "application/json" },
         body: JSON.stringify(body || {}) };
   const r = await fetch(path, init);
-  if (r.status === 401) {
-    toast("Session expired — reopen the link printed in the terminal", 6000);
-    throw new Error("not authorised");
-  }
+  if (r.status === 401) { toast("Session expired — reopen the link printed in the terminal", 6000); throw new Error("not authorised"); }
   let d = {}; try { d = await r.json(); } catch (_) {}
   if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
   return d;
@@ -768,8 +513,7 @@ function md(src) {
       const body = part.replace(/^[^\n]*\n/, "");
       const code = h("code", { text: body.replace(/\n$/, "") });
       const pre = h("pre", {}, code);
-      const copyBtn = h("button", { class: "copy-code", text: "Copy",
-        onclick: () => copyText(code.textContent) });
+      const copyBtn = h("button", { class: "copy-code", text: "Copy", onclick: () => copyText(code.textContent) });
       root.append(h("div", { style: "position:relative" }, pre, copyBtn));
       return;
     }
@@ -807,18 +551,11 @@ store.set("omni_sid", sid);
 const msgs = $("#msgs"), logEl = $("#log"), toolEls = {};
 function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140; }
 function scrollToBottom() { logEl.scrollTop = logEl.scrollHeight; $("#scrollDown").classList.remove("on"); }
-function maybeShowScrollDown() {
-  if (busy && !atBottom()) $("#scrollDown").classList.add("on");
-  else $("#scrollDown").classList.remove("on");
-}
+function maybeShowScrollDown() { if (busy && !atBottom()) $("#scrollDown").classList.add("on"); else $("#scrollDown").classList.remove("on"); }
 logEl.addEventListener("scroll", maybeShowScrollDown);
 $("#scrollDown").onclick = scrollToBottom;
 
-function add(el) {
-  const stick = atBottom(); clearEmpty(); msgs.append(el);
-  if (stick) scrollToBottom();
-  return el;
-}
+function add(el) { const stick = atBottom(); clearEmpty(); msgs.append(el); if (stick) scrollToBottom(); return el; }
 function clearEmpty() { const e = $("#emptyState"); if (e) e.remove(); }
 function showEmpty() {
   const examples = [
@@ -836,29 +573,15 @@ function showEmpty() {
         h("div", { class: "s", text: s }))))));
 }
 
-/* Human-readable labels for the internal cooldown kinds shown in the
-   progress card so non-technical users understand what's happening. */
-const KIND_LABEL = {
-  rate: "rate-limited",
-  auth: "invalid key",
-  quota: "out of quota",
-  model: "model unavailable",
-  billing: "no credits",
-  server: "service error",
-  network: "network error",
-  empty: "empty reply",
-  param: "bad parameters",
-  tools: "no tool support",
-  fatal: "error",
-};
+const KIND_LABEL = { rate:"rate-limited", auth:"invalid key", quota:"out of quota", model:"model unavailable",
+  billing:"no credits", server:"service error", network:"network error", empty:"empty reply",
+  param:"bad parameters", tools:"no tool support", fatal:"error" };
 function humanizeRecent(list) {
   if (!list) return list;
   return list.map(line => {
-    // server sends "name [model] -> kind"
     const m = /^(\S+) \[([^\]]+)\] -> (\S+)/.exec(line);
     if (!m) return line;
-    const kind = KIND_LABEL[m[3]] || m[3];
-    return `${m[1]} (${m[2]}) ${kind}`;
+    return `${m[1]} (${m[2]}) ${KIND_LABEL[m[3]] || m[3]}`;
   });
 }
 
@@ -879,8 +602,7 @@ function renderStatus() {
     for (const r of recent.slice(-6)) ul.append(h("li", { text: r }));
     card.append(ul);
   }
-  card.append(h("div", { class: "foot" },
-    h("button", { class: "danger", text: "Stop", onclick: doStop })));
+  card.append(h("div", { class: "foot" }, h("button", { class: "danger", text: "Stop", onclick: doStop })));
   w.replaceChildren(card);
 }
 function updateStatus(patch) { statusState = Object.assign({}, statusState, patch); renderStatus(); }
@@ -894,24 +616,19 @@ function setBusy(b, reset = true) {
   maybeShowScrollDown();
 }
 
-/* Build the actions row for any message. Always shows Copy; Retry on
-   assistant/final; Edit and Delete on user/final when we know the index. */
 function actionsFor(kind, ev) {
   const kids = [];
   if (kind === "user") {
-    if (typeof ev.idx === "number")
-      kids.push(h("button", { text: "Edit", onclick: (e) => editMsg(e, ev) }));
+    if (typeof ev.idx === "number") kids.push(h("button", { text: "Edit", onclick: (e) => editMsg(e, ev) }));
     kids.push(h("button", { text: "Copy", onclick: () => copyText(ev.text) }));
-    if (typeof ev.idx === "number")
-      kids.push(h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }));
+    if (typeof ev.idx === "number") kids.push(h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }));
   } else if (kind === "assistant") {
     kids.push(h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }));
     kids.push(h("button", { text: "Copy", onclick: () => copyText(ev.text) }));
   } else if (kind === "final") {
     kids.push(h("button", { text: "Retry", onclick: (e) => retryMsg(e, ev) }));
     kids.push(h("button", { text: "Copy", onclick: () => copyText(ev.text) }));
-    if (typeof ev.idx === "number")
-      kids.push(h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }));
+    if (typeof ev.idx === "number") kids.push(h("button", { text: "Delete", onclick: (e) => deleteMsg(e, ev) }));
   }
   return h("div", { class: "msg-actions" }, ...kids);
 }
@@ -919,24 +636,15 @@ function actionsFor(kind, ev) {
 function render(ev) {
   switch (ev.type) {
     case "user": return add(h("div", { class: "msg user" },
-      h("div", { class: "bubble", text: ev.text }),
-      actionsFor("user", ev)));
-
-    case "assistant": return add(h("div", { class: "msg asst mid" },
-      h("div", { class: "bubble" }, md(ev.text)),
-      actionsFor("assistant", ev)));
-
-    case "final": return add(h("div", { class: "msg asst" },
-      h("div", { class: "bubble" }, md(ev.text)),
-      actionsFor("final", ev)));
-
+      h("div", { class: "bubble", text: ev.text }), actionsFor("user", ev)));
+    case "assistant": return add(h("div", { class: "msg asst mid" }, h("div", { class: "bubble" }, md(ev.text)), actionsFor("assistant", ev)));
+    case "final": return add(h("div", { class: "msg asst" }, h("div", { class: "bubble" }, md(ev.text)), actionsFor("final", ev)));
     case "tool": {
       let args = ev.text || "", pretty = args;
       try {
         const o = JSON.parse(args);
         pretty = JSON.stringify(o, null, 1);
-        args = Object.entries(o).map(([k, v]) =>
-          k + "=" + (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ")).join("  ");
+        args = Object.entries(o).map(([k, v]) => k + "=" + (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ")).join("  ");
       } catch (_) {}
       const t0 = performance.now();
       const d = h("details", { class: "tool", "data-status": "run" },
@@ -952,10 +660,7 @@ function render(ev) {
       d.querySelector(".st").classList.add(ev.ok ? "ok" : "bad");
       d.dataset.status = ev.ok ? "ok" : "bad";
       const dt = d.querySelector(".d");
-      if (dt && dt.dataset.t0) {
-        const s = ((performance.now() - Number(dt.dataset.t0)) / 1000).toFixed(1);
-        dt.textContent = s + "s";
-      }
+      if (dt && dt.dataset.t0) { const s = ((performance.now() - Number(dt.dataset.t0)) / 1000).toFixed(1); dt.textContent = s + "s"; }
       if (!d.querySelector("pre.stream")) d.append(h("pre", { text: ev.text }));
       else if (!ev.ok) d.append(h("pre", { text: "ERROR (see stream above):\n" + ev.text }));
       return;
@@ -965,14 +670,11 @@ function render(ev) {
       let pre = d.querySelector("pre.stream");
       if (!pre) { pre = h("pre", { class: "stream" }); d.append(pre); }
       pre.textContent += ev.text;
-      if (atBottom()) scrollToBottom();
-      else maybeShowScrollDown();
+      if (atBottom()) scrollToBottom(); else maybeShowScrollDown();
       return;
     }
     case "notice": return add(h("div", { class: "note", text: "↪ " + ev.text }));
-    case "progress":
-      updateStatus({ title: ev.title || "Working", detail: ev.detail, recent: ev.recent, route: ev.route });
-      return;
+    case "progress": updateStatus({ title: ev.title || "Working", detail: ev.detail, recent: ev.recent, route: ev.route }); return;
     case "verify": return add(h("div", { class: "note verify", text: ev.text }));
     case "route": {
       lastRoute = ev;
@@ -982,11 +684,9 @@ function render(ev) {
       updateStatus({ route: ev.text });
       return;
     }
-    case "error":
-      return add(h("div", { class: "note err" },
-        h("div", { text: ev.text }),
-        h("div", { style: "margin-top:6px" },
-          h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
+    case "error": return add(h("div", { class: "note err" },
+      h("div", { text: ev.text }),
+      h("div", { style: "margin-top:6px" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
     case "approval": return askApproval(ev);
     case "approval_done": if (pendingApproval && pendingApproval.id === ev.id) closeModal(); return;
   }
@@ -1006,18 +706,10 @@ async function poll() {
       }
       cursor = d.next;
       let done = false;
-      for (const ev of d.events) {
-        if (ev.type === "user") continue;
-        if (ev.type === "done") done = true; else render(ev);
-      }
-      if (done || (!d.busy && !d.events.length)) {
-        setBusy(false); refreshKeys(); loadSessions(); loadShellJobs();
-        break;
-      }
+      for (const ev of d.events) { if (ev.type === "user") continue; if (ev.type === "done") done = true; else render(ev); }
+      if (done || (!d.busy && !d.events.length)) { setBusy(false); refreshKeys(); loadSessions(); loadShellJobs(); break; }
     }
-  } finally {
-    polling = false;
-  }
+  } finally { polling = false; }
 }
 
 async function send() {
@@ -1032,10 +724,7 @@ async function send() {
     statusState = { title: "Sending…" };
     setBusy(true, false);
     poll();
-  } catch (e) {
-    inp.value = restore; autoGrow();      // put their text back on failure
-    toast(e.message, 5000);
-  }
+  } catch (e) { inp.value = restore; autoGrow(); toast(e.message, 5000); }
 }
 async function doStop() {
   if ($("#stop").disabled) return;
@@ -1043,14 +732,10 @@ async function doStop() {
   try { await api("/api/stop", { session: sid }); toast("Stopping…"); }
   catch (e) { toast(e.message); $("#stop").disabled = false; return; }
   updateStatus({ title: "Stopping…", detail: "releasing tools and approvals" });
-  // The poller will flip busy to false when the worker actually returns.
-  // Re-enable the button so a stuck run can be re-stopped.
   setTimeout(() => { $("#stop").disabled = false; }, 3000);
 }
-function autoGrow() {
-  const i = $("#inp"); i.style.height = "auto";
-  i.style.height = Math.min(i.scrollHeight, 200) + "px";
-}
+function autoGrow() { const i = $("#inp"); i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight, 200) + "px"; }
+
 async function loadChat() {
   const stick = atBottom();
   msgs.replaceChildren(); for (const k in toolEls) delete toolEls[k];
@@ -1060,10 +745,7 @@ async function loadChat() {
     cursor = d.cursor;
     $("#autoBox").checked = d.auto; $("#autoTog").classList.toggle("on", d.auto);
     $("#autoBanner").classList.toggle("on", d.auto);
-    if (typeof d.strict === "boolean") {
-      $("#strictBox").checked = d.strict;
-      $("#strictTog").classList.toggle("on", d.strict);
-    }
+    if (typeof d.strict === "boolean") { $("#strictBox").checked = d.strict; $("#strictTog").classList.toggle("on", d.strict); }
     d.pending.forEach(p => askApproval({ id: p.id, text: p.action, tool: p.tool }));
     if (d.busy) { setBusy(true, false); poll(); } else setBusy(false);
     if (stick) scrollToBottom();
@@ -1076,35 +758,30 @@ function timeAgo(sec) {
   return Math.round(sec / 86400) + "d ago";
 }
 let sessionsCache = [];
-async function loadSessions() {
-  try {
-    sessionsCache = await api("/api/sessions");
-    renderSessions();
-  } catch (_) {}
-}
+async function loadSessions() { try { sessionsCache = await api("/api/sessions"); renderSessions(); } catch (_) {} }
 
 async function loadShellJobs() {
   const box = $("#shelljobs"); if (!box) return;
   try {
     const d = await api("/api/shell_jobs");
+    // reflect the server's bg default once, on first load (or after a change)
+    if (typeof d.bg_default === "boolean" && S && typeof S.shell_bg_default === "boolean") {
+      S.shell_bg_default = d.bg_default;
+      $("#bgBox").checked = d.bg_default;
+      $("#bgTog").classList.toggle("on", d.bg_default);
+    }
     if (!d.jobs.length) {
       box.replaceChildren(h("div", { class: "small", style: "padding:4px 6px", text: "no background shells" }));
       return;
     }
     box.replaceChildren(...d.jobs.map(j => h("div", {
-        class: "sess", title: j.cmd,
-        style: "cursor:default"
+        class: "sess", title: j.cmd, style: "cursor:default"
       },
       h("span", { class: "nm", text: j.cmd.slice(0, 26) }),
-      j.alive
-        ? h("span", { title: "Running", text: "●", style: "color:var(--ok);font-size:10px" })
-        : h("span", { title: "Exited", text: "○", style: "color:var(--muted);font-size:10px" }),
-      h("button", { text: "stop", title: "Kill this shell",
-        disabled: !j.alive,
-        onclick: async () => {
-          try { await api("/api/shell_jobs/kill", { job_id: j.id }); loadShellJobs(); }
-          catch (e) { toast(e.message); }
-        } })
+      j.alive ? h("span", { title: "Running", text: "●", style: "color:var(--ok);font-size:10px" })
+              : h("span", { title: "Exited", text: "○", style: "color:var(--muted);font-size:10px" }),
+      h("button", { text: "stop", title: "Kill this shell", disabled: !j.alive,
+        onclick: async () => { try { await api("/api/shell_jobs/kill", { job_id: j.id }); loadShellJobs(); } catch (e) { toast(e.message); } } })
     )));
   } catch (e) { box.textContent = ""; }
 }
@@ -1118,8 +795,7 @@ function renderSessions() {
     box.append(h("div", { class: "sess" + (s.id === sid ? " on" : ""), onclick: () => switchTo(s.id) },
       h("span", { class: "nm", text: s.title, title: s.title }),
       h("span", { class: "t", text: timeAgo(t) }),
-      s.busy ? h("span", { title: "Working…", text: "●",
-                          style: "color:var(--accent);font-size:10px;margin-left:2px" }) : null,
+      s.busy ? h("span", { title: "Working…", text: "●", style: "color:var(--accent);font-size:10px;margin-left:2px" }) : null,
       h("button", { title: "Rename chat", text: "✎", "aria-label": "Rename chat",
         onclick: async e => {
           e.stopPropagation();
@@ -1127,10 +803,7 @@ function renderSessions() {
           if (t === null) return;
           const nv = t.trim();
           if (!nv || nv === s.title) return;
-          try {
-            await api("/api/session/rename", { session: s.id, title: nv });
-            loadSessions();
-          } catch (e) { toast(e.message); }
+          try { await api("/api/session/rename", { session: s.id, title: nv }); loadSessions(); } catch (e) { toast(e.message); }
         } }),
       h("button", { title: "Delete chat", text: "✕", "aria-label": "Delete chat", onclick: async e => {
         e.stopPropagation();
@@ -1141,15 +814,11 @@ function renderSessions() {
   }
 }
 $("#sessSearch").addEventListener("input", renderSessions);
-function switchTo(id) {
-  sid = id; store.set("omni_sid", sid);
-  $("#app").classList.remove("leftopen"); loadChat(); loadSessions();
-}
+function switchTo(id) { sid = id; store.set("omni_sid", sid); $("#app").classList.remove("leftopen"); loadChat(); loadSessions(); }
 function newChat() { switchTo(rid()); }
 
-/* ---- real confirm dialog (replaces window.confirm / window.prompt) ---- */
-let _confirmResolve = null;
-let _promptResolve = null;
+/* ---- confirm / prompt ---- */
+let _confirmResolve = null, _promptResolve = null;
 function confirmDlg(title, msg, yesText = "OK") {
   $("#confirmTitle").textContent = title;
   $("#confirmMsg").textContent = msg;
@@ -1159,18 +828,14 @@ function confirmDlg(title, msg, yesText = "OK") {
 }
 function closeConfirm(result) {
   $("#confirm").classList.remove("on");
-  const r = _confirmResolve; _confirmResolve = null;
-  if (r) r(result);
+  const r = _confirmResolve; _confirmResolve = null; if (r) r(result);
 }
-/* Single-line prompt dialog that reuses the confirm dialog. Returns the
-   typed string on Save, or null on Cancel / Escape. */
 function promptDlg(title, msg, initial = "") {
   $("#confirmTitle").textContent = title;
   $("#confirmMsg").textContent = msg;
   let box = $("#confirmInput");
   if (!box) {
-    box = h("input", { id: "confirmInput",
-                       style: "width:100%;margin:8px 0 14px", spellcheck: false });
+    box = h("input", { id: "confirmInput", style: "width:100%;margin:8px 0 14px", spellcheck: false });
     $("#confirmMsg").before(box);
   }
   box.value = initial;
@@ -1181,27 +846,11 @@ function promptDlg(title, msg, initial = "") {
 }
 function closePrompt(result) {
   $("#confirm").classList.remove("on");
-  const r = _promptResolve; _promptResolve = null;
-  if (r) r(result);
+  const r = _promptResolve; _promptResolve = null; if (r) r(result);
 }
-$("#confirmYes").onclick = () => {
-  if (_promptResolve) {
-    const v = ($("#confirmInput") || {}).value ?? "";
-    closePrompt(v);
-  } else {
-    closeConfirm(true);
-  }
-};
-$("#confirmNo").onclick = () => {
-  if (_promptResolve) closePrompt(null);
-  else closeConfirm(false);
-};
-$("#confirm").onclick = e => {
-  if (e.target.id === "confirm") {
-    if (_promptResolve) closePrompt(null);
-    else closeConfirm(false);
-  }
-};
+$("#confirmYes").onclick = () => { if (_promptResolve) closePrompt(($("#confirmInput") || {}).value ?? ""); else closeConfirm(true); };
+$("#confirmNo").onclick = () => { if (_promptResolve) closePrompt(null); else closeConfirm(false); };
+$("#confirm").onclick = e => { if (e.target.id === "confirm") { if (_promptResolve) closePrompt(null); else closeConfirm(false); } };
 
 let pendingApproval = null;
 function askApproval(ev) {
@@ -1223,27 +872,18 @@ async function answer(allow) {
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     if ($("#modal").classList.contains("on")) answer(false);
-    else if ($("#confirm").classList.contains("on")) {
-      if (_promptResolve) closePrompt(null); else closeConfirm(false);
-    }
+    else if ($("#confirm").classList.contains("on")) { if (_promptResolve) closePrompt(null); else closeConfirm(false); }
     else if ($("#browse")) $("#browse").remove();
   }
 });
 
 function entrable(input, action) {
-  input.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      action();
-    }
-  });
+  input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); action(); } });
   return input;
 }
 
 let S = null, modelCache = {};
 
-/* Key panel: re-render on every action, but snapshot user-typed values first
-   so a paste-in-progress survives the rebuild. */
 async function act(fn, okMsg) {
   try {
     const r = await fn();
@@ -1254,41 +894,33 @@ async function act(fn, okMsg) {
 }
 
 function snapshotInputs() {
-  const snap = {};
-  const pane = $("#pane-keys");
+  const snap = {}, pane = $("#pane-keys");
   if (!pane) return snap;
-  pane.querySelectorAll("[data-persist]").forEach(el => {
-    snap[el.dataset.persist] = el.value;
-  });
+  pane.querySelectorAll("[data-persist]").forEach(el => { snap[el.dataset.persist] = el.value; });
   return snap;
 }
 function restoreInputs(snap) {
   const pane = $("#pane-keys");
   if (!pane) return;
-  pane.querySelectorAll("[data-persist]").forEach(el => {
-    if (snap[el.dataset.persist] !== undefined) el.value = snap[el.dataset.persist];
-  });
+  pane.querySelectorAll("[data-persist]").forEach(el => { if (snap[el.dataset.persist] !== undefined) el.value = snap[el.dataset.persist]; });
 }
 
 async function refreshKeys(force, keepFocus = true) {
   const pane = $("#pane-keys");
-  if (!force && keepFocus && pane.contains(document.activeElement) &&
-      /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (!force && keepFocus && pane.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   try { S = await api("/api/state"); } catch (e) { return; }
-  // Seed the client-side modelCache from the state response when it's
-  // missing. /api/state includes each key's cached `models` array, so a
-  // pool whose models were refreshed server-side (Refresh all, per-key ↻,
-  // or a page reload) still gets a populated <datalist> on the next render.
   for (const p of S.pools || []) {
-    if (!modelCache[p.pool] && p.keys && p.keys.length &&
-        Array.isArray(p.keys[0].models) && p.keys[0].models.length) {
+    if (!modelCache[p.pool] && p.keys && p.keys.length && Array.isArray(p.keys[0].models) && p.keys[0].models.length) {
       modelCache[p.pool] = p.keys[0].models;
     }
   }
   $("#wsChip").replaceChildren("workspace: ", h("b", { text: S.workspace }));
+  $("#bgBox").checked = !!S.shell_bg_default;
+  $("#bgTog").classList.toggle("on", !!S.shell_bg_default);
   renderKeys();
   renderMcp();
 }
+
 function renderKeys() {
   const pane = $("#pane-keys");
   const openKeys = new Set([...pane.querySelectorAll("details.kl")].filter(d => d.open).map(d => d.dataset.pool));
@@ -1300,12 +932,9 @@ function renderKeys() {
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Rotation" }),
     h("div", { class: "row" },
-      h("select", {
-        onchange: e => act(() => api("/api/strategy", { strategy: e.target.value }), "Strategy saved")
-      },
+      h("select", { onchange: e => act(() => api("/api/strategy", { strategy: e.target.value }), "Strategy saved") },
         ...S.strategies.map(s => h("option", { value: s, selected: s === S.strategy,
-          text: s === "round_robin" ? "round robin — spread calls over all keys"
-                                     : "failover — use keys in order" })))),
+          text: s === "round_robin" ? "round robin — spread calls over all keys" : "failover — use keys in order" })))),
     h("div", { class: "small", text: "Keys are scored by health, so a flaky key is deprioritized automatically. Rate limits cool the key; model-not-found cools the whole pool; daily quotas cool until midnight Pacific. Short limits are waited out (up to " + S.max_wait + "s)." })));
 
   pane.append(h("div", { class: "card" },
@@ -1316,49 +945,31 @@ function renderKeys() {
           const t = e.target; t.textContent = "fetching…"; t.disabled = true;
           try {
             const r = await api("/api/refresh_all", {});
-            // Fill the browser-side cache from the per-pool lists the
-            // server just returned, THEN re-render. Without this the
-            // pool cards rebuild their <datalist> from an empty
-            // modelCache and the dropdowns look unchanged.
             let total = 0;
             for (const [pool, models] of Object.entries(r.models || {})) {
-              modelCache[pool] = models || [];
-              total += modelCache[pool].length;
+              modelCache[pool] = models || []; total += modelCache[pool].length;
             }
             const nKeys = Object.keys(r.refreshed || {}).length;
             const nPools = Object.keys(r.models || {}).length;
             toast(`Refreshed ${nKeys} key(s) across ${nPools} pool(s) — ${total} models`);
             await refreshKeys(true);
-          } catch (err) {
-            toast(err.message, 6000);
-          } finally {
-            t.textContent = "↻ Refresh all model lists"; t.disabled = false;
-          }
+          } catch (err) { toast(err.message, 6000); }
+          finally { t.textContent = "↻ Refresh all model lists"; t.disabled = false; }
         } }),
       h("span", { class: "small", text: "Each key's available models are fetched from its provider and shown in the dropdown next to it." }))));
 
-  // "Add a service" goes on top when there are no pools yet (so a new
-  // user lands right on the form); otherwise it lives at the bottom.
   if (!S.pools.length) pane.append(addServiceCard(savedInputs));
   S.pools.forEach((p, i) => pane.append(poolCard(p, i, openKeys.has(p.pool), savedInputs)));
   if (S.pools.length) pane.append(addServiceCard(savedInputs));
-  // Defer scroll restore so the browser has laid out the new content first.
-  requestAnimationFrame(() => {
-    pane.scrollTop = savedScroll;
-    restoreInputs(savedInputs);
-  });
+  requestAnimationFrame(() => { pane.scrollTop = savedScroll; restoreInputs(savedInputs); });
 }
 
 function badge(txt, cls) { return h("span", { class: "badge " + (cls || ""), text: txt }); }
-function fmtTime(s) {
-  return s >= 3600 ? Math.round(s / 3600) + "h"
-    : s >= 60 ? Math.round(s / 60) + "m" : s + "s";
-}
+function fmtTime(s) { return s >= 3600 ? Math.round(s / 3600) + "h" : s >= 60 ? Math.round(s / 60) + "m" : s + "s"; }
 
-function poolCard(p, idx, open, savedInputs) {
+function poolCard(p, idx, open) {
   const dl = h("datalist", { id: "dl-" + p.pool });
   (modelCache[p.pool] || []).forEach(m => dl.append(h("option", { value: m })));
-
   const mIn = h("input", { value: p.model, list: "dl-" + p.pool, placeholder: "model id", spellcheck: false });
   const note = h("span", { class: "small" });
   const loadModels = async refresh => {
@@ -1374,22 +985,12 @@ function poolCard(p, idx, open, savedInputs) {
       note.style.color = d.listed === false ? "var(--warn)" : "";
     } catch (e) { note.textContent = e.message; }
   };
-
-  const applyModel = () => act(async () => {
-    const r = await api("/api/pool/model", { pool: p.pool, model: mIn.value });
-    return r;
-  }, r => r.listed === false
-    ? "Saved — but this model is not in the service's list, it may fail"
-    : "Model set for all " + p.keys.length + " keys");
-
+  const applyModel = () => act(async () => await api("/api/pool/model", { pool: p.pool, model: mIn.value }),
+    r => r.listed === false ? "Saved — but this model is not in the service's list, it may fail" : "Model set for all " + p.keys.length + " keys");
   entrable(mIn, applyModel);
 
-  const fbIn = h("input", { value: p.fallbacks.join(", "),
-    placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash",
-    spellcheck: false, list: "dl-" + p.pool });
-  const saveFb = () => act(() =>
-    api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value }),
-    "Fallback models saved");
+  const fbIn = h("input", { value: p.fallbacks.join(", "), placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash", spellcheck: false, list: "dl-" + p.pool });
+  const saveFb = () => act(() => api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value }), "Fallback models saved");
   entrable(fbIn, saveFb);
 
   const c = p.counts;
@@ -1400,47 +1001,24 @@ function poolCard(p, idx, open, savedInputs) {
       h("span", { class: "nm", text: k.name }),
       h("span", { class: "mk", text: k.masked }),
       h("span", { class: "info", title: k.reason || k.last_error,
-        text: k.status === "ready"
-          ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
+        text: k.status === "ready" ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
           : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}` }),
-      (() => {
-        const sel = h("input", { value: k.model || "", list: "dl-" + p.pool,
-          placeholder: "model id", spellcheck: false,
-          "data-persist": "key-model-" + k.name,
-          onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }),
-                             "Model set for " + k.name) });
-        return sel;
-      })(),
+      h("input", { value: k.model || "", list: "dl-" + p.pool, placeholder: "model id", spellcheck: false,
+        "data-persist": "key-model-" + k.name,
+        onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }), "Model set for " + k.name) }),
       h("button", { text: "↻", title: "Refresh this key's model list",
-        onclick: e => {
-          e.target.textContent = "…";
-          act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`),
-              "Refreshed " + k.name)
-            .finally(() => e.target.textContent = "↻");
-        } }),
+        onclick: e => { e.target.textContent = "…"; act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`), "Refreshed " + k.name).finally(() => e.target.textContent = "↻"); } }),
       h("button", { text: "test", title: "Send a real tiny request with this key",
-        onclick: ev => {
-          ev.target.textContent = "…";
-          act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
-              r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120))
-            .finally(() => ev.target.textContent = "test");
-        } }),
+        onclick: ev => { ev.target.textContent = "…"; act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
+          r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120)).finally(() => ev.target.textContent = "test"); } }),
       h("button", { class: "danger", text: "✕", title: "Remove this key",
-        onclick: async () => {
-          if (await confirmDlg("Remove key?", "Remove " + k.name + " from the pool?", "Remove"))
-            act(() => api("/api/keys/remove", { name: k.name }), "Removed");
-        } })))));
+        onclick: async () => { if (await confirmDlg("Remove key?", "Remove " + k.name + " from the pool?", "Remove")) act(() => api("/api/keys/remove", { name: k.name }), "Removed"); } })))));
 
-  const addBox = h("textarea", { class: "keysbox",
-    placeholder: "Paste more keys for this service — one per line or comma separated",
-    spellcheck: false, "data-persist": "addkeys-" + p.pool });
+  const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service — one per line or comma separated", spellcheck: false, "data-persist": "addkeys-" + p.pool });
   const addKeysBtn = h("button", { text: "Add keys to " + p.pool,
-    onclick: () => addBox.value.trim() && act(
-      () => api("/api/keys/add", { pool: p.pool, keys: addBox.value }),
+    onclick: () => addBox.value.trim() && act(() => api("/api/keys/add", { pool: p.pool, keys: addBox.value }),
       r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
-  addBox.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addKeysBtn.click(); }
-  });
+  addBox.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addKeysBtn.click(); } });
 
   return h("div", { class: "card" },
     h("h3", {},
@@ -1450,83 +1028,46 @@ function poolCard(p, idx, open, savedInputs) {
       c.invalid ? badge(c.invalid + " invalid", "r") : null,
       h("span", { style: "flex:1" }),
       h("button", { class: "ghost", title: "Higher priority", "aria-label": "Higher priority", text: "▲", disabled: idx === 0,
-        onclick: () => act(() => {
-          const n = S.pools.map(x => x.pool);
-          [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
-          return api("/api/pool/order", { names: n });
-        }, null) }),
+        onclick: () => act(() => { const n = S.pools.map(x => x.pool); [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]]; return api("/api/pool/order", { names: n }); }, null) }),
       h("button", { class: "ghost", title: "Lower priority", "aria-label": "Lower priority", text: "▼", disabled: idx === S.pools.length - 1,
-        onclick: () => act(() => {
-          const n = S.pools.map(x => x.pool);
-          [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]];
-          return api("/api/pool/order", { names: n });
-        }, null) })),
+        onclick: () => act(() => { const n = S.pools.map(x => x.pool); [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]]; return api("/api/pool/order", { names: n }); }, null) })),
     h("div", { class: "small", text: p.base_url }),
     h("div", { class: "row" },
       h("b", { text: "Model", style: "width:70px" }), mIn,
       h("button", { class: "primary", text: "Apply", onclick: applyModel }),
-      h("button", { text: "List…", title: "Load the models this service offers",
-        onclick: () => loadModels(true) })),
+      h("button", { text: "List…", title: "Load the models this service offers", onclick: () => loadModels(true) })),
     dl, h("div", { class: "row" }, note),
+    h("div", { class: "row" }, h("b", { text: "Fallback", style: "width:70px" }), fbIn,
+      h("button", { text: "Save", title: "Tried (on every key) when the chosen model is out of quota — quotas are per model", onclick: saveFb })),
     h("div", { class: "row" },
-      h("b", { text: "Fallback", style: "width:70px" }), fbIn,
-      h("button", { text: "Save",
-        title: "Tried (on every key) when the chosen model is out of quota — quotas are per model",
-        onclick: saveFb })),
-    h("div", { class: "row" },
-      h("button", { text: "Test one", onclick: e => {
-        e.target.textContent = "testing…";
-        act(async () => (await api("/api/keys/test", { name: p.keys[0].name })).results,
-            rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140))
-          .finally(() => e.target.textContent = "Test one");
-      } }),
+      h("button", { text: "Test one", onclick: e => { e.target.textContent = "testing…"; act(async () => (await api("/api/keys/test", { name: p.keys[0].name })).results, rs => rs[0].ok ? "Works: " + p.keys[0].name : "Failed: " + rs[0].text.slice(0, 140)).finally(() => e.target.textContent = "Test one"); } }),
       p.keys.length > 1 ? h("button", { text: "Test all " + p.keys.length,
-        onclick: e => {
-          e.target.textContent = "testing…";
-          act(async () => (await api("/api/keys/test", { pool: p.pool })).results,
-              rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work")
-            .finally(() => e.target.textContent = "Test all " + p.keys.length);
-        } }) : null,
-      h("button", { text: "Reset cooldowns",
-        onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }),
-                            "Cooldowns cleared") }),
+        onclick: e => { e.target.textContent = "testing…"; act(async () => (await api("/api/keys/test", { pool: p.pool })).results, rs => rs.filter(r => r.ok).length + "/" + rs.length + " keys work").finally(() => e.target.textContent = "Test all " + p.keys.length); } }) : null,
+      h("button", { text: "Reset cooldowns", onclick: () => act(() => api("/api/keys/revive", { pool: p.pool }), "Cooldowns cleared") }),
       h("button", { class: "danger", text: "Remove service",
-        onclick: async () => {
-          if (await confirmDlg("Remove service?",
-                               "Remove " + p.pool + " and all its " + p.keys.length + " keys?",
-                               "Remove service"))
-            act(() => api("/api/pool/remove", { pool: p.pool }), "Removed");
-        } })),
+        onclick: async () => { if (await confirmDlg("Remove service?", "Remove " + p.pool + " and all its " + p.keys.length + " keys?", "Remove service")) act(() => api("/api/pool/remove", { pool: p.pool }), "Removed"); } })),
     keysList,
     h("div", { class: "row" }, addBox),
     h("div", { class: "row" }, addKeysBtn));
 }
 
-function addServiceCard(savedInputs) {
+function addServiceCard() {
   const preset = h("select", {},
     h("option", { value: "", text: "Custom / other…" }),
     ...S.presets.map(p => h("option", { value: p.name, text: p.name })));
-  const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false,
-    "data-persist": "add-svc-name" });
-  const url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)",
-    spellcheck: false, "data-persist": "add-svc-url" });
-  const model = h("input", { placeholder: "model id", spellcheck: false,
-    "data-persist": "add-svc-model" });
-  const keys = h("textarea", { class: "keysbox",
-    placeholder: "API key(s) — one per line or comma separated", spellcheck: false,
-    "data-persist": "add-svc-keys" });
+  const name = h("input", { placeholder: "service name, e.g. groq", spellcheck: false, "data-persist": "add-svc-name" });
+  const url = h("input", { placeholder: "base URL (OpenAI-compatible, ends in /v1)", spellcheck: false, "data-persist": "add-svc-url" });
+  const model = h("input", { placeholder: "model id", spellcheck: false, "data-persist": "add-svc-model" });
+  const keys = h("textarea", { class: "keysbox", placeholder: "API key(s) — one per line or comma separated", spellcheck: false, "data-persist": "add-svc-keys" });
   preset.addEventListener("change", () => {
     const p = S.presets.find(x => x.name === preset.value);
     if (p) { name.value = p.name; url.value = p.base_url; model.value = p.model; }
   });
   const addBtn = h("button", { class: "primary", text: "Add",
-    onclick: () => act(() => api("/api/keys/add",
-      { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }),
+    onclick: () => act(() => api("/api/keys/add", { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }),
       r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
   [name, url, model].forEach(el => entrable(el, () => addBtn.click()));
-  keys.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); }
-  });
+  keys.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); } });
   return h("div", { class: "card" },
     h("h3", { text: "Add a service" }),
     h("div", { class: "row" }, preset, name),
@@ -1537,166 +1078,245 @@ function addServiceCard(savedInputs) {
     h("div", { class: "small", text: "Keys stay on this computer in data/providers.json and are never sent back to the browser." }));
 }
 
-function renderMcp() {
+/* ----------------------------------------------------------------
+   MCP panel
+   ---------------------------------------------------------------- */
+function parseEnvLines(text) {
+  const out = {};
+  for (const raw of (text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const i = line.indexOf("=");
+    if (i <= 0) continue;
+    const k = line.slice(0, i).trim();
+    let v = line.slice(i + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (k) out[k] = v;
+  }
+  return out;
+}
+function dumpEnv(obj) {
+  return Object.entries(obj || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+}
+function parseHeaderLines(text) {
+  const out = {};
+  for (const raw of (text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const i = line.indexOf(":");
+    if (i <= 0) continue;
+    out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+function dumpHeaders(obj) {
+  return Object.entries(obj || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
+}
+
+function mcpServerCard(m) {
+  const dl = h("details", { class: "mcp-card" },
+    h("summary", { style: "list-style:none;cursor:pointer" },
+      h("div", { class: "mcp-hd" },
+        h("span", { title: m.ready ? "running" : "not running",
+                    text: "●", style: `color:${m.ready ? "var(--ok)" : "var(--muted)"};font-size:11px` }),
+        h("span", { class: "nm", text: m.name }),
+        badge(m.tools + " tools", m.tools ? "g" : ""),
+        m.transport === "http" ? badge("http", "i") : badge("stdio", "w"),
+        h("span", { style: "flex:1" }),
+        h("button", { class: "ghost", text: "▲ Edit",
+          onclick: e => { e.stopPropagation(); toggleEdit(); } }))),
+    h("div", { class: "mcp-meta", text: m.command || m.url || "" }),
+    m.error ? h("div", { class: "note err", text: m.error }) : null,
+    m.tool_names && m.tool_names.length
+      ? h("div", { class: "mcp-meta", text: "Tools: " + m.tool_names.slice(0, 12).join(", ") + (m.tool_names.length > 12 ? "…" : "") })
+      : null,
+    h("div", { class: "mcp-actions" },
+      h("button", { text: m.ready ? "Stop" : "Start",
+        onclick: () => act(() => m.ready ? api("/api/mcp/stop", { name: m.name }) : api("/api/mcp/start", { name: m.name }),
+                           m.ready ? "Stopped" : r => `${m.name}: ${r.tools} tools`) }),
+      h("button", { text: "Restart", disabled: !m.ready,
+        onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => `${m.name}: ${r.tools} tools`) }),
+      h("button", { class: "danger", text: "Delete",
+        onclick: async () => {
+          if (!(await confirmDlg("Delete MCP server?",
+              "This removes '" + m.name + "' from data/mcp.json and stops its process.",
+              "Delete"))) return;
+          act(() => api("/api/mcp/delete", { name: m.name }), "Deleted " + m.name);
+        } })),
+    h("div", { class: "mcp-edit", hidden: true }, mcpEditor(m)));
+
+  function toggleEdit() {
+    const box = dl.querySelector(".mcp-edit");
+    if (!box) return;
+    box.hidden = !box.hidden;
+    if (!box.hidden) box.querySelector("input")?.focus();
+  }
+  return dl;
+}
+
+function mcpEditor(m) {
+  const name = h("input", { value: m.name, placeholder: "server name", spellcheck: false });
+  const cmd = h("input", { value: m.command || "", placeholder: "command (e.g. npx) — leave blank for remote", spellcheck: false });
+  const args = h("input", { value: (m.args || []).join(" "), placeholder: "args, space-separated", spellcheck: false });
+  const url = h("input", { value: m.url || "", placeholder: "remote URL (leave blank for local)", spellcheck: false });
+  const envIn = h("textarea", { class: "keysbox", placeholder: "ENV vars, one KEY=VALUE per line. Pre-existing names: " + (m.env_keys || []).join(", "), spellcheck: false });
+  const headersIn = h("textarea", { class: "keysbox", placeholder: "HTTP headers (remote only), one Header: value per line. Pre-existing names: " + (m.header_keys || []).join(", "), spellcheck: false });
+  const save = h("button", { class: "primary", text: "Save & restart",
+    onclick: () => act(() => api("/api/mcp/update", {
+      old_name: m.name,
+      name: name.value.trim(),
+      command: cmd.value.trim(),
+      args: args.value.split(/\s+/).filter(Boolean),
+      url: url.value.trim(),
+      env: parseEnvLines(envIn.value),
+      headers: parseHeaderLines(headersIn.value),
+    }), r => `Saved ${r.name}: ${r.tools} tools`) });
+  return h("div", { class: "mcp-form" },
+    h("label", { text: "Name" }), name,
+    h("label", { text: "Command (local stdio)" }), cmd,
+    h("label", { text: "Args" }), args,
+    h("label", { text: "URL (remote Streamable HTTP)" }), url,
+    h("label", { text: "Environment variables" }), envIn,
+    h("label", { text: "HTTP headers" }), headersIn,
+    h("div", { class: "mcp-actions" },
+      h("button", { text: "Cancel", onclick: e => { e.target.closest("details").querySelector(".mcp-edit").hidden = true; } }),
+      save));
+}
+
+function mcpAddCard() {
+  const name = h("input", { placeholder: "server name (e.g. filesystem)", spellcheck: false });
+  const cmd = h("input", { placeholder: "command (e.g. npx)", spellcheck: false });
+  const args = h("input", { placeholder: "args, space-separated", spellcheck: false });
+  const url = h("input", { placeholder: "remote URL (leave blank for local)", spellcheck: false });
+  const envIn = h("textarea", { class: "keysbox", spellcheck: false, placeholder: "ENV vars, one KEY=VALUE per line" });
+  const headersIn = h("textarea", { class: "keysbox", spellcheck: false, placeholder: "HTTP headers (remote only), one Header: value per line" });
+  const addBtn = h("button", { class: "primary", text: "Add & connect",
+    onclick: () => act(() => api("/api/mcp/add", {
+      name: name.value.trim(), command: cmd.value.trim(),
+      args: args.value.split(/\s+/).filter(Boolean),
+      url: url.value.trim(),
+      env: parseEnvLines(envIn.value), headers: parseHeaderLines(headersIn.value),
+    }), r => `Connected ${r.name}: ${r.tools} tools`) });
+  [name, cmd, args, url].forEach(el => entrable(el, () => addBtn.click()));
+  return h("div", { class: "card", id: "mcp-add" },
+    h("h3", { text: "Add an MCP server" }),
+    h("div", { class: "mcp-form" },
+      h("label", { text: "Name" }), name,
+      h("label", { text: "Command (local stdio)" }), cmd,
+      h("label", { text: "Args" }), args,
+      h("label", { text: "URL (remote Streamable HTTP)" }), url,
+      h("label", { text: "Environment variables" }), envIn,
+      h("label", { text: "HTTP headers" }), headersIn),
+    h("div", { class: "mcp-actions" }, addBtn),
+    h("div", { class: "small", text: "Local server: fill command + args. Remote server: fill the URL. Tokens go in the env or headers box. Pick a server from the registry below to autofill." }));
+}
+
+async function renderMcp() {
   const pane = $("#pane-mcp"); if (!pane || !S) return;
   const scroll = pane.scrollTop;
   pane.replaceChildren();
+
   pane.append(h("div", { class: "card" },
     h("h3", { text: "MCP servers" }),
-    h("div", { class: "small", text: "Model Context Protocol servers extend Omni with new tools (filesystem, github, sqlite, playwright…). Tools appear to the model as mcp__<server>__<tool>. Pick one from the official registry below, or add a private server by hand." })));
+    h("div", { class: "small", text: "Model Context Protocol servers extend Omni with new tools. They appear to the model as mcp__<server>__<tool>. You can edit or delete any server below, and add new ones from the registry." })));
+
   if (S.mcp_load_errors && S.mcp_load_errors.length) {
     pane.append(h("div", { class: "note err", text: S.mcp_load_errors.join("\n") }));
   }
 
-  // ---- Installed servers
   if (S.mcp && S.mcp.length) {
-    for (const m of S.mcp) {
-      pane.append(h("div", { class: "card" },
-        h("div", { class: "mcp-row" },
-          h("span", { style: "width:10px;height:10px;border-radius:50%;background:" + (m.ready ? "var(--ok)" : "var(--bad)") }),
-          h("span", { class: "nm", text: m.name }),
-          badge(m.tools + " tools", m.ready ? "g" : "r"),
-          m.error ? h("span", { class: "small", text: m.error }) : null,
-          h("button", { text: "Restart",
-            onclick: () => act(() => api("/api/mcp/restart", { name: m.name }), r => r.result) }),
-          h("button", { text: "Stop",
-            onclick: () => act(() => api("/api/mcp/stop", { name: m.name }), "Stopped") }),
-          h("button", { class: "primary", text: "Start",
-            onclick: () => act(() => api("/api/mcp/start", { name: m.name }),
-                                r => `${m.name}: ${r.tools} tools`) })),
-        h("div", { class: "small", text: m.command })));
-    }
+    for (const m of S.mcp) pane.append(mcpServerCard(m));
   } else {
-    pane.append(h("div", { class: "card" },
-      h("div", { class: "small", text: "No servers configured yet." })));
+    pane.append(h("div", { class: "card" }, h("div", { class: "small", text: "No servers configured yet." })));
   }
+
+  pane.append(mcpAddCard());
 
   // ---- Registry browser
-  const searchIn = h("input", { placeholder: "Search the MCP registry (filesystem, github, sqlite…)", spellcheck: false });
-  const results = h("div", { class: "mcp-results", style: "max-height:260px;overflow:auto;margin-top:8px" });
-  const hint = h("div", { class: "small", style: "margin-top:6px" });
-  const refreshBtn = h("button", { text: "↻ Refresh catalog", title: "Re-fetch the official registry (cached for 1 hour)",
+  const searchIn = h("input", { placeholder: "Search the registry (filesystem, github, sqlite, youtube…)", spellcheck: false });
+  const refreshBtn = h("button", { text: "↻ Refresh catalog", title: "Re-fetch the official MCP registry (cached for 1h)",
     onclick: () => loadRegistry(true) });
+  const results = h("div", { class: "mcp-reg" });
+  const hint = h("div", { class: "small", style: "margin-top:6px" });
 
-  const name = h("input", { placeholder: "server name (e.g. filesystem)", spellcheck: false });
-  const cmd = h("input", { placeholder: "command (e.g. npx)", spellcheck: false });
-  const args = h("input", { placeholder: "args, space-separated (e.g. -y @modelcontextprotocol/server-filesystem /home/you)", spellcheck: false });
-  const urlIn = h("input", { placeholder: "remote URL (e.g. https://mcp.example.com/mcp) — leave blank for local", spellcheck: false });
-  const envIn = h("textarea", { class: "keysbox", spellcheck: false,
-    placeholder: "env / secrets — one KEY=VALUE per line, e.g.\nGITHUB_PERSONAL_ACCESS_TOKEN=ghp_...\nGOOGLE_OAUTH_TOKEN=ya29....",
-  });
-  const headersIn = h("textarea", { class: "keysbox", spellcheck: false,
-    placeholder: "HTTP headers (remote servers only) — one Header: value per line, e.g.\nAuthorization: Bearer eyJ...",
-  });
-
-  function parseEnv(text) {
-    const out = {};
-    for (const raw of (text || "").split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line || line.startsWith("#")) continue;
-      const i = line.indexOf("=");
-      if (i <= 0) continue;
-      const k = line.slice(0, i).trim();
-      let v = line.slice(i + 1).trim();
-      if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-      if (v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
-      if (k) out[k] = v;
-    }
-    return out;
-  }
-  function parseHeaders(text) {
-    const out = {};
-    for (const raw of (text || "").split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line || line.startsWith("#")) continue;
-      const i = line.indexOf(":");
-      if (i <= 0) continue;
-      out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-    }
-    return out;
-  }
-
-  const addBtn = h("button", { class: "primary", text: "Add & connect",
-    onclick: () => act(() => api("/api/mcp/add", {
-        name: name.value,
-        command: cmd.value,
-        args: args.value.split(/\s+/).filter(Boolean),
-        url: urlIn.value.trim(),
-        env: parseEnv(envIn.value),
-        headers: parseHeaders(headersIn.value),
-      }),
-      r => `Connected: ${r.tools} tools`) });
-  [name, cmd, args, urlIn].forEach(el => entrable(el, () => addBtn.click()));
+  let cache = null;
 
   function applyTemplate(row) {
     const t = row.template;
-    if (!t || t.unsupported) { hint.textContent = (t && t.reason) || "No template available — fill in command and args manually."; return; }
-    const short = (row.name || "").split("/").pop().replace(/[^A-Za-z0-9_\-]/g, "_").slice(0, 32) || "mcp";
-    name.value = short;
-    if (t.transport === "http") {
-      cmd.value = "";
-      args.value = "";
-      urlIn.value = t.url || "";
-      hint.textContent = "Pre-filled remote endpoint from " + row.name + (t.note ? " (" + t.note + ")" : "") + ". Review and click Add.";
-      urlIn.focus();
-    } else {
-      urlIn.value = "";
-      cmd.value = t.command || "";
-      args.value = (t.args || []).join(" ");
-      hint.textContent = "Pre-filled from " + row.name + ". Check the args before adding.";
-      cmd.focus();
+    if (!t || t.unsupported) {
+      hint.textContent = (t && t.reason) || "This registry entry has no usable template — fill it in manually.";
+      return;
     }
+    // Fill the "Add" card. Prefer this over opening a modal so the user
+    // can review every value before connecting.
+    const card = $("#mcp-add");
+    if (!card) return;
+    const [nameI, cmdI, argsI, urlI, envI, hdrI] = card.querySelectorAll(".mcp-form input, .mcp-form textarea");
+    const short = (row.name || "").split("/").pop().replace(/[^A-Za-z0-9_\-]/g, "_").slice(0, 32) || "mcp";
+    if (nameI) nameI.value = short;
+    if (t.transport === "http") {
+      if (urlI) urlI.value = t.url || "";
+      if (cmdI) cmdI.value = "";
+      if (argsI) argsI.value = "";
+      hint.textContent = "Autofilled remote endpoint for " + row.name + (t.note ? " (" + t.note + ")" : "") + ". Review, then click Add & connect.";
+    } else {
+      if (urlI) urlI.value = "";
+      if (cmdI) cmdI.value = t.command || "";
+      if (argsI) argsI.value = (t.args || []).join(" ");
+      // Leave env blank if none; if the template declared required vars,
+      // seed them as KEY= so the user has to fill a value.
+      if (envI) envI.value = dumpEnv(t.env || {});
+      hint.textContent = "Autofilled local command for " + row.name +
+        (row.env_required && row.env_required.length ? "  — fill the required env vars before connecting." : "") + " Review, then click Add & connect.";
+    }
+    if (hdrI) hdrI.value = "";
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  let registryCache = null;
+  function renderResults() {
+    const q = (searchIn.value || "").toLowerCase();
+    const rows = (cache || []).filter(r =>
+      !q || r.name.toLowerCase().includes(q) || r.title.toLowerCase().includes(q) ||
+      (r.description || "").toLowerCase().includes(q) ||
+      (r.categories || []).some(c => c.toLowerCase().includes(q)));
+    if (!rows.length) { results.replaceChildren(h("div", { class: "small", style: "padding:10px", text: "No matching servers." })); return; }
+    results.replaceChildren(...rows.slice(0, 150).map(r => {
+      const disabled = r.template && r.template.unsupported;
+      return h("div", { class: "mcp-row", title: r.description || r.name,
+        style: disabled ? "opacity:.55;cursor:not-allowed" : "",
+        onclick: disabled ? null : () => applyTemplate(r) },
+        h("div", { class: "body" },
+          h("div", { class: "t" }, r.title || r.name),
+          h("div", { class: "small", text: r.name }),
+          r.description ? h("div", { class: "d", text: r.description }) : null,
+          h("div", { class: "tags" },
+            r.installed ? badge("installed", "g") : null,
+            r.runtime ? badge(r.runtime, "i") : null,
+            ...(r.env_required || []).slice(0, 4).map(e => badge(e.name + " *", "w")),
+            ...(r.categories || []).slice(0, 4).map(c => badge(c)))));
+    }));
+  }
+
   async function loadRegistry(force) {
-    results.replaceChildren(h("div", { class: "small", text: "Loading registry…" }));
+    results.replaceChildren(h("div", { class: "small", style: "padding:10px", text: "Loading registry…" }));
     try {
-      const d = await api(`/api/mcp_registry?limit=300${force ? "&refresh=1" : ""}`);
-      registryCache = d.servers || [];
-      if (d.error) hint.textContent = "Registry unavailable: " + d.error + " — you can still add a server by hand below.";
+      const d = await api(`/api/mcp_registry?limit=400${force ? "&refresh=1" : ""}`);
+      cache = d.servers || [];
+      if (d.error) hint.textContent = "Registry unavailable: " + d.error + " — you can still add a server by hand above.";
       renderResults();
     } catch (e) {
       results.replaceChildren(h("div", { class: "note err", text: e.message }));
     }
   }
-  function renderResults() {
-    const q = (searchIn.value || "").toLowerCase();
-    const list = (registryCache || []).filter(r =>
-      !q || r.name.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q));
-    if (!list.length) { results.replaceChildren(h("div", { class: "small", text: "No matching servers." })); return; }
-    results.replaceChildren(...list.slice(0, 100).map(r => {
-      const disabled = r.template && r.template.unsupported;
-      return h("div", { class: "mcp-result", style: "padding:8px 6px;border-bottom:1px solid var(--line);cursor:" + (disabled ? "not-allowed" : "pointer") + ";opacity:" + (disabled ? ".55" : "1"),
-        onclick: disabled ? null : () => applyTemplate(r) },
-        h("div", { style: "display:flex;gap:8px;align-items:center" },
-          h("b", { text: r.name }),
-          r.installed ? badge("installed", "g") : null,
-          disabled ? badge("remote", "w") : null),
-        r.description ? h("div", { class: "small", text: r.description }) : null,
-        disabled ? h("div", { class: "small", text: r.template.reason || "" }) : null);
-    }));
-  }
   searchIn.addEventListener("input", renderResults);
-  entrable(searchIn, () => results.querySelector(".mcp-result")?.click());
+  entrable(searchIn, () => results.querySelector(".mcp-row:not([style*='not-allowed'])")?.click());
 
   pane.append(h("div", { class: "card" },
-    h("h3", { text: "Browse the MCP registry" }),
+    h("h3", { text: "Browse the official registry" }),
+    h("div", { class: "small", text: "Every server below is fetched live from registry.modelcontextprotocol.io. Required env vars are badged with *." }),
     h("div", { class: "row" }, searchIn, refreshBtn),
     results,
-    h("div", { class: "row" }, hint)));
-
-  pane.append(h("div", { class: "card" },
-    h("h3", { text: "Add an MCP server" }),
-    h("div", { class: "row" }, name, cmd),
-    h("div", { class: "row" }, args),
-    h("div", { class: "row" }, urlIn),
-    h("div", { class: "small", text: "Environment variables (local servers — tokens, API keys)" }),
-    envIn,
-    h("div", { class: "small", text: "HTTP headers (remote servers — Authorization: Bearer …)" }),
-    headersIn,
-    h("div", { class: "row" }, addBtn),
-    h("div", { class: "small", text: "Local server: fill command + args. Remote server: fill the URL (Streamable HTTP). Tokens go in the env or headers box. Pick a server above to pre-fill these fields." })));
+    hint));
 
   loadRegistry(false);
   pane.scrollTop = scroll;
@@ -1713,9 +1333,7 @@ async function loadFiles() {
         h("span", { class: "small", text: list.length + " file(s) in the workspace" })),
       h("div", { class: "files" }, ...list.map(f => h("div", { class: "f" },
         h("span", { title: f.path, text: f.path }),
-        h("span", { class: "small", text: f.size > 1048576
-          ? (f.size / 1048576).toFixed(1) + " MB"
-          : Math.max(1, Math.round(f.size / 1024)) + " KB" }),
+        h("span", { class: "small", text: f.size > 1048576 ? (f.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(f.size / 1024)) + " KB" }),
         h("a", { href: "/api/file?path=" + encodeURIComponent(f.path), text: "download" })))));
   } catch (e) { pane.textContent = e.message; }
 }
@@ -1727,19 +1345,12 @@ function uploadOne(file) {
     xhr.setRequestHeader("X-Omni", "1");
     xhr.upload.onprogress = e => {
       if (e.lengthComputable && file.size > 2 * 1024 * 1024) {
-        const pct = Math.round(100 * e.loaded / e.total);
-        toast(`Uploading ${file.name}: ${pct}%`, 700);
+        toast(`Uploading ${file.name}: ${Math.round(100 * e.loaded / e.total)}%`, 700);
       }
     };
     xhr.onload = () => {
-      if (xhr.status === 200) {
-        try { resolve(JSON.parse(xhr.responseText)); }
-        catch (_) { reject(new Error("bad response")); }
-      } else {
-        let msg = `HTTP ${xhr.status}`;
-        try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
-        reject(new Error(msg));
-      }
+      if (xhr.status === 200) { try { resolve(JSON.parse(xhr.responseText)); } catch (_) { reject(new Error("bad response")); } }
+      else { let msg = `HTTP ${xhr.status}`; try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {} reject(new Error(msg)); }
     };
     xhr.onerror = () => reject(new Error("network error"));
     xhr.send(file);
@@ -1752,60 +1363,31 @@ async function upload(files) {
       const d = await uploadOne(f);
       const cur = $("#inp").value;
       $("#inp").value = cur + (cur && !cur.endsWith(" ") ? " " : "") + `[file in workspace: ${d.path}] `;
-      autoGrow();
-      toast("Uploaded " + d.path);
+      autoGrow(); toast("Uploaded " + d.path);
     } catch (e) { toast("Upload failed: " + e.message, 5000); }
   }
   loadFiles();
 }
 
-/* ------------------------------------------------------------------
-   Large paste handling.
-
-   Pasting a large block of text (a log dump, a document, 500 KB of JSON)
-   used to freeze the browser: the textarea grew, every line got a DOM
-   node in the bubble, and the full text was sent to the model on every
-   subsequent turn. Now anything over LARGE_PASTE_CHARS is intercepted at
-   paste time, uploaded as a file in the workspace, and only a short
-   reference ("[pasted text attached as pasted-...txt]") goes in the
-   prompt. The agent reads the file with read_file if it needs the
-   content. Small pastes behave exactly as before.
-   ------------------------------------------------------------------ */
-const LARGE_PASTE_CHARS = 20000;   // ~20 KB
-
+const LARGE_PASTE_CHARS = 20000;
 $("#inp").addEventListener("paste", async e => {
   const cd = e.clipboardData || window.clipboardData;
   const txt = cd ? cd.getData("text") : "";
-  if (!txt || txt.length < LARGE_PASTE_CHARS) return;    // normal paste — let it through
-  e.preventDefault();                                     // don't insert 500 KB into the textarea
-
+  if (!txt || txt.length < LARGE_PASTE_CHARS) return;
+  e.preventDefault();
   const name = `pasted-${Date.now()}.txt`;
   toast(`Large paste (${Math.round(txt.length / 1024)} KB) — attaching as ${name}…`, 4000);
   try {
-    const blob = new Blob([txt], { type: "text/plain" });
-    const file = new File([blob], name, { type: "text/plain" });
+    const file = new File([new Blob([txt], { type: "text/plain" })], name, { type: "text/plain" });
     const d = await uploadOne(file);
     const inp = $("#inp");
-    const ref = `[pasted text attached as ${d.path}]`;
-    inp.value = (inp.value ? inp.value + " " : "") + ref + " ";
-    inp.focus(); autoGrow();
-    toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`);
-    loadFiles();
-  } catch (err) {
-    toast("Attach failed: " + err.message, 5000);
-  }
+    inp.value = (inp.value ? inp.value + " " : "") + `[pasted text attached as ${d.path}] `;
+    inp.focus(); autoGrow(); toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`); loadFiles();
+  } catch (err) { toast("Attach failed: " + err.message, 5000); }
 });
-
-/* Drag-and-drop of *selected text* (not a file) from another app arrives
-   as text/plain on dataTransfer. Same rule as paste: if it's large,
-   upload it instead of stuffing it into the prompt. */
 $("#inp").addEventListener("dragover", e => e.preventDefault());
 $("#inp").addEventListener("drop", async e => {
-  if (e.dataTransfer.files.length) {
-    e.preventDefault();
-    upload([...e.dataTransfer.files]);
-    return;
-  }
+  if (e.dataTransfer.files.length) { e.preventDefault(); upload([...e.dataTransfer.files]); return; }
   const txt = e.dataTransfer.getData("text") || "";
   if (txt.length >= LARGE_PASTE_CHARS) {
     e.preventDefault();
@@ -1815,30 +1397,16 @@ $("#inp").addEventListener("drop", async e => {
       const d = await uploadOne(file);
       const inp = $("#inp");
       inp.value += (inp.value ? " " : "") + `[dropped text attached as ${d.path}] `;
-      autoGrow(); loadFiles();
-      toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`);
+      autoGrow(); loadFiles(); toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`);
     } catch (err) { toast("Attach failed: " + err.message, 5000); }
   }
 });
 
-/* ------------------------------------------------------------------
-   Workspace picker.
-   Improvements vs. the previous version:
-     * editable path bar (paste a path, Enter to go),
-     * native "Browse…" button that calls /api/workspace/pick (opens the
-       OS folder dialog on the server, which is the same machine here),
-     * Home goes to ~ (not the current workspace),
-     * Up works at filesystem roots,
-     * keyboard nav (arrows, Enter, Backspace),
-     * keeps the hidden-files toggle between opens,
-     * server rejects roots and data/ ancestors (same rule as the API).
-   ------------------------------------------------------------------ */
 let browseKeyHandler = null;
 function openBrowser(startPath, cb) {
   document.getElementById("browse")?.remove();
   const overlay = h("div", { id: "browse",
     style: "position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:40;padding:16px" });
-
   const crumbs = h("div", { class: "crumbs" });
   const recent = h("div", { class: "recent" });
   const listing = h("div", { class: "listing", tabindex: "0" });
@@ -1846,54 +1414,34 @@ function openBrowser(startPath, cb) {
   const deepBox = h("input", { type: "checkbox" });
   const hiddenBox = h("input", { type: "checkbox" });
   hiddenBox.checked = store.get("omni_ws_hidden") === "1";
-  hiddenBox.addEventListener("change", () => {
-    store.set("omni_ws_hidden", hiddenBox.checked ? "1" : "0");
-    go(curPath);
-  });
+  hiddenBox.addEventListener("change", () => { store.set("omni_ws_hidden", hiddenBox.checked ? "1" : "0"); go(curPath); });
   const drivesBox = h("div", { class: "row" });
-  let allEntries = [];
-  let curPath = "";
-  let selIndex = -1;
+  let allEntries = [], curPath = "", selIndex = -1;
   const history = [];
 
-  const pathIn = h("input", {
-    spellcheck: false, style: "flex:2;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px",
-    "aria-label": "Current path",
-  });
-  pathIn.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); go(pathIn.value.trim() || curPath); }
-  });
+  const pathIn = h("input", { spellcheck: false, style: "flex:2;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px", "aria-label": "Current path" });
+  pathIn.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(pathIn.value.trim() || curPath); } });
 
   function renderEntries() {
     const f = filterIn.value.toLowerCase();
-    const filtered = f && !deepBox.checked
-      ? allEntries.filter(en => en.name.toLowerCase().includes(f))
-      : allEntries;
+    const filtered = f && !deepBox.checked ? allEntries.filter(en => en.name.toLowerCase().includes(f)) : allEntries;
     listing.replaceChildren(...filtered.slice(0, 500).map((en, i) => {
       const row = h("div", { class: "f", title: en.path, tabindex: "0", "data-idx": i },
         h("span", { text: en.dir ? "📁" : "📄" }),
         h("span", { class: "nm", text: en.name }),
-        en.dir ? null : h("span", { class: "small",
-          text: Math.max(1, Math.round(en.size / 1024)) + " KB" }));
+        en.dir ? null : h("span", { class: "small", text: Math.max(1, Math.round(en.size / 1024)) + " KB" }));
       row.addEventListener("click", () => {
         listing.querySelectorAll(".f.sel").forEach(x => x.classList.remove("sel"));
-        row.classList.add("sel");
-        selIndex = i;
+        row.classList.add("sel"); selIndex = i;
       });
-      row.addEventListener("dblclick", () => {
-        if (en.dir) go(en.path);
-      });
-      row.addEventListener("keydown", e => {
-        if (e.key === "Enter") { e.preventDefault(); if (en.dir) go(en.path); }
-      });
+      row.addEventListener("dblclick", () => { if (en.dir) go(en.path); });
+      row.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); if (en.dir) go(en.path); } });
       return row;
     }));
     selIndex = -1;
   }
-
   listing.addEventListener("keydown", e => {
-    const rows = [...listing.querySelectorAll(".f")];
-    if (!rows.length) return;
+    const rows = [...listing.querySelectorAll(".f")]; if (!rows.length) return;
     if (e.key === "ArrowDown") { e.preventDefault(); selIndex = Math.min(rows.length - 1, selIndex + 1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); selIndex = Math.max(0, selIndex - 1); }
     else if (e.key === "Enter" && selIndex >= 0) { e.preventDefault(); rows[selIndex].dispatchEvent(new MouseEvent("dblclick")); return; }
@@ -1901,11 +1449,7 @@ function openBrowser(startPath, cb) {
     rows.forEach((r, i) => r.classList.toggle("sel", i === selIndex));
     rows[selIndex].scrollIntoView({ block: "nearest" });
   });
-
-  filterIn.addEventListener("input", () => {
-    if (deepBox.checked) return;
-    renderEntries();
-  });
+  filterIn.addEventListener("input", () => { if (!deepBox.checked) renderEntries(); });
   deepBox.addEventListener("change", () => { if (deepBox.checked) go(curPath, true); });
 
   function setCrumbs(p) {
@@ -1913,41 +1457,29 @@ function openBrowser(startPath, cb) {
     const isWin = /^[A-Za-z]:[\\/]/.test(p);
     const parts = p.split(/[\\/]/).filter(Boolean);
     let acc = isWin ? "" : "/";
-    const home = h("button", { class: "ghost", text: "🏠", title: "Home",
-      "aria-label": "Home", onclick: () => go((S && S.home) || "") });
-    crumbs.append(home);
+    crumbs.append(h("button", { class: "ghost", text: "🏠", title: "Home", "aria-label": "Home",
+      onclick: () => go((S && S.home) || "") }));
     parts.forEach((part, i) => {
       if (i === 0 && isWin) acc = part + "\\";
       else if (isWin) acc = acc.replace(/\\?$/, "\\") + part;
       else acc = acc.replace(/\/?$/, "/") + part;
-      const target = acc;
-      const isLast = i === parts.length - 1;
+      const target = acc, isLast = i === parts.length - 1;
       crumbs.append(h("span", { text: isWin ? "\\" : "/" }));
-      crumbs.append(h("button", { class: "ghost crumb" + (isLast ? " cur" : ""), text: part,
-        title: target, onclick: () => go(target) }));
+      crumbs.append(h("button", { class: "ghost crumb" + (isLast ? " cur" : ""), text: part, title: target, onclick: () => go(target) }));
     });
   }
-
   function renderRecent() {
-    let rec = [];
-    try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
+    let rec = []; try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
     recent.replaceChildren(
       rec.length ? h("span", { class: "small", text: "Recent:" }) : null,
-      ...rec.slice(0, 6).map(r =>
-        h("button", { class: "ghost", title: r,
-          text: r.split(/[\\/]/).filter(Boolean).pop() || r,
-          onclick: () => go(r) })),
-      rec.length ? h("button", { class: "ghost small", text: "clear",
-        onclick: () => { store.set("omni_recent_ws", "[]"); renderRecent(); } }) : null);
+      ...rec.slice(0, 6).map(r => h("button", { class: "ghost", title: r, text: r.split(/[\\/]/).filter(Boolean).pop() || r, onclick: () => go(r) })),
+      rec.length ? h("button", { class: "ghost small", text: "clear", onclick: () => { store.set("omni_recent_ws", "[]"); renderRecent(); } }) : null);
   }
   function pushRecent(p) {
-    let rec = [];
-    try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
+    let rec = []; try { rec = JSON.parse(store.get("omni_recent_ws") || "[]"); } catch (_) { rec = []; }
     rec = [p, ...rec.filter(x => x !== p)].slice(0, 10);
-    store.set("omni_recent_ws", JSON.stringify(rec));
-    renderRecent();
+    store.set("omni_recent_ws", JSON.stringify(rec)); renderRecent();
   }
-
   async function go(p, deep = false) {
     if (curPath && curPath !== p) history.push(curPath);
     const q = new URLSearchParams({ path: p || "" });
@@ -1955,27 +1487,15 @@ function openBrowser(startPath, cb) {
     if (hiddenBox.checked) q.set("hidden", "1");
     try {
       const d = await api("/api/browse?" + q);
-      curPath = d.path;
-      pathIn.value = d.path;
-      setCrumbs(d.path);
-      allEntries = d.entries;
-      renderEntries();
-      drivesBox.replaceChildren(...(d.drives || []).map(dr =>
-        h("button", { text: dr, onclick: () => go(dr) })));
+      curPath = d.path; pathIn.value = d.path; setCrumbs(d.path);
+      allEntries = d.entries; renderEntries();
+      drivesBox.replaceChildren(...(d.drives || []).map(dr => h("button", { text: dr, onclick: () => go(dr) })));
     } catch (e) { toast(e.message); }
   }
-
-  const backBtn = h("button", { text: "←", title: "Back", "aria-label": "Back",
-    onclick: () => { if (history.length) go(history.pop()); } });
-
+  const backBtn = h("button", { text: "←", title: "Back", "aria-label": "Back", onclick: () => { if (history.length) go(history.pop()); } });
   const upBtn = h("button", { text: "⬆ Up", title: "Parent folder",
-    onclick: () => {
-      const p = (curPath || "").replace(/[\\/]+$/, "");
-      const isWin = /^[A-Za-z]:$/.test(p);
-      const up = isWin ? p + "\\" : (p.replace(/[\\/][^\\/]*$/, "") || (osWinPath() ? "C:\\" : "/"));
-      go(up);
-    } });
-
+    onclick: () => { const p = (curPath || "").replace(/[\\/]+$/, ""); const isWin = /^[A-Za-z]:$/.test(p);
+      const up = isWin ? p + "\\" : (p.replace(/[\\/][^\\/]*$/, "") || (osWinPath() ? "C:\\" : "/")); go(up); } });
   const browseBtn = h("button", { text: "📂 Browse…", title: "Open the OS folder picker on this machine",
     onclick: async () => {
       toast("Opening the folder picker on the Omni machine…");
@@ -1983,81 +1503,55 @@ function openBrowser(startPath, cb) {
         const r = await api("/api/workspace/pick", {});
         if (r.cancelled) return;
         pushRecent(r.workspace);
-        // Re-read authoritative state so the chip, the keys panel and any
-        // future render all agree on the new workspace.
         try { S = await api("/api/state"); } catch (_) {}
         $("#wsChip").replaceChildren("workspace: ", h("b", { text: r.workspace }));
         toast("Workspace changed to " + r.workspace);
-        overlay.remove();
-        cleanupKeyHandler();
-        await refreshKeys(true);
+        overlay.remove(); cleanupKeyHandler(); await refreshKeys(true);
       } catch (e) { toast(e.message, 6000); }
     } });
-
   const useBtn = h("button", { class: "primary", text: "Use this folder",
     onclick: async () => {
       if (!curPath) return toast("Still loading the folder — try again in a moment");
-      const ok = await confirmDlg(
-        "Change workspace?",
+      const ok = await confirmDlg("Change workspace?",
         `Make "${curPath}" the workspace?\n\nFiles under this folder will be treated as "inside" and won't prompt for approval when the agent writes to them.`,
         "Use this folder");
       if (!ok) return;
-      try {
-        if (cb) await cb(curPath);
-        pushRecent(curPath);
-        overlay.remove();
-        cleanupKeyHandler();
-      } catch (e) { toast(e.message, 6000); }
+      try { if (cb) await cb(curPath); pushRecent(curPath); overlay.remove(); cleanupKeyHandler(); }
+      catch (e) { toast(e.message, 6000); }
     } });
-
-  const pathBar = h("div", { class: "row" },
-    backBtn, upBtn, pathIn, browseBtn, useBtn);
-
+  const pathBar = h("div", { class: "row" }, backBtn, upBtn, pathIn, browseBtn, useBtn);
   const dlg = h("div", { class: "dlg" },
     h("h3", { style: "margin:0 0 12px !important;font-size:16px", text: "Choose workspace" }),
-    recent,
-    pathBar,
+    recent, pathBar,
     h("div", { class: "row", style: "margin-top:6px" }, crumbs),
-    h("div", { class: "row", style: "margin-top:6px" },
-      filterIn,
+    h("div", { class: "row", style: "margin-top:6px" }, filterIn,
       h("label", { class: "tog" }, deepBox, " deep search"),
       h("label", { class: "tog" }, hiddenBox, " hidden")),
-    drivesBox,
-    listing,
+    drivesBox, listing,
     h("div", { class: "row", style: "justify-content:flex-end;margin-top:12px" },
       h("button", { text: "Cancel", onclick: () => { overlay.remove(); cleanupKeyHandler(); } })));
   overlay.append(dlg);
   overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); cleanupKeyHandler(); } };
   document.body.append(overlay);
-  renderRecent();
-  go(startPath || (S && S.workspace) || "");
-
+  renderRecent(); go(startPath || (S && S.workspace) || "");
   browseKeyHandler = e => { if (e.key === "Escape") { overlay.remove(); cleanupKeyHandler(); } };
   document.addEventListener("keydown", browseKeyHandler);
-  function cleanupKeyHandler() {
-    if (browseKeyHandler) { document.removeEventListener("keydown", browseKeyHandler); browseKeyHandler = null; }
-  }
+  function cleanupKeyHandler() { if (browseKeyHandler) { document.removeEventListener("keydown", browseKeyHandler); browseKeyHandler = null; } }
 }
 function osWinPath() { return /^[A-Za-z]:[\\/]/.test((S && S.workspace) || ""); }
 
 function copyText(t) { navigator.clipboard.writeText(t); toast("Copied to clipboard"); }
 async function retryMsg(e, ev) {
-  e.stopPropagation();
-  if (busy) return toast("Agent is busy");
-  try {
-    const r = await api("/api/chat/retry", { session: sid });
-    cursor = r.cursor; setBusy(true, false); poll();
-  } catch (e) { toast(e.message); }
+  e.stopPropagation(); if (busy) return toast("Agent is busy");
+  try { const r = await api("/api/chat/retry", { session: sid }); cursor = r.cursor; setBusy(true, false); poll(); }
+  catch (e) { toast(e.message); }
 }
 async function editMsg(e, ev) {
-  e.stopPropagation();
-  if (busy) return toast("Agent is busy");
+  e.stopPropagation(); if (busy) return toast("Agent is busy");
   const newText = await promptDlg("Edit message", "Edit your message:", ev.text);
   if (newText === null || newText.trim() === ev.text) return;
-  try {
-    const r = await api("/api/chat/edit", { session: sid, index: ev.idx, text: newText.trim() });
-    cursor = r.cursor; setBusy(true, false); poll();
-  } catch (e) { toast(e.message); }
+  try { const r = await api("/api/chat/edit", { session: sid, index: ev.idx, text: newText.trim() }); cursor = r.cursor; setBusy(true, false); poll(); }
+  catch (e) { toast(e.message); }
 }
 async function deleteMsg(e, ev) {
   e.stopPropagation();
@@ -2068,9 +1562,7 @@ async function deleteMsg(e, ev) {
 
 $("#send").onclick = send;
 $("#stop").onclick = doStop;
-$("#inp").addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
-});
+$("#inp").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 $("#inp").addEventListener("input", autoGrow);
 $("#newChat").onclick = newChat;
 $("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
@@ -2079,12 +1571,7 @@ $("#expand-left").onclick = () => $("#app").classList.remove("leftcollapsed");
 $("#allow").onclick = () => answer(true);
 $("#deny").onclick = () => answer(false);
 $("#autoBox").onchange = async e => {
-  if (e.target.checked && !(await confirmDlg(
-      "Enable auto-approve?",
-      "Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust.",
-      "Enable"))) {
-    e.target.checked = false; return;
-  }
+  if (e.target.checked && !(await confirmDlg("Enable auto-approve?", "Auto-approve lets the agent run shell commands and change files without asking. Only use this in a workspace you trust.", "Enable"))) { e.target.checked = false; return; }
   const d = await api("/api/auto", { session: sid, on: e.target.checked });
   $("#autoTog").classList.toggle("on", d.auto);
   $("#autoBanner").classList.toggle("on", d.auto);
@@ -2094,45 +1581,39 @@ $("#strictBox").onchange = async e => {
   $("#strictTog").classList.toggle("on", d.strict);
   toast("Strict mode " + (d.strict ? "ON" : "OFF"));
 };
+$("#bgBox").onchange = async e => {
+  try {
+    const d = await api("/api/shell_bg", { on: e.target.checked });
+    $("#bgTog").classList.toggle("on", d.on);
+    if (S) S.shell_bg_default = d.on;
+    toast("background shell executions " + (d.on ? "ON — run_shell will detach" : "OFF — run_shell streams live"));
+  } catch (err) { toast(err.message); }
+};
 $("#attach").onclick = () => $("#fileIn").click();
 $("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = ""; };
 logEl.addEventListener("dragover", e => e.preventDefault());
-logEl.addEventListener("drop", e => {
-  e.preventDefault();
-  if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]);
-});
+logEl.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
 
 function openRight(tab) {
   $("#app").classList.add("rightopen");
   store.set("omni_tab", tab);
-  document.querySelectorAll(".tabs [data-tab]").forEach(b =>
-    b.classList.toggle("on", b.dataset.tab === tab));
-  document.querySelectorAll(".pane").forEach(p =>
-    p.classList.toggle("on", p.id === "pane-" + tab));
+  document.querySelectorAll(".tabs [data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + tab));
   if (tab === "files") loadFiles();
-  else if (tab === "mcp") { refreshKeys(true); renderMcp(); }
+  else if (tab === "mcp") { refreshKeys(true); }
   else refreshKeys(true);
 }
-$("#keysBtn").onclick = () =>
-  $("#app").classList.contains("rightopen")
-    ? $("#app").classList.remove("rightopen")
-    : openRight("keys");
+$("#keysBtn").onclick = () => $("#app").classList.contains("rightopen") ? $("#app").classList.remove("rightopen") : openRight("keys");
 $("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
-document.querySelectorAll(".tabs [data-tab]").forEach(b =>
-  b.onclick = () => openRight(b.dataset.tab));
+document.querySelectorAll(".tabs [data-tab]").forEach(b => b.onclick = () => openRight(b.dataset.tab));
 
 $("#routeChip").onclick = () => {
   if (!lastRoute) return toast("No request yet");
-  toast(`${lastRoute.pool} · key ${lastRoute.provider} · ${lastRoute.model}` +
-        (lastRoute.fallback ? ` (fallback: ${lastRoute.reason})` : ""), 5000);
+  toast(`${lastRoute.pool} · key ${lastRoute.provider} · ${lastRoute.model}` + (lastRoute.fallback ? ` (fallback: ${lastRoute.reason})` : ""), 5000);
 };
-
 $("#wsChip").addEventListener("click", () => {
   openBrowser((S && S.workspace) || "", async (p) => {
     const r = await api("/api/workspace/set", { path: p });
-    // Re-read authoritative state. The server already rewrites history[0]
-    // for every live session; here we make sure the UI chip and the keys
-    // panel agree with it.
     try { S = await api("/api/state"); } catch (_) {}
     $("#wsChip").replaceChildren("workspace: ", h("b", { text: r.workspace }));
     toast("Workspace changed to " + r.workspace);
@@ -2146,6 +1627,8 @@ $("#wsChip").addEventListener("click", () => {
   if (S) {
     $("#strictBox").checked = !!S.strict;
     $("#strictTog").classList.toggle("on", !!S.strict);
+    $("#bgBox").checked = !!S.shell_bg_default;
+    $("#bgTog").classList.toggle("on", !!S.shell_bg_default);
   }
   if (S && !S.pools.length) { openRight("keys"); toast("Add your first API key to start"); }
 })();
