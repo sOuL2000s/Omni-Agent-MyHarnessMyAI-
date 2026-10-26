@@ -120,20 +120,29 @@ def build(onefile=False, with_browser=False):
     print("Building (this takes a few minutes)…\n")
     subprocess.check_call(cmd, cwd=ROOT)
 
+    # Debug: list dist folder
+    if (ROOT / "dist").exists():
+        print(f"\nContents of {ROOT / 'dist'}:")
+        for p in (ROOT / "dist").iterdir():
+            print(f"  {p.name} ({'dir' if p.is_dir() else 'file'})")
+
     # Nuitka names the .dist folder after the entry script (omni_entry.py)
     # unless --output-filename is used.
     if not onefile:
+        # Try to find the dist folder regardless of its name
         old_dir = ROOT / "dist" / "omni_entry.dist"
         new_dir = ROOT / "dist" / "omni.dist"
         
-        # If Nuitka already created omni.dist, we might still have a stale omni_entry.dist
-        if old_dir.exists() and old_dir.resolve() != new_dir.resolve():
-            if new_dir.exists():
-                print(f"Note: both {old_dir.name} and {new_dir.name} exist. Using {new_dir.name}.")
-                # Optionally remove the old one to keep it clean
-                # shutil.rmtree(old_dir, ignore_errors=True)
-            else:
-                old_dir.rename(new_dir)
+        if not new_dir.exists() and old_dir.exists():
+            print(f"Renaming {old_dir.name} to {new_dir.name}")
+            old_dir.rename(new_dir)
+        elif not new_dir.exists():
+            # Look for ANY .dist folder in dist/
+            for p in (ROOT / "dist").iterdir():
+                if p.is_dir() and p.name.endswith(".dist"):
+                    print(f"Found alternative dist folder: {p.name}. Renaming to {new_dir.name}")
+                    p.rename(new_dir)
+                    break
         for old_exe in ("omni_entry.exe", "omni.exe"):
             src = new_dir / old_exe
             dst = new_dir / "omni.exe" if os.name == "nt" else new_dir / "omni"

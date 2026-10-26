@@ -116,8 +116,30 @@ jobs:
         run: |
           $newTag = "${{ steps.meta.outputs.NEW_TAG }}"
           $folderName = "The-Omni-Agent"
-          if (Test-Path $folderName) { Remove-Item -Recurse -Force $folderName }
-          Move-Item -Path dist/omni.dist -Destination $folderName
+          
+          # Debug: List dist folder
+          Write-Host "Listing dist folder contents:"
+          Get-ChildItem -Path dist | Select-Object Name, Mode
+          
+          # Find the distribution folder. It might be omni.dist or omni_entry.dist
+          $distFolder = Get-ChildItem -Path dist -Directory -Filter "*.dist" | Select-Object -First 1
+          
+          if ($null -eq $distFolder) {
+            Write-Host "No .dist folder found. Checking for omni.exe in dist..."
+            if (Test-Path "dist/omni.exe") {
+               Write-Host "Found omni.exe in dist. Creating standalone folder manually..."
+               New-Item -ItemType Directory -Path $folderName
+               Copy-Item -Path "dist/*" -Destination "$folderName/" -Exclude "*.zip"
+            } else {
+               Write-Error "Could not find build output in dist folder."
+               Get-ChildItem -Path . -Recurse -Depth 2
+               exit 1
+            }
+          } else {
+            Write-Host "Found dist folder: $($distFolder.FullName)"
+            Move-Item -Path $distFolder.FullName -Destination $folderName
+          }
+          
           $zipName = "$newTag-Windows.zip"
           Compress-Archive -Path $folderName -DestinationPath $zipName
           echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
