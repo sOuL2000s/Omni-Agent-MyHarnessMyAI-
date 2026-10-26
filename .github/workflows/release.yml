@@ -34,6 +34,8 @@ jobs:
 
       - name: Generate Release Metadata
         id: meta
+        env:
+          PYTHONIOENCODING: utf-8
         shell: python
         run: |
           import subprocess
@@ -72,10 +74,10 @@ jobs:
                   commits_range = "HEAD"
 
           try:
-              changelog_raw = subprocess.check_output(["git", "log", commits_range, "--pretty=format:%s (%h)"]).decode()
+              changelog_raw = subprocess.check_output(["git", "log", commits_range, "--pretty=format:%s (%h)"]).decode("utf-8", errors="replace")
           except Exception as e:
               print(f"Error getting log for range {commits_range}: {e}")
-              changelog_raw = subprocess.check_output(["git", "log", "-n", "10", "--pretty=format:%s (%h)"]).decode()
+              changelog_raw = subprocess.check_output(["git", "log", "-n", "10", "--pretty=format:%s (%h)"]).decode("utf-8", errors="replace")
           
           lines = changelog_raw.splitlines()
           features = [l for l in lines if l.lower().startswith("feat")]
@@ -98,10 +100,7 @@ jobs:
           with open("changelog.md", "w", encoding="utf-8") as f:
               f.write(changelog)
           
-          print("Generated Changelog:")
-          print(changelog)
-          
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding="utf-8") as f:
               f.write(f"NEW_TAG={new_tag}\n")
 
       - name: Set up MSVC
