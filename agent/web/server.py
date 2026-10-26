@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import webbrowser
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote
@@ -1157,20 +1158,32 @@ def make_handler(app):
 
 
 def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
+    # If the default port is used, try to make it "sticky" to the workspace
+    # so different Omni installations don't clash by default.
+    if port == 8765:
+        try:
+            path_hash = int(hashlib.md5(str(cfg.data_dir).encode()).hexdigest(), 16)
+            port = 8000 + (path_hash % 1000)
+        except Exception:
+            pass
+
     token = os.environ.get("AGENT_UI_TOKEN") or secrets.token_urlsafe(18)
     loopback = host in ("127.0.0.1", "localhost", "::1")
     hosts = {"127.0.0.1", "localhost", "::1"} if loopback else None
     app = App(cfg, token, hosts)
     srv = None
-    for p in range(port, port + 20):
+    
+    # Try up to 100 ports starting from the preferred one
+    for p in range(port, port + 100):
         try:
             srv = ThreadingHTTPServer((host, p), make_handler(app))
             port = p
             break
         except OSError:
             continue
+    
     if srv is None:
-        raise SystemExit(f"No free port near {port}")
+        raise SystemExit(f"No free port found in range {port} to {port + 100}")
     srv.daemon_threads = True
     url = f"http://{'localhost' if loopback else host}:{port}/?token={token}"
     print(f"Omni UI running.  Open:  {url}\n(keep this link private - it unlocks the agent; Ctrl+C to stop)")

@@ -1,6 +1,7 @@
 # agent/loop.py
 """Tool loop with parallel read-only tool calls, self-healing retries and rich events."""
 import threading
+import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import llm
@@ -10,6 +11,7 @@ from .tools.registry import set_cancel as _set_tool_cancel
 from .tools import shell as _shell
 
 SYSTEM = """You are Omni, a precise, autonomous assistant working on the user's real computer.
+Current time: {datetime}
 Workspace (default folder for relative paths): {ws}
 You have full read/write access to the user's filesystem (subject to approval). You have tools for
 files, code editing, shell, web, Word/Excel/PowerPoint editing, long-term memory, and (when configured)
@@ -60,7 +62,9 @@ def _set_context(on_event, cancel):
 
 def system_prompt(cfg):
     mem = recent(cfg)
+    now = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
     return SYSTEM.format(ws=cfg.workspace,
+                         datetime=now,
                          memory=("\nKnown about the user:\n" + mem) if mem else "")
 
 

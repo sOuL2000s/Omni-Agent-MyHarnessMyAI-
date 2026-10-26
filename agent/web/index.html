@@ -1016,8 +1016,10 @@ function poolCard(p, idx, open) {
 
   const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service — one per line or comma separated", spellcheck: false, "data-persist": "addkeys-" + p.pool });
   const addKeysBtn = h("button", { text: "Add keys to " + p.pool,
-    onclick: () => addBox.value.trim() && act(() => api("/api/keys/add", { pool: p.pool, keys: addBox.value }),
-      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
+    onclick: () => addBox.value.trim() && act(async () => {
+      const r = await api("/api/keys/add", { pool: p.pool, keys: addBox.value });
+      addBox.value = ""; return r;
+    }, r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
   addBox.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addKeysBtn.click(); } });
 
   return h("div", { class: "card" },
@@ -1064,8 +1066,10 @@ function addServiceCard() {
     if (p) { name.value = p.name; url.value = p.base_url; model.value = p.model; }
   });
   const addBtn = h("button", { class: "primary", text: "Add",
-    onclick: () => act(() => api("/api/keys/add", { pool: name.value, base_url: url.value, model: model.value, keys: keys.value }),
-      r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
+    onclick: () => act(async () => {
+      const r = await api("/api/keys/add", { pool: name.value, base_url: url.value, model: model.value, keys: keys.value });
+      [name, url, model, keys].forEach(el => el.value = ""); return r;
+    }, r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
   [name, url, model].forEach(el => entrable(el, () => addBtn.click()));
   keys.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); } });
   return h("div", { class: "card" },
@@ -1191,12 +1195,15 @@ function mcpAddCard() {
   const envIn = h("textarea", { class: "keysbox", spellcheck: false, placeholder: "ENV vars, one KEY=VALUE per line" });
   const headersIn = h("textarea", { class: "keysbox", spellcheck: false, placeholder: "HTTP headers (remote only), one Header: value per line" });
   const addBtn = h("button", { class: "primary", text: "Add & connect",
-    onclick: () => act(() => api("/api/mcp/add", {
-      name: name.value.trim(), command: cmd.value.trim(),
-      args: args.value.split(/\s+/).filter(Boolean),
-      url: url.value.trim(),
-      env: parseEnvLines(envIn.value), headers: parseHeaderLines(headersIn.value),
-    }), r => `Connected ${r.name}: ${r.tools} tools`) });
+    onclick: () => act(async () => {
+      const r = await api("/api/mcp/add", {
+        name: name.value.trim(), command: cmd.value.trim(),
+        args: args.value.split(/\s+/).filter(Boolean),
+        url: url.value.trim(),
+        env: parseEnvLines(envIn.value), headers: parseHeaderLines(headersIn.value),
+      });
+      [name, cmd, args, url, envIn, headersIn].forEach(el => el.value = ""); return r;
+    }, r => `Connected ${r.name}: ${r.tools} tools`) });
   [name, cmd, args, url].forEach(el => entrable(el, () => addBtn.click()));
   return h("div", { class: "card", id: "mcp-add" },
     h("h3", { text: "Add an MCP server" }),
