@@ -17,6 +17,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -58,13 +61,20 @@ jobs:
                   major = int(match.group(1))
                   new_tag = f"The-Omni-Agent-{major + 1}.0.0"
               else:
-                  # Fallback if pattern doesn't match exactly
                   new_tag = f"{latest_tag}-next"
-              commits_range = f"{latest_tag}..HEAD"
+              
+              # Verify if the tag is reachable
+              try:
+                  subprocess.check_call(["git", "rev-parse", "--verify", latest_tag])
+                  commits_range = f"{latest_tag}..HEAD"
+              except:
+                  print(f"Warning: Tag {latest_tag} not found by rev-parse, falling back to last 10 commits.")
+                  commits_range = "HEAD"
 
           try:
               changelog_raw = subprocess.check_output(["git", "log", commits_range, "--pretty=format:%s (%h)"]).decode()
-          except:
+          except Exception as e:
+              print(f"Error getting log for range {commits_range}: {e}")
               changelog_raw = subprocess.check_output(["git", "log", "-n", "10", "--pretty=format:%s (%h)"]).decode()
           
           lines = changelog_raw.splitlines()
