@@ -120,13 +120,20 @@ def build(onefile=False, with_browser=False):
     print("Building (this takes a few minutes)…\n")
     subprocess.check_call(cmd, cwd=ROOT)
 
-    # Nuitka names the .dist folder after the entry script (omni_entry.py).
-    # Rename both the folder and the exe inside it to something clean.
+    # Nuitka names the .dist folder after the entry script (omni_entry.py)
+    # unless --output-filename is used.
     if not onefile:
         old_dir = ROOT / "dist" / "omni_entry.dist"
         new_dir = ROOT / "dist" / "omni.dist"
-        if old_dir.exists() and not new_dir.exists():
-            old_dir.rename(new_dir)
+        
+        # If Nuitka already created omni.dist, we might still have a stale omni_entry.dist
+        if old_dir.exists() and old_dir.resolve() != new_dir.resolve():
+            if new_dir.exists():
+                print(f"Note: both {old_dir.name} and {new_dir.name} exist. Using {new_dir.name}.")
+                # Optionally remove the old one to keep it clean
+                # shutil.rmtree(old_dir, ignore_errors=True)
+            else:
+                old_dir.rename(new_dir)
         for old_exe in ("omni_entry.exe", "omni.exe"):
             src = new_dir / old_exe
             dst = new_dir / "omni.exe" if os.name == "nt" else new_dir / "omni"
