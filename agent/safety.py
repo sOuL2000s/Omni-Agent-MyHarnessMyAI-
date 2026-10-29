@@ -1,5 +1,6 @@
 # agent/safety.py
 from pathlib import Path
+import os
 import sys
 import threading
 
@@ -13,7 +14,10 @@ _tl = threading.local()
 # Files inside data/ that hold credentials or session state. They stay
 # unreadable by the agent's file tools even when data/ (or one of its
 # parents) is set as the workspace.
-_SECRET_FILES = {"providers.json", "state.json", "memory.jsonl"}
+_SECRET_FILES = {
+    "providers.json", "state.json", "memory.jsonl",
+    "mcp.json", "mcp_registry.json", "settings.json",
+}
 
 
 def set_approver(fn, auto=None):
@@ -33,18 +37,56 @@ def _call_approver(fn, action, tool):
         return bool(fn(action))
 
 
-def resolve(cfg, path: str, write=False) -> Path:
+def _is_secret(p: Path, data: Path) -> bool:
+    """True if `p` points at a secret file (by path or by inode).
+
+    The inode check catches hardlinks: a file in the workspace whose
+    inode matches a secret file in data/ is the *same* bytes, even though
+    the path is different. `Path.resolve()` doesn't collapse hardlinks,
+    so a pure path comparison misses this.
+    """
+    if p.parent == data and p.name in _SECRET_FILES:
+        return True
+    if p.parent.name == "sessions" and p.parent.parent == data:
+        return True
+    # Hardlink bypass: same inode as any secret file in data/.
+    try:
+        p_st = p.stat()
+    except OSError:
+        return False
+    for name in _SECRET_FILES:
+        try:
+            secret_st = (data / name).stat()
+        except OSError:
+            continue
+        if (p_st.st_dev == secret_st.st_dev
+                and p_st.st_ino == secret_st.st_ino):
+            return True
+    return False
+
+
+def resolve(cfg, path: str, write=False, strict=True) -> Path:
+    """Resolve `path` against the workspace and enforce the safety rules.
+
+    `strict=True` (the default) runs the full check, including the
+    approval prompt for paths outside the workspace. `strict=False`
+    skips *only* the outside-workspace approval — the credential/state
+    file check still runs. The non-strict mode is for internal callers
+    that already know the path is safe (e.g. a `read_file_now` helper
+    that computes the path from a hash). Today nothing uses it; it
+    exists so future tools don't have to bypass `resolve()` entirely.
+    """
     p = Path(str(path)).expanduser()
     if not p.is_absolute():
         p = cfg.workspace / p
     p = p.resolve()
 
-    # Always refuse the credential/state files, even when data/ is "inside".
+    # Always refuse credential/state files, even when data/ is "inside".
     try:
         data = cfg.data_dir.resolve()
     except OSError:
         data = cfg.data_dir
-    if p.parent == data and p.name in _SECRET_FILES:
+    if _is_secret(p, data):
         raise Denied(f"Refusing to touch {p.name}: it holds credentials/state.")
 
     inside = cfg.workspace == p or cfg.workspace in p.parents
@@ -54,8 +96,9 @@ def resolve(cfg, path: str, write=False) -> Path:
                 f"Path outside workspace blocked: {p}. "
                 f"Set AGENT_ALLOW_OUTSIDE=1 to permit."
             )
-        confirm(cfg, f"{'WRITE to' if write else 'Read'} outside workspace: {p}",
-                tool="write_file" if write else "read_file")
+        if strict:
+            confirm(cfg, f"{'WRITE to' if write else 'Read'} outside workspace: {p}",
+                    tool="write_file" if write else "read_file")
     return p
 
 

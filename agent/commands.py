@@ -4,7 +4,9 @@
 The web UI has the same powers (plus a folder picker).
 """
 import getpass
+import os
 import shlex
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from . import llm
 from .providers import PRESETS, STRATEGIES, detect_provider
@@ -27,6 +29,7 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /autodetect <key>                  guess the provider from the key format
   /workspace [path]                  show or change the agent's workspace (relative or absolute)
   /bgauto on|off                     when on, every run_shell call runs in the background
+  /config [key|key=value]            show every runtime setting, or set one (written to .env)
   /reset  /exit  /help"""
 
 
@@ -35,6 +38,58 @@ def _fmt_pool(pm, e):
     fb = ("  fallbacks: " + ", ".join(e["fallbacks"])) if e["fallbacks"] else ""
     return (f"{e['pool']:<12} model={e['model']}{fb}\n"
             f"{'':<12} keys: {len(e['keys'])} total = {c['ready']} ready, {c['cooling']} cooling, {c['invalid']} invalid   {e['base_url']}")
+
+
+def _fmt_config(cfg):
+    """Return a readable dump of every non-secret config field."""
+    rows = [
+        ("AGENT_BASE_URL", cfg.base_url),
+        ("AGENT_MODEL", cfg.model),
+        ("AGENT_WORKSPACE", str(cfg.workspace)),
+        ("AGENT_ALLOW_OUTSIDE", "1" if cfg.allow_outside else "0"),
+        ("AGENT_AUTO_APPROVE", "1" if cfg.auto_approve else "0"),
+        ("AGENT_STRICT", "1" if cfg.strict else "0"),
+        ("AGENT_SHELL_BG", "1" if cfg.shell_bg else "0"),
+        ("AGENT_MAX_TURNS", str(cfg.max_turns)),
+        ("AGENT_MAX_TOOL_CALLS", str(getattr(cfg, "max_total_tool_calls", 200))),
+        ("AGENT_TEMPERATURE", str(cfg.temperature)),
+        ("AGENT_TIMEOUT", str(cfg.timeout)),
+        ("AGENT_STRATEGY", cfg.providers.strategy if cfg.providers else "?"),
+        ("AGENT_MAX_WAIT", str(cfg.providers.max_wait) if cfg.providers else "?"),
+        ("AGENT_API_KEY", "(hidden)" if cfg.api_key else "(empty)"),
+    ]
+    return "\n".join(f"  {k:<22} = {v}" for k, v in rows)
+
+
+def _write_env_var(key, value):
+    """Write or update KEY=value in .env, preserving comments and order.
+
+    Creates .env if it doesn't exist. Returns the path written.
+    """
+    from .config import ROOT
+    env_path = ROOT / ".env"
+    line = f"{key}={value}\n"
+    if not env_path.exists():
+        env_path.write_text(line, encoding="utf-8")
+        return env_path
+    text = env_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    replaced = False
+    out = []
+    for ln in lines:
+        stripped = ln.lstrip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+            indent = ln[:len(ln) - len(stripped)]
+            out.append(f"{indent}{key}={value}\n")
+            replaced = True
+        else:
+            out.append(ln)
+    if not replaced:
+        if out and not out[-1].endswith("\n"):
+            out[-1] += "\n"
+        out.append(line)
+    env_path.write_text("".join(out), encoding="utf-8")
+    return env_path
 
 
 def handle(cfg, line):
@@ -75,7 +130,7 @@ def handle(cfg, line):
                    args[3] if len(args) > 3 else None)
             p = pm.get(args[0])
             return (f"added '{p.name}' to pool '{p.pool}'. "
-                    f"{len(p.models)} models cached, using {p.model}. "
+                    f"Model list is fetching in the background; "
                     f"/test {p.name} to verify.")
         if c in ("addkeys", "keysadd"):
             if len(args) < 2:
@@ -116,8 +171,12 @@ def handle(cfg, line):
             if len(args) < 2:
                 return "usage: /fallback <pool> model1,model2   |   /fallback <pool> clear"
             pool = pm.resolve_pool(args[0])
-            pm.set_fallbacks(pool, [] if args[1] == "clear" else " ".join(args[1:]).replace(",", " ").split())
-            return f"{pool}: chosen model {pm.model_of(pool)}, fallbacks {pm.fallbacks(pool) or 'none'}"
+            models = [] if args[1] == "clear" else " ".join(args[1:]).replace(",", " ").split()
+            kept, dropped = pm.set_fallbacks(pool, models)
+            msg = f"{pool}: chosen model {pm.model_of(pool)}, fallbacks {kept or 'none'}"
+            if dropped:
+                msg += f"\n  ignored {len(dropped)} entr(ies) equal to the main model: {', '.join(dropped)}"
+            return msg
         if c == "strategy":
             if not args:
                 return f"strategy = {pm.strategy}   (options: {', '.join(STRATEGIES)})"
@@ -193,14 +252,6 @@ def handle(cfg, line):
             if p == p.parent:
                 return f"error: refusing a filesystem root ({p}) as the workspace"
             cfg.workspace = p
-            # Rewrite the system prompt on the caller's history if any.
-            try:
-                from . import loop as _loop
-                # If the caller has a live history, refresh it. We don't have
-                # it here, but the loop refreshes on the next turn anyway.
-                _ = _loop
-            except Exception:
-                pass
             return f"workspace -> {p}\n(the next turn will use this path; the web UI is updated too)"
 
         # ---- background-shell default -------------------------------------
@@ -210,7 +261,71 @@ def handle(cfg, line):
                 return f"background shell executions = {_shell.default_background()}"
             on = args[0].lower() in ("on", "1", "true", "yes")
             _shell.set_default_background(on)
-            return f"background shell executions = {on}"
+            # Also reflect on cfg and persist to .env so it survives restart.
+            cfg.shell_bg = on
+            try:
+                _write_env_var("AGENT_SHELL_BG", "1" if on else "0")
+            except Exception:
+                pass
+            return f"background shell executions = {on} (saved to .env)"
+
+        # ---- config --------------------------------------------------------
+        if c == "config":
+            if not args:
+                return _fmt_config(cfg)
+            if "=" in args[0]:
+                key, _, value = args[0].partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+            else:
+                key = args[0].strip()
+                if len(args) < 2:
+                    return f"usage: /config            (show all)\n       /config KEY=value  (set and persist)"
+                value = " ".join(args[1:]).strip().strip('"').strip("'")
+            if not key.startswith("AGENT_") and not key.startswith("OMNI_"):
+                return f"error: {key} is not an AGENT_/OMNI_ setting"
+            try:
+                _write_env_var(key, value)
+            except Exception as e:
+                return f"error: could not write .env: {e}"
+            # Apply the live in-process value where possible.
+            applied = ""
+            try:
+                if key == "AGENT_AUTO_APPROVE":
+                    cfg.auto_approve = value.lower() not in ("0", "false", "no", "off", "n", "")
+                    applied = f" (auto_approve = {cfg.auto_approve})"
+                elif key == "AGENT_STRICT":
+                    cfg.strict = value.lower() not in ("0", "false", "no", "off", "n", "")
+                    applied = f" (strict = {cfg.strict})"
+                elif key == "AGENT_SHELL_BG":
+                    from .tools import shell as _shell
+                    on = value.lower() not in ("0", "false", "no", "off", "n", "")
+                    _shell.set_default_background(on)
+                    cfg.shell_bg = on
+                    applied = f" (shell_bg = {on})"
+                elif key == "AGENT_MAX_TURNS":
+                    cfg.max_turns = int(value)
+                    applied = f" (max_turns = {cfg.max_turns})"
+                elif key == "AGENT_MAX_TOOL_CALLS":
+                    cfg.max_total_tool_calls = int(value)
+                    applied = f" (max_total_tool_calls = {cfg.max_total_tool_calls})"
+                elif key == "AGENT_TEMPERATURE":
+                    cfg.temperature = float(value)
+                    applied = f" (temperature = {cfg.temperature})"
+                elif key == "AGENT_TIMEOUT":
+                    cfg.timeout = int(value)
+                    applied = f" (timeout = {cfg.timeout})"
+                elif key == "AGENT_WORKSPACE":
+                    p = Path(value).expanduser().resolve()
+                    if not p.is_dir():
+                        return f"error: not a directory: {p}"
+                    if p == p.parent:
+                        return f"error: refusing a filesystem root ({p}) as the workspace"
+                    cfg.workspace = p
+                    applied = f" (workspace = {p})"
+            except Exception as e:
+                return f"wrote .env, but could not apply live: {e}"
+            return f"saved {key}={value} to .env{applied}"
 
         return "unknown command. /help"
     except (ValueError, IndexError, OSError, llm.LLMError) as e:
@@ -218,26 +333,52 @@ def handle(cfg, line):
 
 
 def test(cfg, target=None):
-    """Real ping(s). target: key name, pool name, 'all' or None (one key of the primary pool)."""
+    """Real ping(s). target: key name, pool name, 'all' or None (one key of the primary pool).
+
+    When target == "all" (or a pool with many keys), the probes run in
+    parallel (8 workers) so 30 keys don't take 60 seconds.
+    """
     pm = cfg.providers
     if not pm.items:
         return "no keys"
     if target == "all":
         targets = list(pm.items)
+        parallel = True
     elif target and target in pm.pool_names():
-        targets = pm.providers_in(target)[:1]
+        targets = pm.providers_in(target)
+        parallel = True
     elif target:
         targets = [pm.get(target)]
+        parallel = False
     else:
         targets = pm.providers_in(pm.pool_names()[0])[:1]
+        parallel = False
+
+    if not parallel or len(targets) <= 2:
+        out = []
+        for p in targets:
+            ok, kind, text = llm.probe(cfg, p)
+            out.append(f"{p.name} OK ({p.model}): {text!r}" if ok
+                       else f"{p.name} FAILED [{kind}]: {text[:200]}")
+        return "\n".join(out)
+
+    # Parallel probes: 8 at a time so we don't hammer the provider.
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(llm.probe, cfg, p): p for p in targets}
+        for f in as_completed(futs):
+            p = futs[f]
+            try:
+                results[p.name] = f.result()
+            except Exception as e:
+                results[p.name] = (False, "error", str(e))
     out, bad = [], 0
     for p in targets:
-        ok, kind, text = llm.probe(cfg, p)
+        ok, kind, text = results.get(p.name, (False, "error", "no result"))
         if ok:
             out.append(f"{p.name} OK ({p.model}): {text!r}")
         else:
             bad += 1
             out.append(f"{p.name} FAILED [{kind}]: {text[:200]}")
-    if len(targets) > 6 or target == "all":
-        out = [o for o in out if "FAILED" in o] + [f"{len(targets) - bad}/{len(targets)} keys OK"]
+    out = [o for o in out if "FAILED" in o] + [f"{len(targets) - bad}/{len(targets)} keys OK"]
     return "\n".join(out)

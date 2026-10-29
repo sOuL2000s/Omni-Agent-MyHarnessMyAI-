@@ -93,6 +93,18 @@ def build(onefile=False, with_browser=False):
         "--file-version=2.1.0.0",
         "--product-version=2.1.0.0",
     ]
+    # STT is optional. Only include it in the build if the packages are
+    # actually installed; otherwise Nuitka errors on the missing package.
+    try:
+        import sherpa_onnx  # noqa: F401
+        import sounddevice  # noqa: F401
+        cmd += [
+            "--include-package=sherpa_onnx",
+            "--include-package=sounddevice",
+            "--include-package-data=sherpa_onnx",
+        ]
+    except ImportError:
+        pass
     if os.name == "nt":
         icon = ROOT / "assets" / "omni.ico"
         if icon.exists():

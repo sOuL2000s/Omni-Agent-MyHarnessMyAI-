@@ -48,3 +48,7 @@ workspace/*
 .DS_Store
 Thumbs.db
 mcp.json
+# STT model weights (~335 MB, downloaded from the sherpa-onnx releases page;
+# see agent/stt.py for the URL). Not committed — every user downloads
+# their own copy.
+data/stt-model/

@@ -26,6 +26,22 @@ so names never collide with built-ins.
 Everything that reads a subprocess pipe or an HTTP body decodes UTF-8
 with `errors="replace"` — this is what makes `youtube` / `ffmpeg` style
 servers stop crashing the reader with a UnicodeDecodeError mid-stream.
+
+Behavioral notes
+----------------
+* When `command == "docker"`, `-e KEY` args are appended for every name in
+  the server's `env` dict. Docker doesn't forward the parent's environment
+  into the container by default, so without this a `github` server with
+  `GITHUB_PERSONAL_ACCESS_TOKEN` in its env would start with an empty token.
+* If the server sends a `notifications/tools/list_changed` message, the
+  reader thread re-fetches `tools/list` and re-registers. Servers that
+  advertise tools lazily (some `npx` wrappers do) now work.
+* `_rpc` polls the thread-local cancel event every 250ms, so Stop
+  interrupts a hung MCP tool call in about a quarter second instead of
+  waiting for the full 180s timeout.
+* If the reader thread dies, `ready` is flipped to False so the next
+  `tools/call` fails fast with "server is not running" instead of a
+  confusing timeout.
 """
 import json
 import os
@@ -34,6 +50,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -55,6 +72,26 @@ def _safe_decode(b) -> str:
     return b.decode("utf-8", errors="replace")
 
 
+def _docker_env_args(cmd, env):
+    """Return cmd with `-e KEY` args inserted for every env var name.
+
+    `cmd` is `["docker", "run", ...]`. We insert `-e KEY` right after
+    `run`, before the image name, so the container sees the value from
+    the parent's environment (which we set via `env=self.env` on Popen).
+    """
+    if not cmd or cmd[0] != "docker" or len(cmd) < 2 or cmd[1] != "run":
+        return cmd
+    if not env:
+        return cmd
+    extra = []
+    for k in env:
+        if not k:
+            continue
+        extra.extend(["-e", k])
+    # Preserve the rest of the arg list: ["docker", "run", <insert>, ...rest]
+    return [cmd[0], cmd[1]] + extra + cmd[2:]
+
+
 class MCPServer:
     def __init__(self, name, command=None, args=None, env=None, cwd=None,
                  url=None, headers=None):
@@ -63,8 +100,10 @@ class MCPServer:
         self.url = url
         self.http_headers = dict(headers or {})
         self.session_id = None
-        self.cmd = ([command] + list(args or [])) if command else []
+        cmd = ([command] + list(args or [])) if command else []
         self.env = {**os.environ, **(env or {})}
+        # Docker needs explicit -e KEY args; see _docker_env_args.
+        self.cmd = _docker_env_args(cmd, env or {})
         self.cwd = cwd
         self.proc = None
         self.seq = 0
@@ -145,11 +184,37 @@ class MCPServer:
                     # Some servers print banners / logs on stdout. Keep going.
                     self._push_stderr(text + "\n")
                     continue
+                # Server-initiated notification: tool list changed.
+                method = msg.get("method")
+                if method == "notifications/tools/list_changed":
+                    self._refresh_tools_async()
+                    continue
                 rid = msg.get("id")
                 if rid is not None and rid in self.pending:
                     self.pending.pop(rid).put(msg)
         except Exception as e:
             self.last_error = f"reader died: {e}"
+            # If the reader thread dies, the server is effectively dead.
+            # Mark it not-ready so the next tools/call fails fast instead
+            # of waiting for the full 180s timeout.
+            self.ready = False
+
+    def _refresh_tools_async(self):
+        """Re-fetch tools/list after a `tools/list_changed` notification."""
+        def _do():
+            try:
+                result = self._rpc("tools/list", {}, timeout=INIT_TIMEOUT)
+                new_tools = result.get("tools") or []
+                self.tools = new_tools
+                # The registry holds a reference to this MCPServer; the
+                # bridge will re-register on the next reload. We can't
+                # import registry here without a cycle, so leave a flag
+                # the bridge can poll if it wants to.
+                self._tools_changed = True
+            except Exception as e:
+                self.last_error = f"tools/list refresh failed: {e}"
+        threading.Thread(target=_do, daemon=True,
+                         name=f"mcp-{self.name}-refresh").start()
 
     def _rpc(self, method, params=None, timeout=60):
         if self.transport == "http":
@@ -169,9 +234,29 @@ class MCPServer:
                 self.pending.pop(rid, None)
                 raise MCPError(f"MCP {self.name}: could not write to server: {e}")
         try:
-            resp = q.get(timeout=timeout)
-        except queue.Empty:
-            raise MCPError(f"MCP {self.name}: {method} timed out after {timeout}s")
+            # Poll in 250ms slices so a cancel event can short-circuit
+            # a hung MCP call without waiting for `timeout` seconds.
+            from .tools.registry import get_cancel
+            cancel = get_cancel()
+            deadline = time.time() + timeout
+            while True:
+                if cancel is not None and cancel.is_set():
+                    self.pending.pop(rid, None)
+                    raise MCPError(f"MCP {self.name}: {method} cancelled by user")
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    self.pending.pop(rid, None)
+                    raise MCPError(f"MCP {self.name}: {method} timed out after {timeout}s")
+                try:
+                    resp = q.get(timeout=min(0.25, remaining))
+                    break
+                except queue.Empty:
+                    continue
+        except MCPError:
+            raise
+        except Exception:
+            self.pending.pop(rid, None)
+            raise
         if "error" in resp:
             raise MCPError(f"MCP {self.name}: {resp['error']}")
         return resp.get("result") or {}

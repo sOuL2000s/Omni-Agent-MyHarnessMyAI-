@@ -189,7 +189,7 @@ label.tog input{display:none}
 .msg.asst{flex-direction:column;align-items:flex-start}
 
 .bubble{padding:10px 14px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word;line-height:1.6}
-.user .bubble{background:var(--user);border-bottom-right-radius:4px;border:1px solid color-mix(in srgb,var(--accent) 15%,transparent)}
+.user .bubble{background:var(--user);border-bottom-right-radius:4px;border:1px solid var(--user-line)}
 .asst .bubble{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;white-space:normal;max-width:100%;box-shadow:var(--shadow-sm)}
 .asst.mid .bubble{box-shadow:none;color:var(--muted);background:transparent;border-style:dashed}
 .bubble p{margin:.5em 0} .bubble p:first-child{margin-top:0} .bubble p:last-child{margin-bottom:0}
@@ -197,7 +197,7 @@ label.tog input{display:none}
 .bubble li{margin:.2em 0}
 .bubble h1,.bubble h2,.bubble h3{margin:.7em 0 .3em;font-size:1.05em;letter-spacing:-.01em}
 .bubble code{background:var(--tool);padding:1px 6px;border-radius:5px;font:12.5px ui-monospace,Menlo,Consolas,monospace}
-.bubble pre{background:var(--code);color:var(--code-ink);padding:12px 14px;border-radius:var(--radius);overflow:auto;margin:.6em 0;font-size:12.5px;line-height:1.55}
+.bubble pre{background:var(--code);color:var(--code-ink);padding:12px 14px;border-radius:var(--radius);overflow:auto;margin:.6em 0;font-size:12.5px;line-height:1.55;max-width:100%;min-width:0}
 .bubble pre code{background:none;padding:0;color:inherit;font-size:inherit}
 
 .tool{margin:6px 0;background:var(--tool);border-radius:var(--radius);border:1px solid var(--line);border-left:3px solid var(--muted-2);font-size:12.5px;transition:border-left-color .15s}
@@ -238,6 +238,11 @@ label.tog input{display:none}
 #attach:hover{background:var(--bg-2)}
 #send,#stop{padding:8px 16px;border-radius:var(--radius-sm)}
 
+#micBtn{padding:8px 10px;border-radius:var(--radius-sm);font-size:16px;background:transparent;border:0}
+#micBtn:hover{background:var(--bg-2)}
+#micBtn.rec{background:var(--bad-bg);color:var(--bad);animation:pulse 1.2s infinite}
+#sttStatus{font-size:11px;color:var(--muted);padding:0 4px}
+
 .status{margin:0 0 8px}
 .status-card{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow-sm)}
 .status-card .title{display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:4px}
@@ -247,8 +252,8 @@ label.tog input{display:none}
 .status-card ul{margin:8px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;max-height:120px;overflow:auto}
 .status-card .foot{display:flex;justify-content:flex-end;margin-top:8px}
 
-.msg-actions{display:flex;gap:6px;margin-top:6px;opacity:0;transition:opacity .2s}
-.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1}
+.msg-actions{display:flex;gap:6px;margin-top:6px;opacity:0;pointer-events:none;transition:opacity .2s}
+.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;pointer-events:auto}
 @media (hover:none){.msg-actions{opacity:1}}
 .msg-actions button{padding:3px 9px;font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);transition:all .2s;font-weight:500}
 .msg-actions button:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
@@ -328,7 +333,7 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
 #confirm .dlg{max-width:460px}
 @keyframes pop{from{opacity:0;transform:scale(.97) translateY(4px)}to{opacity:1;transform:none}}
 #modal h3,#confirm h3{margin:0 0 12px !important;font-size:16px;letter-spacing:-.01em;color:var(--ink)}
-#modal pre{background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;font:12.5px ui-monospace,Menlo,Consolas,monospace;line-height:1.55}
+#modal pre{background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;font:12.5px ui-monospace,Menlo,Consolas,monospace;line-height:1.55;min-width:0;min-height:0}
 #confirm .msg{color:var(--ink-2);margin:0 0 20px;white-space:pre-wrap;line-height:1.6;font-size:13.5px}
 #confirm .actions{display:flex;justify-content:flex-end;gap:8px}
 
@@ -366,6 +371,190 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
 }
 @media (min-width:901px){.only-small{display:none}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}}
+
+/* ============================================================
+   POLISH — overrides, appended so they win by cascade order.
+   Delete this whole block down to the end of the <style> element
+   to revert to the original palette; everything below is layout-neutral.
+   ============================================================ */
+
+/* Warm neutrals + sharper accent (light). Cold slate -> warm paper. */
+:root{
+  --bg:#faf9f6; --bg-2:#f2f0eb;
+  --panel:#ffffff; --panel-2:#fcfbf8;
+  --line:#e8e4dc; --line-2:#d6d0c4;
+  --ink:#1a1815; --ink-2:#45403a;
+  --muted:#7a7268; --muted-2:#a8a094;
+  --accent:#c2410c; --accent-2:#ea580c;
+  --accent-ink:#ffffff;
+  --accent-soft:#fef3ec; --accent-soft-2:#fed7c3;
+  --ok:#0d9488; --warn:#b45309; --bad:#b91c1c;
+  --user:#eef0ff; --user-line:#d8dcff;
+  --code:#1c1917; --code-ink:#e7e5e4;
+  /* Four-step elevation scale (e0 = none). Each child sits at least
+     one level above its parent. */
+  --e1:0 1px 2px rgba(26,24,21,.04), 0 1px 1px rgba(26,24,21,.03);
+  --e2:0 2px 4px rgba(26,24,21,.05), 0 4px 12px -2px rgba(26,24,21,.06);
+  --e3:0 4px 8px rgba(26,24,21,.06), 0 12px 32px -8px rgba(26,24,21,.10);
+  --e4:0 8px 16px rgba(26,24,21,.08), 0 32px 64px -16px rgba(26,24,21,.20);
+  --font-sans:system-ui,-apple-system,"Segoe UI Variable","Segoe UI",Roboto,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono","Cascadia Code",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14110e; --bg-2:#1c1815;
+  --panel:#1f1b17; --panel-2:#252019;
+  --line:#2e2823; --line-2:#3f372f;
+  --ink:#f5f1ea; --ink-2:#d6cec3;
+  --muted:#9a8f82; --muted-2:#6b6055;
+  --accent:#fb923c; --accent-2:#fdba74;
+  --accent-ink:#14110e;
+  --accent-soft:#2a1f14; --accent-soft-2:#3f2e1c;
+  --ok:#2dd4bf; --warn:#fbbf24; --bad:#f87171;
+  --user:#1e1b2e; --user-line:#2e2950;
+  --code:#0f0d0b; --code-ink:#e7e5e4;
+}}
+
+/* Type scale: 14.5px base (Slack/Discord/Linear range), 1.65 line-height */
+body{font:14.5px/1.65 var(--font-sans);letter-spacing:-.005em}
+.bubble{line-height:1.65}
+.bubble pre,.tool pre{font-family:var(--font-mono)}
+.card h3{font-size:16px;font-weight:600;letter-spacing:-.01em}
+
+/* Chat bubbles get real depth + a speech-bubble tail */
+.asst .bubble{
+  background:var(--panel);border:1px solid var(--line);
+  border-radius:16px;border-bottom-left-radius:4px;
+  box-shadow:var(--e1);
+}
+.asst .bubble:hover{box-shadow:var(--e2);border-color:var(--line-2)}
+.user .bubble{
+  background:var(--user);
+  border:1px solid var(--user-line);border-bottom-right-radius:4px;
+}
+
+/* Buttons: three levels (primary, secondary default, ghost inline) */
+button{
+  box-shadow:var(--e1);
+  transition:border-color .15s,box-shadow .15s,transform .1s,background .15s,color .15s;
+}
+button:hover:not(:disabled){
+  border-color:var(--line-2);box-shadow:var(--e2);transform:translateY(-1px);
+}
+button.primary{
+  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+  box-shadow:0 1px 2px rgba(194,65,12,.2),inset 0 1px 0 rgba(255,255,255,.15);
+}
+button.primary:hover:not(:disabled){
+  background:var(--accent-2);border-color:var(--accent-2);
+  box-shadow:0 2px 6px rgba(194,65,12,.25),inset 0 1px 0 rgba(255,255,255,.15);
+}
+button.ghost{background:transparent;border-color:transparent;box-shadow:none}
+button.ghost:hover:not(:disabled){background:var(--bg-2);box-shadow:none;transform:none}
+
+/* Hero card for "Add a service" — the single most important card on first run */
+.card-hero{
+  background:linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 6%, var(--panel)),
+    var(--panel) 80%);
+  border:1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius:16px;padding:20px;box-shadow:var(--e2);
+}
+
+/* Empty state with a hero moment + glow on the brand mark */
+.empty{max-width:760px;margin:6vh auto 0;padding:0 16px}
+.empty h2{font-size:clamp(20px,3vw,32px);font-weight:700;letter-spacing:-.03em;margin:0 0 12px}
+.empty .ex{grid-template-columns:1fr;gap:12px;margin-top:28px}
+@media (min-width:600px){.empty .ex{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}}
+.empty .ex button{
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:18px 20px;box-shadow:var(--e1);
+  transition:border-color .15s,box-shadow .15s,transform .15s;
+  word-break:break-word;
+}
+.empty .ex button:hover{
+  border-color:var(--accent);
+  box-shadow:0 8px 24px -8px color-mix(in srgb, var(--accent) 40%, transparent);
+  transform:translateY(-2px);
+}
+
+/* Tool card: primary arg on the summary line, dark pre with hanging radius */
+.tool summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px}
+.tool summary .a{flex:1 1 100%;order:3;font-size:12px;color:var(--muted)}
+@media (min-width:600px){
+  .tool summary{flex-wrap:nowrap}
+  .tool summary .a{flex:1 1 auto;order:0}
+}
+.tool pre{
+  background:var(--code);color:var(--code-ink);
+  border-radius:0 0 12px 12px;padding:12px 14px;
+  font:12.5px/1.55 var(--font-mono);
+  max-height:280px;overflow:auto;
+}
+@media (max-width:767px){.tool pre{max-height:200px}}
+
+/* Typing dots — shown while the model is generating, before the first token */
+.typing .bubble{display:flex;gap:4px;padding:14px 18px}
+.typing .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);
+  animation:typing 1.4s infinite ease-in-out}
+.typing .dot:nth-child(2){animation-delay:.15s}
+.typing .dot:nth-child(3){animation-delay:.3s}
+@keyframes typing{
+  0%,60%,100%{opacity:.3;transform:translateY(0)}
+  30%{opacity:1;transform:translateY(-3px)}
+}
+
+/* Amber pulsing status dot while a tool is running */
+.tool[data-status="run"] .st{
+  animation:pulse 1.2s infinite;
+  background:var(--warn);
+}
+
+/* Modals: spring pop + stronger glass effect */
+#modal,#confirm,#browse{
+  background:rgba(20,17,14,.55);
+  backdrop-filter:blur(8px) saturate(120%);
+  animation:fadeIn .15s ease;
+}
+#modal .dlg,#confirm .dlg,#browse .dlg{
+  animation:pop .2s cubic-bezier(.2,.8,.2,1);
+}
+
+/* Responsive: 4 tiers. Below 1023px, BOTH panels are drawers. */
+#app{height:100vh;height:100dvh}
+@media (max-width:1023px){
+  #app,#app.rightopen{grid-template-columns:240px minmax(0,1fr) 0}
+  #right{
+    position:fixed;top:0;right:0;bottom:0;width:min(440px,92vw);max-width:100%;
+    transform:translateX(100%);
+    transition:transform .25s cubic-bezier(.2,.8,.2,1);
+    z-index:20;box-shadow:var(--e4);border-left:1px solid var(--line);
+  }
+  #app.rightopen #right{transform:none}
+}
+@media (max-width:767px){
+  #app,#app.rightopen,#app.leftcollapsed{grid-template-columns:minmax(0,1fr) 0}
+  #left{
+    position:fixed;top:0;left:0;bottom:0;width:min(300px,88vw);max-width:100%;
+    transform:translateX(-100%);
+    transition:transform .25s cubic-bezier(.2,.8,.2,1);
+    z-index:20;box-shadow:var(--e4);
+  }
+  #app.leftopen #left{transform:none}
+  #right{width:100%;max-width:100%}
+  .col{padding:0 12px}
+  header{padding:10px 12px 10px 52px}
+  .bubble{max-width:92%}
+  #scrollDown{bottom:100px;right:12px}
+}
+/* Composer: min-width:0 on the textarea so flexbox can shrink it;
+   16px font prevents iOS zoom-on-focus. */
+.box textarea{flex:1;min-width:0;font-size:16px}
+main{min-width:0}
+/* On touch devices, don't hide per-message actions behind :hover */
+@media (hover:none){
+  .sess button{opacity:1}
+  .msg-actions{opacity:1}
+}
 </style>
 </head>
 <body>
@@ -393,7 +582,7 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
         <label class="tog auto" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
         <label class="tog bg" id="bgTog" title="When on, every run_shell call executes in the background (survives Stop)"><input type="checkbox" id="bgBox"> bg-shell</label>
       </div>
-      <button id="keysBtn">Keys &amp; models</button>
+      <button id="keysBtn" class="primary">Keys &amp; models</button>
     </header>
     <div id="autoBanner">⚠ auto-approve is ON — the agent runs shell commands and writes files without asking. Turn it off in the header.</div>
     <div id="log"><div class="col" id="msgs"></div></div>
@@ -401,6 +590,7 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
     <div id="composer"><div class="col">
       <div id="working"></div>
       <div class="box">
+        <button class="ghost" id="micBtn" title="Dictate (local STT — requires sherpa-onnx + a microphone)" aria-label="Dictate">🎤</button>
         <button class="ghost" id="attach" title="Upload a file into the workspace" aria-label="Upload a file">📎</button>
         <input type="file" id="fileIn" hidden multiple>
         <textarea id="inp" rows="1" placeholder="Ask Omni to read, edit, run, research…  (Enter = send, Shift+Enter = new line)"></textarea>
@@ -498,7 +688,8 @@ function inline(text) {
     else if (t.startsWith("**")) frag.append(h("b", { text: t.slice(2, -2) }));
     else {
       const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(t);
-      frag.append(h("a", { href: mm[2], target: "_blank", rel: "noopener noreferrer", text: mm[1] }));
+      const url = /^https?:\/\//i.test(mm[2]) ? mm[2] : "#";
+      frag.append(h("a", { href: url, target: "_blank", rel: "noopener noreferrer", text: mm[1] }));
     }
     last = m.index + t.length;
   }
@@ -590,6 +781,12 @@ function renderStatus() {
   const w = $("#working");
   if (!busy) { w.replaceChildren(); return; }
   const info = statusState;
+  if (!info.title && !info.detail && !info.recent) {
+    w.replaceChildren(h("div", { class: "msg asst typing" },
+      h("div", { class: "bubble" },
+        h("span", { class: "dot" }), h("span", { class: "dot" }), h("span", { class: "dot" }))));
+    return;
+  }
   const card = h("div", { class: "status-card" });
   card.append(h("div", { class: "title" },
     h("span", { class: "spin" }),
@@ -663,13 +860,31 @@ function render(ev) {
       if (dt && dt.dataset.t0) { const s = ((performance.now() - Number(dt.dataset.t0)) / 1000).toFixed(1); dt.textContent = s + "s"; }
       if (!d.querySelector("pre.stream")) d.append(h("pre", { text: ev.text }));
       else if (!ev.ok) d.append(h("pre", { text: "ERROR (see stream above):\n" + ev.text }));
+      // If the displayed output looks clipped (>= 1500 chars), offer a
+      // link to the full result from history.
+      if ((ev.text || "").length >= 1500 && ev.id) {
+        const a = h("a", {
+          href: `/api/tool_result?session=${encodeURIComponent(sid)}&id=${encodeURIComponent(ev.id)}`,
+          target: "_blank", rel: "noopener noreferrer",
+          style: "display:inline-block;margin:6px 12px 10px;font-size:11.5px;color:var(--accent);text-decoration:none",
+          text: "⤓ full output",
+        });
+        d.append(a);
+      }
       return;
     }
     case "tool_stream": {
       const d = toolEls[ev.id]; if (!d) return;
+      if (!d.open) d.open = true;
       let pre = d.querySelector("pre.stream");
-      if (!pre) { pre = h("pre", { class: "stream" }); d.append(pre); }
-      pre.textContent += ev.text;
+      if (!pre) {
+        pre = h("pre", { class: "stream" });
+        pre.append(document.createTextNode(""));
+        d.append(pre);
+      }
+      pre.firstChild.appendData(ev.text);
+      const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+      if (nearBottom) pre.scrollTop = pre.scrollHeight;
       if (atBottom()) scrollToBottom(); else maybeShowScrollDown();
       return;
     }
@@ -717,14 +932,18 @@ async function send() {
   const t = inp.value.trim(); if (!t || busy) return;
   const restore = inp.value;
   inp.value = ""; autoGrow();
+  store.set("omni_draft_" + sid, "");
   try {
     const r = await api("/api/chat", { session: sid, text: t });
     render({ type: "user", text: t, idx: (typeof r.user_idx === "number" ? r.user_idx : undefined) });
     cursor = r.cursor;
-    statusState = { title: "Sending…" };
+    statusState = {};
     setBusy(true, false);
     poll();
-  } catch (e) { inp.value = restore; autoGrow(); toast(e.message, 5000); }
+  } catch (e) {
+    inp.value = restore; autoGrow();
+    render({ type: "error", text: e.message });
+  }
 }
 async function doStop() {
   if ($("#stop").disabled) return;
@@ -735,6 +954,104 @@ async function doStop() {
   setTimeout(() => { $("#stop").disabled = false; }, 3000);
 }
 function autoGrow() { const i = $("#inp"); i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight, 200) + "px"; }
+
+/* ---------------- STT (speech-to-text) ---------------- */
+let sttActive = false, sttCursor = 0, sttPollTimer = null;
+
+async function sttRefreshStatus() {
+  try {
+    const d = await api("/api/stt/status");
+    const btn = $("#micBtn");
+    if (!d.ok) {
+      btn.title = "STT unavailable: " + d.reason;
+      btn.disabled = true;
+      btn.style.opacity = "0.4";
+    } else {
+      btn.title = "Dictate (click to start; click again to stop)";
+      btn.disabled = false;
+      btn.style.opacity = "";
+    }
+  } catch (_) {}
+}
+
+async function sttStart() {
+  const inp = $("#inp");
+  const startVal = inp.value;
+  const sep = startVal && !startVal.endsWith(" ") ? " " : "";
+  try {
+    const d = await api("/api/stt/start", {});
+    if (!d.ok) { toast("STT: " + (d.error || "unavailable"), 6000); return; }
+  } catch (e) { toast("STT: " + e.message, 6000); return; }
+  sttActive = true;
+  sttCursor = 0;
+  $("#micBtn").classList.add("rec");
+  $("#micBtn").textContent = "⏹";
+  toast("Listening… speak now (click the mic again to stop)", 4000);
+  // Poll for transcripts every 200ms.
+  const pollOnce = async () => {
+    if (!sttActive) return;
+    try {
+      const d = await api(`/api/stt/poll?after=${sttCursor}`);
+      if (!d.active) {
+        sttStop(true);
+        return;
+      }
+      if (d.error) {
+        toast("STT error: " + d.error, 6000);
+        sttStop(true);
+        return;
+      }
+      for (const ev of d.events) {
+        sttCursor = Math.max(sttCursor, ev.t);
+        if (ev.type === "partial") {
+          // Show the partial in the textarea, replacing the previous
+          // partial tail. We keep a marker of where the partial started
+          // so the user's existing text isn't clobbered.
+          sttRenderPartial(inp, startVal + sep, ev.text);
+        } else if (ev.type === "final") {
+          // Commit the final text and reset the partial region.
+          sttRenderPartial(inp, startVal + sep, "");
+          inp.value = (startVal + sep + ev.text + " ").replace(/\s+$/, " ") + (startVal ? "" : "");
+          autoGrow();
+        }
+      }
+    } catch (e) {
+      // Ignore transient poll failures; the next tick will retry.
+    }
+    if (sttActive) sttPollTimer = setTimeout(pollOnce, 200);
+  };
+  sttPollTimer = setTimeout(pollOnce, 200);
+}
+
+function sttRenderPartial(inp, prefix, partial) {
+  // The textarea content is "prefix" + (current partial). We can't know
+  // where the partial began unless we track it, so we rebuild from the
+  // prefix on every call. If the user has edited the textarea while
+  // dictating, this will clobber their edit — acceptable trade-off for
+  // the simplicity.
+  if (partial) {
+    inp.value = prefix + partial;
+  } else {
+    inp.value = prefix;
+  }
+  autoGrow();
+}
+
+async function sttStop(silent) {
+  sttActive = false;
+  if (sttPollTimer) { clearTimeout(sttPollTimer); sttPollTimer = null; }
+  $("#micBtn").classList.remove("rec");
+  $("#micBtn").textContent = "🎤";
+  try { await api("/api/stt/stop", {}); } catch (_) {}
+  if (!silent) toast("Stopped listening");
+}
+
+$("#micBtn").onclick = () => {
+  if (sttActive) sttStop(false);
+  else sttStart();
+};
+sttRefreshStatus();
+setInterval(sttRefreshStatus, 30000);
 
 async function loadChat() {
   const stick = atBottom();
@@ -758,18 +1075,21 @@ function timeAgo(sec) {
   return Math.round(sec / 86400) + "d ago";
 }
 let sessionsCache = [];
-async function loadSessions() { try { sessionsCache = await api("/api/sessions"); renderSessions(); } catch (_) {} }
+let _sessSearchTimer = null;
+async function loadSessions() {
+  const q = ($("#sessSearch").value || "").trim();
+  try {
+    // Server-side search when the user is typing; otherwise the 40 newest.
+    const url = q ? `/api/sessions?q=${encodeURIComponent(q)}` : "/api/sessions";
+    sessionsCache = await api(url);
+    renderSessions();
+  } catch (_) {}
+}
 
 async function loadShellJobs() {
   const box = $("#shelljobs"); if (!box) return;
   try {
     const d = await api("/api/shell_jobs");
-    // reflect the server's bg default once, on first load (or after a change)
-    if (typeof d.bg_default === "boolean" && S && typeof S.shell_bg_default === "boolean") {
-      S.shell_bg_default = d.bg_default;
-      $("#bgBox").checked = d.bg_default;
-      $("#bgTog").classList.toggle("on", d.bg_default);
-    }
     if (!d.jobs.length) {
       box.replaceChildren(h("div", { class: "small", style: "padding:4px 6px", text: "no background shells" }));
       return;
@@ -813,13 +1133,27 @@ function renderSessions() {
       } })));
   }
 }
-$("#sessSearch").addEventListener("input", renderSessions);
-function switchTo(id) { sid = id; store.set("omni_sid", sid); $("#app").classList.remove("leftopen"); loadChat(); loadSessions(); }
+$("#sessSearch").addEventListener("input", () => {
+  // Debounce the server-side search: only fire when the user pauses typing.
+  clearTimeout(_sessSearchTimer);
+  _sessSearchTimer = setTimeout(loadSessions, 200);
+});
+function switchTo(id) {
+  try { store.set("omni_draft_" + sid, $("#inp").value); } catch (_) {}
+  sid = id; store.set("omni_sid", sid);
+  $("#app").classList.remove("leftopen");
+  const draft = store.get("omni_draft_" + sid) || "";
+  $("#inp").value = draft; autoGrow();
+  loadChat(); loadSessions();
+}
 function newChat() { switchTo(rid()); }
 
 /* ---- confirm / prompt ---- */
 let _confirmResolve = null, _promptResolve = null;
+let _dialogOpen = false;
 function confirmDlg(title, msg, yesText = "OK") {
+  if (_dialogOpen) return Promise.resolve(false);
+  _dialogOpen = true;
   $("#confirmTitle").textContent = title;
   $("#confirmMsg").textContent = msg;
   $("#confirmYes").textContent = yesText;
@@ -828,9 +1162,12 @@ function confirmDlg(title, msg, yesText = "OK") {
 }
 function closeConfirm(result) {
   $("#confirm").classList.remove("on");
+  _dialogOpen = false;
   const r = _confirmResolve; _confirmResolve = null; if (r) r(result);
 }
 function promptDlg(title, msg, initial = "") {
+  if (_dialogOpen) return Promise.resolve(null);
+  _dialogOpen = true;
   $("#confirmTitle").textContent = title;
   $("#confirmMsg").textContent = msg;
   let box = $("#confirmInput");
@@ -846,9 +1183,15 @@ function promptDlg(title, msg, initial = "") {
 }
 function closePrompt(result) {
   $("#confirm").classList.remove("on");
+  _dialogOpen = false;
   const r = _promptResolve; _promptResolve = null; if (r) r(result);
 }
-$("#confirmYes").onclick = () => { if (_promptResolve) closePrompt(($("#confirmInput") || {}).value ?? ""); else closeConfirm(true); };
+$("#confirmYes").onclick = () => {
+  if (_promptResolve) {
+    const el = $("#confirmInput");
+    closePrompt(el ? (el.value ?? "") : null);
+  } else closeConfirm(true);
+};
 $("#confirmNo").onclick = () => { if (_promptResolve) closePrompt(null); else closeConfirm(false); };
 $("#confirm").onclick = e => { if (e.target.id === "confirm") { if (_promptResolve) closePrompt(null); else closeConfirm(false); } };
 
@@ -858,6 +1201,11 @@ function askApproval(ev) {
   $("#modalAction").textContent = ev.text;
   $("#modalRemember").checked = false;
   $("#modalRemember").parentElement.style.display = ev.tool ? "" : "none";
+  // Show the tool name in the header, with a color-coded icon.
+  const hdr = $("#modalTitle");
+  const t = ev.tool || "action";
+  hdr.textContent = `Omni wants to ${t === "run_shell" ? "run a shell command" : (ev.tool ? `use ${t}` : "act")}`;
+  hdr.title = `Chat: ${sid} · Tool: ${t}`;
   $("#modal").classList.add("on");
   setTimeout(() => $("#allow").focus(), 0);
 }
@@ -874,6 +1222,9 @@ document.addEventListener("keydown", e => {
     if ($("#modal").classList.contains("on")) answer(false);
     else if ($("#confirm").classList.contains("on")) { if (_promptResolve) closePrompt(null); else closeConfirm(false); }
     else if ($("#browse")) $("#browse").remove();
+  } else if (e.key === "Enter" && $("#modal").classList.contains("on") && !e.isComposing) {
+    e.preventDefault();
+    answer(!e.shiftKey);
   }
 });
 
@@ -905,10 +1256,13 @@ function restoreInputs(snap) {
   pane.querySelectorAll("[data-persist]").forEach(el => { if (snap[el.dataset.persist] !== undefined) el.value = snap[el.dataset.persist]; });
 }
 
-async function refreshKeys(force, keepFocus = true) {
+async function refreshKeys(force, keepFocus = true, lite = true) {
   const pane = $("#pane-keys");
   if (!force && keepFocus && pane.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
-  try { S = await api("/api/state"); } catch (e) { return; }
+  // Background refreshes use lite=1 (no per-key model lists) to keep the
+  // payload small. The initial load and "Refresh all" use the full state.
+  const url = lite ? "/api/state?lite=1" : "/api/state";
+  try { S = await api(url); } catch (e) { return; }
   for (const p of S.pools || []) {
     if (!modelCache[p.pool] && p.keys && p.keys.length && Array.isArray(p.keys[0].models) && p.keys[0].models.length) {
       modelCache[p.pool] = p.keys[0].models;
@@ -919,6 +1273,12 @@ async function refreshKeys(force, keepFocus = true) {
   $("#bgTog").classList.toggle("on", !!S.shell_bg_default);
   renderKeys();
   renderMcp();
+}
+
+function fmtUsedAt(ts) {
+  if (!ts) return "";
+  const sec = Math.max(1, Math.round(Date.now() / 1000 - ts));
+  return "used " + timeAgo(sec);
 }
 
 function renderKeys() {
@@ -952,7 +1312,7 @@ function renderKeys() {
             const nKeys = Object.keys(r.refreshed || {}).length;
             const nPools = Object.keys(r.models || {}).length;
             toast(`Refreshed ${nKeys} key(s) across ${nPools} pool(s) — ${total} models`);
-            await refreshKeys(true);
+            await refreshKeys(true, true, false);
           } catch (err) { toast(err.message, 6000); }
           finally { t.textContent = "↻ Refresh all model lists"; t.disabled = false; }
         } }),
@@ -990,29 +1350,39 @@ function poolCard(p, idx, open) {
   entrable(mIn, applyModel);
 
   const fbIn = h("input", { value: p.fallbacks.join(", "), placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash", spellcheck: false, list: "dl-" + p.pool });
-  const saveFb = () => act(() => api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value }), "Fallback models saved");
+  const saveFb = () => act(async () => {
+    const r = await api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value });
+    if (r.dropped && r.dropped.length)
+      toast(`Ignored ${r.dropped.length} entr(ies) equal to the main model`, 5000);
+    return r;
+  }, "Fallback models saved");
   entrable(fbIn, saveFb);
 
   const c = p.counts;
   const keysList = h("details", { class: "kl", "data-pool": p.pool, open: open || undefined },
     h("summary", { class: "small", text: p.keys.length + " key(s) — show / hide" }),
-    h("div", { class: "keys" }, ...p.keys.map(k => h("div", { class: "k" },
-      h("span", { class: "dot " + k.status, title: k.status }),
-      h("span", { class: "nm", text: k.name }),
-      h("span", { class: "mk", text: k.masked }),
-      h("span", { class: "info", title: k.reason || k.last_error,
-        text: k.status === "ready" ? `ok ${k.ok} · fail ${k.fail} · score ${k.score}`
-          : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}` }),
-      h("input", { value: k.model || "", list: "dl-" + p.pool, placeholder: "model id", spellcheck: false,
-        "data-persist": "key-model-" + k.name,
-        onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }), "Model set for " + k.name) }),
-      h("button", { text: "↻", title: "Refresh this key's model list",
-        onclick: e => { e.target.textContent = "…"; act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`), "Refreshed " + k.name).finally(() => e.target.textContent = "↻"); } }),
-      h("button", { text: "test", title: "Send a real tiny request with this key",
-        onclick: ev => { ev.target.textContent = "…"; act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
-          r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120)).finally(() => ev.target.textContent = "test"); } }),
-      h("button", { class: "danger", text: "✕", title: "Remove this key",
-        onclick: async () => { if (await confirmDlg("Remove key?", "Remove " + k.name + " from the pool?", "Remove")) act(() => api("/api/keys/remove", { name: k.name }), "Removed"); } })))));
+    h("div", { class: "keys" }, ...p.keys.map(k => {
+      const used = fmtUsedAt(k.last_used_at);
+      const infoText = k.status === "ready"
+        ? `${used ? used + " · " : ""}ok ${k.ok} · fail ${k.fail}`
+        : `${k.status === "auth" ? "INVALID KEY" : k.status} ${fmtTime(k.remaining)}${k.reason ? " — " + k.reason : ""}`;
+      const infoTitle = [k.reason, k.last_error, "score=" + k.score, used].filter(Boolean).join(" · ");
+      return h("div", { class: "k" },
+        h("span", { class: "dot " + k.status, title: k.status }),
+        h("span", { class: "nm", text: k.name }),
+        h("span", { class: "mk", text: k.masked }),
+        h("span", { class: "info", title: infoTitle, text: infoText }),
+        h("input", { value: k.model || "", list: "dl-" + p.pool, placeholder: "model id", spellcheck: false,
+          "data-persist": "key-model-" + k.name,
+          onchange: e => act(() => api("/api/key/model", { name: k.name, model: e.target.value }), "Model set for " + k.name) }),
+        h("button", { text: "↻", title: "Refresh this key's model list",
+          onclick: e => { e.target.textContent = "…"; act(() => api(`/api/key/models?name=${encodeURIComponent(k.name)}&refresh=1`), "Refreshed " + k.name).finally(() => e.target.textContent = "↻"); } }),
+        h("button", { text: "test", title: "Send a real tiny request with this key",
+          onclick: ev => { ev.target.textContent = "…"; act(async () => (await api("/api/keys/test", { name: k.name })).results[0],
+            r => r.ok ? k.name + " works" : k.name + ": " + r.text.slice(0, 120)).finally(() => ev.target.textContent = "test"); } }),
+        h("button", { class: "danger", text: "✕", title: "Remove this key",
+          onclick: async () => { if (await confirmDlg("Remove key?", "Remove " + k.name + " from the pool?", "Remove")) act(() => api("/api/keys/remove", { name: k.name }), "Removed"); } }));
+    })));
 
   const addBox = h("textarea", { class: "keysbox", placeholder: "Paste more keys for this service — one per line or comma separated", spellcheck: false, "data-persist": "addkeys-" + p.pool });
   const addKeysBtn = h("button", { text: "Add keys to " + p.pool,
@@ -1072,7 +1442,7 @@ function addServiceCard() {
     }, r => `Added ${r.added} key(s)` + (r.duplicates ? `, ${r.duplicates} duplicate(s) skipped` : "")) });
   [name, url, model].forEach(el => entrable(el, () => addBtn.click()));
   keys.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addBtn.click(); } });
-  return h("div", { class: "card" },
+  return h("div", { class: "card card-hero" },
     h("h3", { text: "Add a service" }),
     h("div", { class: "row" }, preset, name),
     h("div", { class: "row" }, url),
@@ -1116,6 +1486,10 @@ function parseHeaderLines(text) {
 function dumpHeaders(obj) {
   return Object.entries(obj || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
 }
+function looksSecret(key) {
+  const k = (key || "").toLowerCase();
+  return /(token|key|secret|password|passwd|auth|credential|api|pat)/.test(k);
+}
 
 function mcpServerCard(m) {
   const dl = h("details", { class: "mcp-card" },
@@ -1127,7 +1501,7 @@ function mcpServerCard(m) {
         badge(m.tools + " tools", m.tools ? "g" : ""),
         m.transport === "http" ? badge("http", "i") : badge("stdio", "w"),
         h("span", { style: "flex:1" }),
-        h("button", { class: "ghost", text: "▲ Edit",
+        h("button", { class: "ghost", text: "▾ Edit",
           onclick: e => { e.stopPropagation(); toggleEdit(); } }))),
     h("div", { class: "mcp-meta", text: m.command || m.url || "" }),
     m.error ? h("div", { class: "note err", text: m.error }) : null,
@@ -1163,8 +1537,22 @@ function mcpEditor(m) {
   const cmd = h("input", { value: m.command || "", placeholder: "command (e.g. npx) — leave blank for remote", spellcheck: false });
   const args = h("input", { value: (m.args || []).join(" "), placeholder: "args, space-separated", spellcheck: false });
   const url = h("input", { value: m.url || "", placeholder: "remote URL (leave blank for local)", spellcheck: false });
-  const envIn = h("textarea", { class: "keysbox", placeholder: "ENV vars, one KEY=VALUE per line. Pre-existing names: " + (m.env_keys || []).join(", "), spellcheck: false });
-  const headersIn = h("textarea", { class: "keysbox", placeholder: "HTTP headers (remote only), one Header: value per line. Pre-existing names: " + (m.header_keys || []).join(", "), spellcheck: false });
+  // Prefill env from the existing names. Secret-looking values are shown as
+  // "***"; sending "***" back tells the server "keep the existing value".
+  const prefilledEnv = (m.env_keys || []).map(k => `${k}=${looksSecret(k) ? "***" : ""}`).join("\n");
+  const envIn = h("textarea", {
+    class: "keysbox",
+    spellcheck: false,
+    placeholder: "ENV vars, one KEY=VALUE per line. Use *** to keep an existing secret.",
+  });
+  envIn.value = prefilledEnv;
+  const prefilledHeaders = (m.header_keys || []).map(k => `${k}: ***`).join("\n");
+  const headersIn = h("textarea", {
+    class: "keysbox",
+    spellcheck: false,
+    placeholder: "HTTP headers (remote only), one Header: value per line. Use *** to keep an existing secret.",
+  });
+  headersIn.value = prefilledHeaders;
   const save = h("button", { class: "primary", text: "Save & restart",
     onclick: () => act(() => api("/api/mcp/update", {
       old_name: m.name,
@@ -1174,6 +1562,7 @@ function mcpEditor(m) {
       url: url.value.trim(),
       env: parseEnvLines(envIn.value),
       headers: parseHeaderLines(headersIn.value),
+      masked_secrets: true,
     }), r => `Saved ${r.name}: ${r.tools} tools`) });
   return h("div", { class: "mcp-form" },
     h("label", { text: "Name" }), name,
@@ -1239,7 +1628,6 @@ async function renderMcp() {
 
   pane.append(mcpAddCard());
 
-  // ---- Registry browser
   const searchIn = h("input", { placeholder: "Search the registry (filesystem, github, sqlite, youtube…)", spellcheck: false });
   const refreshBtn = h("button", { text: "↻ Refresh catalog", title: "Re-fetch the official MCP registry (cached for 1h)",
     onclick: () => loadRegistry(true) });
@@ -1254,8 +1642,6 @@ async function renderMcp() {
       hint.textContent = (t && t.reason) || "This registry entry has no usable template — fill it in manually.";
       return;
     }
-    // Fill the "Add" card. Prefer this over opening a modal so the user
-    // can review every value before connecting.
     const card = $("#mcp-add");
     if (!card) return;
     const [nameI, cmdI, argsI, urlI, envI, hdrI] = card.querySelectorAll(".mcp-form input, .mcp-form textarea");
@@ -1270,8 +1656,6 @@ async function renderMcp() {
       if (urlI) urlI.value = "";
       if (cmdI) cmdI.value = t.command || "";
       if (argsI) argsI.value = (t.args || []).join(" ");
-      // Leave env blank if none; if the template declared required vars,
-      // seed them as KEY= so the user has to fill a value.
       if (envI) envI.value = dumpEnv(t.env || {});
       hint.textContent = "Autofilled local command for " + row.name +
         (row.env_required && row.env_required.length ? "  — fill the required env vars before connecting." : "") + " Review, then click Add & connect.";
@@ -1338,10 +1722,17 @@ async function loadFiles() {
         h("button", { text: "Refresh", onclick: loadFiles }),
         h("button", { text: "Upload…", onclick: () => $("#fileIn").click() }),
         h("span", { class: "small", text: list.length + " file(s) in the workspace" })),
-      h("div", { class: "files" }, ...list.map(f => h("div", { class: "f" },
-        h("span", { title: f.path, text: f.path }),
-        h("span", { class: "small", text: f.size > 1048576 ? (f.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(f.size / 1024)) + " KB" }),
-        h("a", { href: "/api/file?path=" + encodeURIComponent(f.path), text: "download" })))));
+      h("div", { class: "files" }, ...list.map(f => {
+        // Inline for text/image; attachment for the rest.
+        const path = f.path.toLowerCase();
+        const inline = /\.(md|txt|json|xml|html|htm|css|js|ts|py|rs|go|c|cpp|h|java|sh|bash|zsh|yml|yaml|toml|ini|cfg|log|svg|png|jpg|jpeg|gif|webp|bmp|pdf)$/.test(path);
+        const href = "/api/file?path=" + encodeURIComponent(f.path) + (inline ? "&inline=1" : "");
+        return h("div", { class: "f" },
+          h("span", { title: f.path, text: f.path }),
+          h("span", { class: "small", text: f.size > 1048576 ? (f.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(f.size / 1024)) + " KB" }),
+          h("a", { href, target: inline ? "_blank" : undefined, rel: inline ? "noopener noreferrer" : undefined,
+                   text: inline ? "open" : "download" }));
+      })));
   } catch (e) { pane.textContent = e.message; }
 }
 
@@ -1496,6 +1887,7 @@ function openBrowser(startPath, cb) {
       const d = await api("/api/browse?" + q);
       curPath = d.path; pathIn.value = d.path; setCrumbs(d.path);
       allEntries = d.entries; renderEntries();
+      if (d.timed_out) toast("Search timed out; showing partial results. Refine the query to narrow it.", 5000);
       drivesBox.replaceChildren(...(d.drives || []).map(dr => h("button", { text: dr, onclick: () => go(dr) })));
     } catch (e) { toast(e.message); }
   }
@@ -1516,6 +1908,19 @@ function openBrowser(startPath, cb) {
         overlay.remove(); cleanupKeyHandler(); await refreshKeys(true);
       } catch (e) { toast(e.message, 6000); }
     } });
+  const newFolderBtn = h("button", { text: "+ Folder", title: "Create a new folder in the current directory",
+    onclick: async () => {
+      if (!curPath) return toast("Still loading the folder — try again in a moment");
+      const name = await promptDlg("New folder", "Name of the new folder in " + curPath + ":", "new-folder");
+      if (name === null) return;
+      const nv = name.trim();
+      if (!nv) return;
+      try {
+        await api("/api/workspace/mkdir", { parent: curPath, name: nv });
+        toast("Created " + nv);
+        go(curPath);
+      } catch (e) { toast(e.message, 6000); }
+    } });
   const useBtn = h("button", { class: "primary", text: "Use this folder",
     onclick: async () => {
       if (!curPath) return toast("Still loading the folder — try again in a moment");
@@ -1526,7 +1931,7 @@ function openBrowser(startPath, cb) {
       try { if (cb) await cb(curPath); pushRecent(curPath); overlay.remove(); cleanupKeyHandler(); }
       catch (e) { toast(e.message, 6000); }
     } });
-  const pathBar = h("div", { class: "row" }, backBtn, upBtn, pathIn, browseBtn, useBtn);
+  const pathBar = h("div", { class: "row" }, backBtn, upBtn, pathIn, newFolderBtn, browseBtn, useBtn);
   const dlg = h("div", { class: "dlg" },
     h("h3", { style: "margin:0 0 12px !important;font-size:16px", text: "Choose workspace" }),
     recent, pathBar,
@@ -1547,7 +1952,14 @@ function openBrowser(startPath, cb) {
 }
 function osWinPath() { return /^[A-Za-z]:[\\/]/.test((S && S.workspace) || ""); }
 
-function copyText(t) { navigator.clipboard.writeText(t); toast("Copied to clipboard"); }
+async function copyText(t) {
+  try {
+    await navigator.clipboard.writeText(t);
+    toast("Copied to clipboard");
+  } catch (_) {
+    toast("Copy failed — select the text and press Ctrl+C");
+  }
+}
 async function retryMsg(e, ev) {
   e.stopPropagation(); if (busy) return toast("Agent is busy");
   try { const r = await api("/api/chat/retry", { session: sid }); cursor = r.cursor; setBusy(true, false); poll(); }
@@ -1601,6 +2013,23 @@ $("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = "";
 logEl.addEventListener("dragover", e => e.preventDefault());
 logEl.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
 
+// Keyboard shortcuts
+document.addEventListener("keydown", e => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    $("#inp").focus();
+  } else if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
+    e.preventDefault();
+    newChat();
+  } else if (mod && e.key === "/") {
+    e.preventDefault();
+    $("#sessSearch").focus();
+  } else if (e.key === "Escape" && document.activeElement === $("#inp") && !$("#inp").value) {
+    $("#inp").blur();
+  }
+});
+
 function openRight(tab) {
   $("#app").classList.add("rightopen");
   store.set("omni_tab", tab);
@@ -1629,7 +2058,10 @@ $("#wsChip").addEventListener("click", () => {
 });
 
 (async function init() {
-  await refreshKeys(true); await loadChat(); loadSessions(); loadShellJobs();
+  await refreshKeys(true, true, false);  // full state on first load
+  await loadChat();
+  loadSessions();
+  loadShellJobs();
   setInterval(loadShellJobs, 5000);
   if (S) {
     $("#strictBox").checked = !!S.strict;
@@ -1637,6 +2069,8 @@ $("#wsChip").addEventListener("click", () => {
     $("#bgBox").checked = !!S.shell_bg_default;
     $("#bgTog").classList.toggle("on", !!S.shell_bg_default);
   }
+  const draft = store.get("omni_draft_" + sid) || "";
+  if (draft) { $("#inp").value = draft; autoGrow(); }
   if (S && !S.pools.length) { openRight("keys"); toast("Add your first API key to start"); }
 })();
 </script>

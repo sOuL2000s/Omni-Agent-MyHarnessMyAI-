@@ -21,6 +21,14 @@ MCP endpoints (all under /api/mcp):
   POST   /api/mcp/start     -> start (already-configured) server
   POST   /api/mcp/stop      -> stop but keep config
   POST   /api/mcp/restart   -> stop + start
+
+Additional endpoints added for the 2.2 UX pass:
+  GET    /api/state?lite=1     -> pools + keys without per-key model lists
+  GET    /api/sessions?q=...   -> server-side search across all session files
+  GET    /api/tool_result?session=&id= -> full tool output from history
+  POST   /api/workspace/mkdir  -> create a folder, returns its path
+  GET    /api/file?path=&inline=1 -> inline (preview) instead of attachment
+  GET    /api/browse?path=&search=&timeout= -> deep search with wall-clock cap
 """
 import fnmatch
 import hmac
@@ -35,6 +43,7 @@ import threading
 import time
 import webbrowser
 import hashlib
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote
@@ -42,6 +51,7 @@ from urllib.parse import urlparse, parse_qs, quote
 from .. import loop, llm, safety, commands
 from ..providers import PRESETS, STRATEGIES
 from ..tools import shell as _shell
+from .. import stt as _stt
 
 
 def _find_index() -> Path:
@@ -61,6 +71,8 @@ MAX_JSON = 5 * 1024 * 1024
 MAX_UPLOAD = 50 * 1024 * 1024
 
 # Don't accumulate thousands of streaming chunks per session.
+# With a monotonic _seq counter, events can be evicted from the front of the
+# deque safely (the client's cursor is a sequence number, not an array index).
 MAX_EVENTS = 2000
 MAX_POLL_EVENTS = 200
 STREAM_COALESCE_SECONDS = 0.1
@@ -70,6 +82,11 @@ MAX_RENDER_CHARS = 20000
 
 # How long a single approval dialog may block the agent.
 APPROVAL_TIMEOUT = 120
+
+# Wall-clock cap for /api/browse?search= deep scans. After this many
+# seconds the walk returns whatever it found so far. Prevents a `C:\`
+# search from blocking the whole HTTP handler thread.
+DEEP_SEARCH_TIMEOUT = 5.0
 
 
 def _validate_workspace(new_ws: Path, data_dir: Path) -> None:
@@ -87,7 +104,11 @@ class Session:
     def __init__(self, cfg, sid, history=None):
         self.cfg, self.id = cfg, sid
         self.history = history or loop.new_history(cfg)
-        self.events = []
+        # Ring buffer + monotonic sequence. `after` from the client is a
+        # sequence number, not an array index, so eviction from the front of
+        # the deque never causes silent event skips.
+        self.events = deque(maxlen=MAX_EVENTS)
+        self._seq = 0
         self.cond = threading.Condition()
         self.busy = False
         self.cancel = threading.Event()
@@ -139,50 +160,67 @@ class Session:
             if kind == "tool_stream":
                 sid = extra.get("id")
                 if sid is not None:
-                    buf = self._stream_buf.setdefault(sid, [])
-                    buf.append(text)
-                    now = time.time()
-                    last = self._stream_last.get(sid, 0.0)
-                    if now - last < STREAM_COALESCE_SECONDS:
-                        return
-                    text = "".join(buf)
-                    buf.clear()
-                    self._stream_last[sid] = now
-            payload = {"type": kind, "text": text}
+                    # Merge in place if the previous event is a stream for
+                    # the same id and arrived <STREAM_COALESCE_SECONDS ago.
+                    # That keeps bursts cheap for the browser, while the
+                    # FIRST chunk of a burst still goes out instantly.
+                    if self.events:
+                        last = self.events[-1]
+                        if (last.get("type") == "tool_stream"
+                                and last.get("id") == sid
+                                and time.time() - last.get("_t", 0) < STREAM_COALESCE_SECONDS):
+                            last["text"] += text
+                            last["_t"] = time.time()
+                            self.cond.notify_all()
+                            return
+                    extra["_t"] = time.time()
+
+            # Flush any pending stream buffer when the tool finishes so the
+            # last <100ms of a shell command isn't lost from the live view.
+            if kind == "tool_result":
+                sid = extra.get("id")
+                if sid in self._stream_buf and self._stream_buf[sid]:
+                    pending = "".join(self._stream_buf.pop(sid))
+                    self._seq += 1
+                    self.events.append({"type": "tool_stream", "text": pending,
+                                        "id": sid, "_seq": self._seq, "_t": time.time()})
+                    self._stream_last.pop(sid, None)
+
+            self._seq += 1
+            payload = {"type": kind, "text": text, "_seq": self._seq, **extra}
             if kind in ("assistant", "final") and "idx" not in extra:
                 payload["idx"] = max(0, len(self.history) - 1)
-            payload.update(extra)
             self.events.append(payload)
-            self._cap_events()
             self.cond.notify_all()
 
     def _cap_events(self):
-        if len(self.events) <= MAX_EVENTS:
-            return
-        overflow = len(self.events) - MAX_EVENTS
-        drop = []
-        for i, e in enumerate(self.events):
-            if e.get("type") == "tool_stream":
-                drop.append(i)
-                if len(drop) >= overflow:
-                    break
-        if len(drop) < overflow:
-            for i in range(overflow - len(drop)):
-                if i < len(self.events):
-                    drop.append(i)
-        for i in sorted(set(drop), reverse=True):
-            del self.events[i]
+        # Ring buffer via deque(maxlen=...) handles eviction; nothing to do.
+        # Kept as a no-op so any external callers don't break.
+        pass
 
     def poll(self, after, wait):
+        """Return events with _seq > after.
+
+        `after` is a monotonic sequence number from the client. Events can be
+        evicted from the front of the deque without invalidating the cursor.
+        """
         with self.cond:
-            if len(self.events) <= after and wait > 0:
+            if self._seq <= after and wait > 0:
                 self.cond.wait(wait)
             if after < 0:
                 after = 0
-            chunk = self.events[after:after + MAX_POLL_EVENTS]
-            if after + MAX_POLL_EVENTS < len(self.events):
+            chunk = [e for e in self.events if e["_seq"] > after][:MAX_POLL_EVENTS]
+            # If the client fell behind the ring buffer (its cursor is older
+            # than the oldest retained event), tell it to reload history by
+            # returning an empty chunk with next == self._seq. The JS side
+            # treats that as "resync" and calls /api/history.
+            if chunk and chunk[-1]["_seq"] < self._seq:
                 chunk = [e for e in chunk if e.get("type") != "tool_stream"]
-            return chunk, min(after + MAX_POLL_EVENTS, len(self.events))
+            nxt = chunk[-1]["_seq"] if chunk else after
+            return (
+                [{k: v for k, v in e.items() if k != "_t"} for e in chunk],
+                nxt,
+            )
 
     def save(self):
         if self.deleted:
@@ -218,6 +256,18 @@ class Session:
                             "ok": not t.startswith("ERROR"), "idx": i})
         return out
 
+    def full_tool_result(self, call_id: str):
+        """Return the full tool output for `call_id` from history, uncut.
+
+        Returns None if the id isn't found. Used by /api/tool_result so
+        the browser can download the untruncated version of a tool output
+        that was clipped to 1500 chars in the live view.
+        """
+        for m in self.history:
+            if m.get("role") == "tool" and m.get("tool_call_id") == call_id:
+                return str(m.get("content", ""))
+        return None
+
     @staticmethod
     def _clip(text):
         s = str(text)
@@ -248,6 +298,9 @@ class App:
         # by self.mcp_lock so concurrent add/update/delete calls can't
         # clobber each other.
         self.mcp_lock = threading.RLock()
+        # STT: single-session lock. Only one live capture at a time.
+        self.stt_lock = threading.Lock()
+        self.stt_session = None
 
     def session(self, sid, create=True):
         if not SID_RE.match(sid or ""):
@@ -314,15 +367,27 @@ class App:
                 final = loop.run(self.cfg, sess.history, text,
                                  on_event=sess.emit, cancel=sess.cancel)
                 final_idx = len(sess.history) - 1 if sess.history else None
-                sess.emit("final", final, idx=final_idx)
+                try:
+                    sess.emit("final", final, idx=final_idx)
+                except Exception:
+                    pass
             except llm.LLMError as e:
-                sess.emit("error", str(e))
+                try:
+                    sess.emit("error", str(e))
+                except Exception:
+                    pass
             except Exception as e:
-                sess.emit("error", f"{type(e).__name__}: {e}")
+                try:
+                    sess.emit("error", f"{type(e).__name__}: {e}")
+                except Exception:
+                    pass
             finally:
                 sess.busy = False
                 sess.save()
-                sess.emit("done")
+                try:
+                    sess.emit("done")
+                except Exception:
+                    pass
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -407,140 +472,58 @@ class App:
             pass
 
     def mcp_add(self, spec: dict) -> dict:
-        name = (spec.get("name") or "").strip()
-        command = (spec.get("command") or "").strip()
-        url = (spec.get("url") or "").strip()
-        if not name:
-            raise ValueError("name is required")
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.\-]*", name):
-            raise ValueError("name must start with a letter and contain only letters, digits, _, ., -")
-        if not command and not url:
-            raise ValueError("either command (local stdio) or url (remote HTTP) is required")
-
-        args = list(spec.get("args") or [])
-        env = dict(spec.get("env") or {})
-        headers = dict(spec.get("headers") or {})
-        cwd = spec.get("cwd") or None
-
-        from ..mcp import MCPServer
-        srv = MCPServer(name, command or None, args, env, cwd,
-                        url=url or None, headers=headers)
-        try:
-            srv.start()
-        except Exception as e:
-            raise ValueError(f"could not start '{name}': {e}")
-
-        with self.mcp_lock:
-            data = self._mcp_read_config()
-            entry = {
-                "command": command or None,
-                "url": url or None,
-                "args": args,
-                "env": env,
-                "headers": headers,
-                "enabled": True,
-            }
-            if cwd:
-                entry["cwd"] = cwd
-            data["servers"][name] = entry
-            self._mcp_write_config(data)
-            if not getattr(self.cfg, "mcp", None):
-                from ..mcp import MCPRegistry
-                self.cfg.mcp = MCPRegistry()
-            self.cfg.mcp.servers[name] = srv
-            self._mcp_reload_tools()
-        return {"name": name, "tools": len(srv.tools or [])}
+        from .. import mcp_admin
+        return mcp_admin.add_server(
+            self.cfg, getattr(self.cfg, "mcp", None), spec, lock=self.mcp_lock,
+        )
 
     def mcp_update(self, old_name: str, spec: dict) -> dict:
-        old_name = (old_name or "").strip()
-        new_name = (spec.get("name") or old_name).strip()
-        if not old_name:
-            raise ValueError("old_name is required")
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.\-]*", new_name):
-            raise ValueError("name must start with a letter and contain only letters, digits, _, ., -")
-        command = (spec.get("command") or "").strip()
-        url = (spec.get("url") or "").strip()
-        if not command and not url:
-            raise ValueError("either command (local stdio) or url (remote HTTP) is required")
-        args = list(spec.get("args") or [])
-        env = dict(spec.get("env") or {})
-        headers = dict(spec.get("headers") or {})
-        cwd = spec.get("cwd") or None
-
-        with self.mcp_lock:
-            # stop old if present
-            if getattr(self.cfg, "mcp", None):
-                old_srv = self.cfg.mcp.servers.pop(old_name, None)
-                if old_srv:
-                    try:
-                        old_srv.stop()
-                    except Exception:
-                        pass
-            data = self._mcp_read_config()
-            data["servers"].pop(old_name, None)
-            self._mcp_write_config(data)
-        # Now add as a fresh server under the (possibly new) name.
-        res = self.mcp_add({
-            "name": new_name, "command": command, "url": url,
-            "args": args, "env": env, "headers": headers, "cwd": cwd,
-        })
-        return res
+        from .. import mcp_admin
+        return mcp_admin.update_server(
+            self.cfg, getattr(self.cfg, "mcp", None), old_name, spec,
+            lock=self.mcp_lock,
+        )
 
     def mcp_delete(self, name: str) -> None:
-        name = (name or "").strip()
-        if not name:
-            raise ValueError("name is required")
-        with self.mcp_lock:
-            if getattr(self.cfg, "mcp", None):
-                srv = self.cfg.mcp.servers.pop(name, None)
-                if srv:
-                    try:
-                        srv.stop()
-                    except Exception:
-                        pass
-            data = self._mcp_read_config()
-            data["servers"].pop(name, None)
-            self._mcp_write_config(data)
-            self._mcp_reload_tools()
+        from .. import mcp_admin
+        mcp_admin.delete_server(
+            self.cfg, getattr(self.cfg, "mcp", None), name, lock=self.mcp_lock,
+        )
 
     def mcp_start(self, name: str) -> dict:
-        name = (name or "").strip()
-        mcp = getattr(self.cfg, "mcp", None)
-        srv = mcp.servers.get(name) if mcp else None
-        if not srv:
-            # Build one from config.
-            data = self._mcp_read_config()
-            spec = data.get("servers", {}).get(name)
-            if not spec:
-                raise ValueError(f"no such MCP server: {name}")
-            from ..mcp import MCPServer
-            srv = MCPServer(name, spec.get("command"), list(spec.get("args") or []),
-                            dict(spec.get("env") or {}), spec.get("cwd"),
-                            url=spec.get("url"), headers=dict(spec.get("headers") or {}))
-            if not mcp:
-                from ..mcp import MCPRegistry
-                mcp = self.cfg.mcp = MCPRegistry()
-            mcp.servers[name] = srv
-        srv.stop()
-        srv.start()
-        self._mcp_reload_tools()
-        return {"name": name, "tools": len(srv.tools or [])}
+        from .. import mcp_admin
+        return mcp_admin.start_server(
+            self.cfg, getattr(self.cfg, "mcp", None), name,
+        )
 
     def mcp_stop(self, name: str) -> None:
-        mcp = getattr(self.cfg, "mcp", None)
-        srv = mcp.servers.get(name) if mcp else None
-        if srv:
-            srv.stop()
+        from .. import mcp_admin
+        mcp_admin.stop_server(
+            self.cfg, getattr(self.cfg, "mcp", None), name,
+        )
 
-    def state(self):
+    def state(self, lite=False):
+        """Return the UI state.
+
+        `lite=True` skips the per-key `models` lists (which can be 100+
+        model ids × 30 keys = tens of KB of JSON on every poll). The UI
+        uses `lite` for background refreshes and the full state only on
+        initial load / explicit "Refresh all".
+        """
         pm = self.cfg.providers
+        pools = pm.summary()
+        if lite:
+            pools = [{
+                **{k: v for k, v in p.items() if k != "keys"},
+                "keys": [{k: v for k, v in key.items() if k != "models"} for key in p["keys"]],
+            } for p in pools]
         return {
             "workspace": str(self.cfg.workspace),
             "home": str(self.cfg.home) if self.cfg.home else "",
             "strategy": pm.strategy,
             "strategies": list(STRATEGIES),
             "max_wait": pm.max_wait,
-            "pools": pm.summary(),
+            "pools": pools,
             "load_error": pm.load_error,
             "presets": [{"name": k, "base_url": v[0], "model": v[1]} for k, v in PRESETS.items()],
             "auto_approve_env": self.cfg.auto_approve,
@@ -550,6 +533,63 @@ class App:
             "mcp_load_errors": list(getattr(self.cfg.mcp, "load_errors", [])) if self.cfg.mcp else [],
         }
 
+    def search_sessions(self, query: str, limit: int = 40) -> list:
+        """Server-side search across every session file.
+
+        The old UI filtered the 40 newest sessions client-side, which
+        meant anything older than the 40th was invisible. This walks
+        every `sessions/*.json`, reads the title (from the meta file if
+        present, else the first user message), and returns the matching
+        rows sorted by mtime descending.
+        """
+        d = self.cfg.data_dir / "sessions"
+        out = []
+        if not d.exists():
+            return out
+        q = (query or "").strip().lower()
+        # Gather candidate files first so we only sort what we'll keep.
+        cands = []
+        for f in d.glob("*.json"):
+            if f.name.endswith(".meta.json"):
+                continue
+            try:
+                mtime = f.stat().st_mtime
+            except OSError:
+                continue
+            cands.append((mtime, f))
+        cands.sort(reverse=True)
+        for mtime, f in cands:
+            sid = f.stem
+            s = self.sessions.get(sid)
+            if s:
+                title = s.title()
+                busy = s.busy
+            else:
+                # Try the meta file first (cheap), then the session body.
+                title = ""
+                meta = f.with_suffix(".meta.json")
+                if meta.exists():
+                    try:
+                        title = str(json.loads(meta.read_text(encoding="utf-8")).get("title") or "")
+                    except Exception:
+                        title = ""
+                if not title:
+                    try:
+                        hist = json.loads(f.read_text(encoding="utf-8"))
+                        title = next((str(m.get("content", ""))[:60]
+                                      for m in hist if m.get("role") == "user"), "")
+                    except Exception:
+                        title = ""
+                busy = False
+            if not title:
+                continue
+            if q and q not in title.lower():
+                continue
+            out.append({"id": sid, "title": title, "mtime": int(mtime), "busy": bool(busy)})
+            if len(out) >= limit:
+                break
+        return out
+
     def probe(self, names):
         pm, out = self.cfg.providers, []
         for n in names:
@@ -558,10 +598,54 @@ class App:
             out.append({"name": n, "ok": ok, "kind": kind, "text": text})
         return out
 
+    # ------------------------------------------------------------------ STT
+
+    def stt_status(self):
+        ok, reason = _stt.is_available()
+        return {
+            "ok": ok,
+            "reason": reason,
+            "active": bool(self.stt_session and self.stt_session.is_alive()),
+        }
+
+    def stt_start(self):
+        ok, reason = _stt.is_available()
+        if not ok:
+            raise ValueError(reason)
+        with self.stt_lock:
+            if self.stt_session and self.stt_session.is_alive():
+                return {"ok": True, "already": True}
+            self.stt_session = _stt.LiveSession(_stt._model_dir())
+            try:
+                self.stt_session.start()
+            except Exception as e:
+                self.stt_session = None
+                raise ValueError(f"could not start STT: {e}")
+        return {"ok": True}
+
+    def stt_poll(self, after: float) -> dict:
+        if not self.stt_session:
+            return {"events": [], "next": after, "active": False}
+        events = self.stt_session.drain()
+        # Filter by `after` timestamp so a slow client doesn't re-see events.
+        out = [e for e in events if e["t"] > after]
+        return {
+            "events": out,
+            "next": max((e["t"] for e in out), default=after),
+            "active": self.stt_session.is_alive(),
+            "error": getattr(self.stt_session, "_error", None),
+        }
+
+    def stt_stop(self):
+        with self.stt_lock:
+            if self.stt_session:
+                self.stt_session.stop()
+                self.stt_session = None
+        return {"ok": True}
 
 def make_handler(app):
     class H(BaseHTTPRequestHandler):
-        server_version = "OmniUI/2.1"
+        server_version = "OmniUI/2.2"
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *a):
@@ -609,7 +693,6 @@ def make_handler(app):
             raw = self._body()
             if not raw:
                 return {}
-            # utf-8-sig tolerates a BOM, which some clipboard buffers insert.
             return json.loads(raw.decode("utf-8-sig"))
 
         def do_GET(self):
@@ -655,7 +738,8 @@ def make_handler(app):
 
         # ---- reads
         def api_state(self, q):
-            self._send(200, app.state())
+            lite = q.get("lite") == "1"
+            self._send(200, app.state(lite=lite))
         api_state.method = "GET"
 
         def api_models(self, q):
@@ -680,36 +764,42 @@ def make_handler(app):
             s = app.session(q.get("session", ""))
             pending = [{"id": k, "action": v["action"], "tool": v.get("tool")}
                        for k, v in s.approvals.items()]
-            self._send(200, {"items": s.render(), "cursor": len(s.events),
+            self._send(200, {"items": s.render(), "cursor": s._seq,
                              "busy": s.busy, "pending": pending,
                              "auto": s.auto, "strict": app.cfg.strict,
                              "allowed_tools": sorted(s.allowed_tools),
                              "title": s.title()})
         api_history.method = "GET"
 
+        def api_tool_result(self, q):
+            """Return the FULL (uncut) output of a tool call from history.
+
+            The live view clips tool results to 1500 chars to keep the
+            UI responsive. This endpoint lets the browser download the
+            full output for a specific call id.
+            """
+            s = app.session(q.get("session", ""))
+            cid = q.get("id", "")
+            if not cid:
+                return self._err(400, "id is required")
+            text = s.full_tool_result(cid)
+            if text is None:
+                return self._err(404, "no such tool call in this session")
+            self._send(200, text, "text/plain; charset=utf-8")
+        api_tool_result.method = "GET"
+
         def api_sessions(self, q):
-            d = app.cfg.data_dir / "sessions"
-            out = []
-            if d.exists():
-                for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:40]:
-                    if f.name.endswith(".meta.json"):
-                        continue
-                    try:
-                        hist = json.loads(f.read_text(encoding="utf-8"))
-                    except Exception:
-                        continue
-                    sid = f.stem
-                    s = app.sessions.get(sid)
-                    title = s.title() if s else next(
-                        (str(m["content"])[:60] for m in hist if m.get("role") == "user"), "")
-                    if not title:
-                        continue
-                    out.append({
-                        "id": sid,
-                        "title": title,
-                        "mtime": int(f.stat().st_mtime),
-                        "busy": bool(s and s.busy),
-                    })
+            """List sessions, optionally filtered by `q` server-side.
+
+            The old handler returned the 40 newest with no query support.
+            The new one delegates to App.search_sessions() when `q` is
+            present, so old chats are findable.
+            """
+            query = q.get("q", "")
+            if query:
+                out = app.search_sessions(query, limit=200)
+            else:
+                out = app.search_sessions("", limit=40)
             self._send(200, out)
         api_sessions.method = "GET"
 
@@ -732,8 +822,14 @@ def make_handler(app):
             if app.cfg.workspace not in p.parents or not p.is_file():
                 return self._err(404, "no such file")
             ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            inline = q.get("inline") == "1" and (
+                ctype.startswith("text/") or ctype.startswith("image/")
+                or ctype in ("application/json", "application/xml",
+                             "application/javascript"))
+            disp = "inline" if inline else "attachment"
             self._send(200, p.read_bytes(), ctype,
-                       [("Content-Disposition", f"attachment; filename*=UTF-8''{quote(p.name)}")])
+                       [("Content-Disposition",
+                         f"{disp}; filename*=UTF-8''{quote(p.name)}")])
         api_file.method = "GET"
 
         # ---- chat
@@ -752,7 +848,7 @@ def make_handler(app):
             user_idx = len(s.history)
             s.emit("user", text, idx=user_idx)
             app.run_chat(s, text)
-            self._send(200, {"ok": True, "cursor": len(s.events), "user_idx": user_idx})
+            self._send(200, {"ok": True, "cursor": s._seq, "user_idx": user_idx})
 
         def api_chat_retry(self, q):
             b = self._json_body()
@@ -773,7 +869,7 @@ def make_handler(app):
             s.busy = True
             s.emit("user", text, idx=idx)
             app.run_chat(s, text)
-            self._send(200, {"ok": True, "cursor": len(s.events)})
+            self._send(200, {"ok": True, "cursor": s._seq})
 
         def api_chat_edit(self, q):
             b = self._json_body()
@@ -793,7 +889,7 @@ def make_handler(app):
             s.busy = True
             s.emit("user", text, idx=idx)
             app.run_chat(s, text)
-            self._send(200, {"ok": True, "cursor": len(s.events)})
+            self._send(200, {"ok": True, "cursor": s._seq})
 
         def api_stop(self, q):
             app.session(self._json_body().get("session", "")).stop()
@@ -859,9 +955,17 @@ def make_handler(app):
                 return self._err(400, "invalid index")
             if idx == 0:
                 return self._err(400, "cannot delete the system prompt")
-            if s.history[idx].get("role") not in ("user", "assistant"):
+            role = s.history[idx].get("role")
+            if role not in ("user", "assistant"):
                 return self._err(400, "can only delete user/assistant messages")
-            s.history.pop(idx)
+            # If we're deleting an assistant message with tool_calls, also
+            # drop the contiguous `tool` messages that follow it, so we
+            # don't leave orphan tool_call_ids that strict providers reject.
+            drop_to = idx + 1
+            if role == "assistant" and s.history[idx].get("tool_calls"):
+                while drop_to < len(s.history) and s.history[drop_to].get("role") == "tool":
+                    drop_to += 1
+            s.history = s.history[:idx] + s.history[drop_to:]
             s.save()
             self._send(200, {"ok": True})
 
@@ -899,8 +1003,8 @@ def make_handler(app):
             models = b.get("models", [])
             if isinstance(models, str):
                 models = re.split(r"[,\s]+", models)
-            app.cfg.providers.set_fallbacks(b["pool"], models)
-            self._send(200, {"ok": True})
+            kept, dropped = app.cfg.providers.set_fallbacks(b["pool"], models)
+            self._send(200, {"ok": True, "kept": kept, "dropped": dropped})
 
         def api_pool_order(self, q):
             app.cfg.providers.order_pools(self._json_body()["names"])
@@ -987,7 +1091,36 @@ def make_handler(app):
             key = self._json_body().get("key", "")
             self._send(200, {"provider": detect_provider(key)})
 
+        # ---- STT
+        def api_stt_status(self, q):
+            self._send(200, app.stt_status())
+        api_stt_status.method = "GET"
+
+        def api_stt_start(self, q):
+            try:
+                self._send(200, app.stt_start())
+            except ValueError as e:
+                self._send(200, {"ok": False, "error": str(e)})
+
+        def api_stt_poll(self, q):
+            try:
+                after = float(q.get("after", 0))
+            except ValueError:
+                after = 0.0
+            self._send(200, app.stt_poll(after))
+        api_stt_poll.method = "GET"
+
+        def api_stt_stop(self, q):
+            self._send(200, app.stt_stop())
+
         def api_browse(self, q):
+            """List a directory, or deep-search a tree with a wall-clock cap.
+
+            The old handler walked the whole tree with no time limit,
+            which blocked the HTTP thread for minutes on `C:\\`. The new
+            one checks elapsed time every directory and returns partial
+            results once `DEEP_SEARCH_TIMEOUT` is exceeded.
+            """
             path = q.get("path") or str(app.cfg.workspace)
             search = q.get("search", "").strip()
             p = Path(path).expanduser()
@@ -1000,13 +1133,20 @@ def make_handler(app):
             if not p.is_dir():
                 p = Path.home()
             entries = []
+            timed_out = False
             try:
                 if search:
                     pat = f"*{search}*"
                     count = 0
+                    start = time.time()
                     for root, dirs, files in os.walk(p):
+                        if time.time() - start > DEEP_SEARCH_TIMEOUT:
+                            timed_out = True
+                            break
                         dirs[:] = [d for d in dirs
-                                   if d not in ("node_modules", "__pycache__", ".git", ".venv")]
+                                   if d not in ("node_modules", "__pycache__", ".git", ".venv",
+                                                ".next", "dist", "build", "target", "Pods",
+                                                "DerivedData", "AppData", "Library", ".cache")]
                         if q.get("hidden") != "1":
                             dirs[:] = [d for d in dirs if not d.startswith(".")]
                         for name in files:
@@ -1026,7 +1166,7 @@ def make_handler(app):
                             count += 1
                             if count >= 200:
                                 break
-                        if count >= 200:
+                        if count >= 200 or timed_out:
                             break
                 else:
                     for c in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
@@ -1053,6 +1193,7 @@ def make_handler(app):
                 "parent": str(p.parent) if p.parent != p else None,
                 "entries": entries[:2000],
                 "drives": drives,
+                "timed_out": timed_out,
             })
         api_browse.method = "GET"
 
@@ -1060,6 +1201,30 @@ def make_handler(app):
             b = self._json_body()
             new_ws = app.set_workspace(b.get("path", ""))
             self._send(200, {"workspace": str(new_ws)})
+
+        def api_workspace_mkdir(self, q):
+            """Create a folder (inside the current workspace or any writable dir).
+
+            Body: {"parent": "/path/to/dir", "name": "new-folder"}.
+            `parent` defaults to the current workspace. Returns the full
+            path. Refuses `..` and absolute `name` values so the caller
+            can't escape `parent`.
+            """
+            b = self._json_body()
+            parent = Path(b.get("parent") or str(app.cfg.workspace)).expanduser().resolve()
+            name = (b.get("name") or "").strip()
+            if not name:
+                raise ValueError("name is required")
+            if "/" in name or "\\" in name or name in (".", ".."):
+                raise ValueError("invalid folder name")
+            if not parent.is_dir():
+                raise ValueError(f"parent is not a directory: {parent}")
+            target = parent / name
+            try:
+                target.mkdir(parents=False, exist_ok=False)
+            except FileExistsError:
+                raise ValueError(f"already exists: {target}")
+            self._send(200, {"path": str(target)})
 
         def api_workspace_pick(self, q):
             try:
@@ -1172,7 +1337,7 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
     hosts = {"127.0.0.1", "localhost", "::1"} if loopback else None
     app = App(cfg, token, hosts)
     srv = None
-    
+
     # Try up to 100 ports starting from the preferred one
     for p in range(port, port + 100):
         try:
@@ -1181,7 +1346,7 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
             break
         except OSError:
             continue
-    
+
     if srv is None:
         raise SystemExit(f"No free port found in range {port} to {port + 100}")
     srv.daemon_threads = True
@@ -1207,5 +1372,15 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
         print("\nbye")
     finally:
         srv.server_close()
+        # Flush pending health state (debounced save) before exit.
+        try:
+            if getattr(app, "stt_session", None):
+                app.stt_session.stop()
+        except Exception:
+            pass
+        try:
+            cfg.providers.health.flush()
+        except Exception:
+            pass
         if getattr(cfg, "mcp", None):
             cfg.mcp.stop_all()

@@ -47,18 +47,73 @@ BLOCK = [
     r"\bdel\s+/[sf]\s+/[sf]\s+[a-z]:\\",
 ]
 
+# Detect the local URL a dev server prints on startup, so run_shell can
+# return it in the FIRST call instead of forcing the model to poll.
+_URL_RX = re.compile(
+    r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d{2,5})?(?:/\S*)?",
+    re.I,
+)
+_READY_HINTS = re.compile(
+    r"\b(ready|listening|running on|serving|started server|local:|network:|"
+    r"development server|compiled successfully|you can now view)\b",
+    re.I,
+)
+
+
+# Strength of each hint phrase, used to pick the *best* URL when a log
+# line contains more than one. A URL right after "ready in 312 ms" or
+# "Local:" beats a URL that just happens to be near the word "warning:".
+_HINT_WEIGHTS = [
+    (re.compile(r"\b(ready in|ready at|listening on|running on|serving at|"
+                r"started server|compiled successfully|you can now view)\b", re.I), 3),
+    (re.compile(r"\b(local:|network:|development server|local\s+->)\b", re.I), 2),
+    (re.compile(r"\b(ready|listening|running|serving)\b", re.I), 1),
+]
+
+
+def _hint_score(window: str) -> int:
+    for rx, score in _HINT_WEIGHTS:
+        if rx.search(window):
+            return score
+    return 0
+
+
+def _scan_for_url(text: str):
+    """Return the *best-scored* localhost URL in `text`.
+
+    When a log line contains more than one URL, the one nearest the
+    strongest "ready" hint wins. Ties on score are broken by preferring
+    the LAST matching URL: dev servers print a decoy "see help at ..."
+    line before the real "Local:"/listening address, so the later URL
+    is the one you actually want.
+    """
+    best_url = None
+    best_score = -1
+    for m in _URL_RX.finditer(text):
+        url = m.group(0)
+        before = text[max(0, m.start() - 120): m.start()]
+        after = text[m.end(): m.end() + 120]
+        score = max(_hint_score(before), _hint_score(after))
+        if score >= best_score:          # >= so a later URL wins on a tie
+            best_score = score
+            best_url = url
+            if score >= 3:
+                break  # can't do better
+    return best_url
+
+
 # Foreground processes currently blocking this session. kill_all() kills these.
 _ACTIVE: dict = {}
 # Detached processes (background=True). kill_all() does NOT touch these.
-_DETACHED: dict = {}     # id -> {proc, cmd, started, log_path}
+_DETACHED: dict = {}     # id -> {proc, cmd, started, log_path, last_read, last_read_at}
 _ACTIVE_LOCK = threading.RLock()
 
 _tl = threading.local()
 
 # Global default for "run everything in the background". Set by the UI
-# toggle or /bgauto on. Defaults to off so a first-time user still sees
-# live output for short commands.
-_DEFAULT_BG = True
+# toggle or /bgauto on. Defaults to OFF so a first-time user sees live
+# output for short commands, and matches .env.example / README §6.2.
+_DEFAULT_BG = False
 _DEFAULT_LOCK = threading.Lock()
 
 
@@ -81,6 +136,10 @@ def _emit(text, **extra):
     fn = getattr(_tl, "emit", None)
     if fn:
         try:
+            # Collapse \r\n to \n and turn bare \r into \n so progress bars
+            # (npm, pip, cargo) render as distinct lines in the browser
+            # instead of one concatenated blob.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
             fn("tool_stream", text, **extra)
         except Exception:
             pass
@@ -130,7 +189,14 @@ def kill_detached(job_id: str) -> str:
 
 
 def list_detached() -> list:
+    now = time.time()
     with _ACTIVE_LOCK:
+        # Prune exited jobs older than 10 minutes so a long session's
+        # _DETACHED dict doesn't grow without bound.
+        for jid in list(_DETACHED):
+            r = _DETACHED[jid]
+            if r["proc"].poll() is not None and now - r["started"] > 600:
+                del _DETACHED[jid]
         return [{"id": jid, "cmd": r["cmd"], "started": r["started"],
                  "alive": r["proc"].poll() is None,
                  "log": str(r["log_path"]) if r["log_path"] else ""}
@@ -148,15 +214,15 @@ def _shell_kwargs(cwd):
 
 
 def _run_detached(cfg, command, cwd):
-    """Spawn `command` and return immediately. Output goes to a log file."""
+    """Spawn `command` and return immediately. Output goes to a log file.
+
+    Detects a localhost URL printed by dev servers in the first ~4s and
+    returns it in the result, so the model rarely needs a second call.
+    """
     job_id = uuid.uuid4().hex[:8]
     log_dir = cfg.data_dir / "jobs"
     log_dir.mkdir(exist_ok=True)
     log_path = log_dir / f"{job_id}.log"
-    # We redirect the shell's own stdout/stderr to the log file *and* keep a
-    # pipe so we can still peek at it, but the pipe is drained by a daemon
-    # thread that writes to the file. This way the child is not blocked by an
-    # unread pipe if the model stops reading.
     log_f = log_path.open("wb")
     try:
         proc = subprocess.Popen(command, cwd=str(cwd), shell=True,
@@ -167,15 +233,39 @@ def _run_detached(cfg, command, cwd):
         return f"ERROR: could not start detached command: {e}"
 
     with _ACTIVE_LOCK:
-        _DETACHED[job_id] = {"proc": proc, "cmd": command,
-                             "started": time.time(), "log_path": log_path}
+        _DETACHED[job_id] = {
+            "proc": proc, "cmd": command, "started": time.time(),
+            "log_path": log_path, "last_read": 0, "last_read_at": 0.0,
+        }
 
-    return (f"background job {job_id} started (pid {proc.pid}).\n"
-            f"cmd: {command}\n"
-            f"log: {log_path}\n"
-            f"Alive check in ~2s, then use `tail_background(job_id=\"{job_id}\")` "
-            f"to read output, or `stop_background(job_id=\"{job_id}\")` to stop it.\n"
-            f"This job will NOT be killed by Stop.")
+    # Wait briefly for a startup URL so we can return it right away.
+    ready_url = None
+    deadline = time.time() + 4.0
+    while time.time() < deadline:
+        try:
+            if log_path.stat().st_size > 0:
+                data = log_path.read_text(encoding="utf-8", errors="replace")
+                ready_url = _scan_for_url(data)
+                if ready_url:
+                    break
+        except OSError:
+            pass
+        if proc.poll() is not None:
+            break
+        time.sleep(0.2)
+
+    msg = (f"background job {job_id} started (pid {proc.pid}).\n"
+           f"cmd: {command}\n"
+           f"log: {log_path}\n")
+    if ready_url:
+        msg += (f"DETECTED URL: {ready_url}\n"
+                f"The server appears to be up. Report this URL to the user; "
+                f"you do NOT need to call tail_background unless you want more detail.\n")
+    else:
+        msg += (f"Use wait_background(job_id=\"{job_id}\", timeout=20) ONCE to read "
+                f"startup output. Do NOT poll tail_background repeatedly.\n")
+    msg += "This job will NOT be killed by Stop."
+    return msg
 
 
 @tool(
@@ -199,7 +289,7 @@ def run_shell(cfg, command, timeout=120, background=None, cwd=None):
 
     # Resolve the effective background flag:
     #   explicit true/false wins
-    #   otherwise fall back to the global default
+    #   otherwise fall back to the global default (env-configured at startup)
     if background is None:
         background = default_background()
 
@@ -223,8 +313,31 @@ def run_shell(cfg, command, timeout=120, background=None, cwd=None):
     lines = []
     start = time.time()
 
-    try:
+    def _read_chunks(stream):
+        """Yield text chunks as they arrive, splitting on \\n and \\r."""
+        fd = stream.fileno()
+        buf = b""
         while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except (BlockingIOError, OSError):
+                chunk = b""
+            if chunk:
+                buf += chunk
+                while b"\n" in buf or b"\r" in buf:
+                    i_n = buf.find(b"\n")
+                    i_r = buf.find(b"\r")
+                    i = min(x for x in (i_n, i_r) if x >= 0)
+                    line, buf = buf[:i + 1], buf[i + 1:]
+                    yield line.decode("utf-8", errors="replace")
+            else:
+                if buf:
+                    yield buf.decode("utf-8", errors="replace")
+                    buf = b""
+                yield ""
+
+    try:
+        for text in _read_chunks(proc.stdout):
             if cancel is not None and cancel.is_set():
                 _kill_tree(proc)
                 return (f"job {job_id} CANCELLED by user after {time.time() - start:.1f}s\n"
@@ -233,18 +346,13 @@ def run_shell(cfg, command, timeout=120, background=None, cwd=None):
                 _kill_tree(proc)
                 return (f"job {job_id} TIMED OUT after {timeout}s\n"
                         f"--output so far--\n{''.join(lines)[-4000:]}")
-            line = proc.stdout.readline()
-            if line:
-                lines.append(line)
-                _emit(line, id=job_id)
-                continue
-            if proc.poll() is not None:
-                rest = proc.stdout.read()
-                if rest:
-                    lines.append(rest)
-                    _emit(rest, id=job_id)
+            if text:
+                lines.append(text)
+                _emit(text, id=job_id)
+            elif proc.poll() is not None:
                 break
-            time.sleep(0.05)
+            else:
+                time.sleep(0.02)
         code = proc.returncode
     finally:
         with _ACTIVE_LOCK:
@@ -260,8 +368,9 @@ def run_shell(cfg, command, timeout=120, background=None, cwd=None):
 @tool(
     "tail_background",
     "Read the recent output of a background job (started with run_shell "
-    "background=true). Use this to check whether a dev server is up, print "
-    "its URL, read its error log, etc.",
+    "background=true). Returns only NEW output since the last check, plus a "
+    "one-line 'no new output' message if nothing changed. Use this to check "
+    "whether a dev server is up, print its URL, read its error log, etc.",
     {"job_id": {"type": "string"}, "lines": {"type": "integer"}},
     ["job_id"],
 )
@@ -277,16 +386,77 @@ def tail_background(cfg, job_id, lines=200):
                     break
     if not rec:
         return f"no background job {job_id}"
+
     p = rec["log_path"]
     try:
-        data = p.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
-        return f"could not read log: {e}"
-    tail = "\n".join(data.splitlines()[-max(1, min(int(lines or 200), 2000)):])
+        size = p.stat().st_size
+    except OSError:
+        return f"log for {job_id} is not readable"
+
     alive = rec["proc"].poll() is None
+    new_bytes = size - rec.get("last_read", 0)
+
+    if new_bytes <= 0:
+        rec["last_read_at"] = time.time()
+        return (f"job {job_id} ({'running' if alive else 'exited'}) "
+                f"— no new output since last check. "
+                f"{'Still booting.' if alive else 'Process has exited.'}")
+
+    with p.open("rb") as f:
+        f.seek(max(0, size - min(new_bytes, 50_000)))
+        data = f.read().decode("utf-8", errors="replace")
+    rec["last_read"] = size
+    rec["last_read_at"] = time.time()
+
+    tail = "\n".join(data.splitlines()[-max(1, min(int(lines or 200), 2000)):])
     return (f"job {job_id} ({'running' if alive else 'exited'}) "
             f"pid={rec['proc'].pid} cmd={rec['cmd']}\n"
-            f"--- last {lines} lines ---\n{tail or '(no output yet)'}")
+            f"--- new output since last check ---\n{tail or '(no output)'}")
+
+
+@tool(
+    "wait_background",
+    "Block until a background job produces new output or exits, up to `timeout` "
+    "seconds. Returns immediately if there is already new output since the last "
+    "check. Use this ONCE after starting a dev server, instead of polling "
+    "tail_background repeatedly.",
+    {"job_id": {"type": "string"}, "timeout": {"type": "integer"}, "lines": {"type": "integer"}},
+    ["job_id"],
+)
+def wait_background(cfg, job_id, timeout=30, lines=200):
+    with _ACTIVE_LOCK:
+        rec = _DETACHED.get(job_id)
+    if not rec:
+        return f"no background job {job_id}"
+
+    timeout = max(1, min(int(timeout or 30), 120))
+    deadline = time.time() + timeout
+    p = rec["log_path"]
+
+    try:
+        if p.stat().st_size > rec.get("last_read", 0):
+            return tail_background(cfg, job_id, lines)
+    except OSError:
+        pass
+
+    while time.time() < deadline:
+        c = get_cancel()
+        if c is not None and c.is_set():
+            return f"job {job_id}: wait cancelled by user"
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = rec.get("last_read", 0)
+        if size > rec.get("last_read", 0):
+            return tail_background(cfg, job_id, lines)
+        if rec["proc"].poll() is not None:
+            return tail_background(cfg, job_id, lines)
+        time.sleep(0.25)
+
+    alive = rec["proc"].poll() is None
+    return (f"job {job_id} ({'still running' if alive else 'exited'}) "
+            f"— no new output after {timeout}s. "
+            f"{'It may be waiting for input or just quiet.' if alive else ''}")
 
 
 @tool(

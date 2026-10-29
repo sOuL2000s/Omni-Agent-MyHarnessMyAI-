@@ -4,9 +4,14 @@
 Design notes:
   * score-based key selection (health-weighted, not blind round-robin),
   * last_error_at tracking so recently-failed keys deprioritize briefly,
-  * `Health.save()` prunes expired cooldowns so state.json stays small,
+  * `Health.save()` is debounced so a burst of key failures doesn't write
+    `state.json` dozens of times per second,
   * `refresh_models()` only auto-picks a default when the key has no model yet
-    (so a flaky /models response can't silently change the user's choice).
+    (so a flaky /models response can't silently change the user's choice),
+  * `add()` is async: the `/models` fetch happens on a background thread,
+    so the terminal `/add` command doesn't block for 20 s,
+  * `add_keys()` never silently renames a user-chosen pool,
+  * `summary()` carries `last_used_at` for the UI's "last used" line.
 """
 import json
 import os
@@ -40,16 +45,21 @@ PREFERRED_MODEL_HINTS = {
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
     "anthropic": ["claude-sonnet-4-5", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
     "ollama": ["qwen2.5-coder:7b", "llama3.1:8b", "deepseek-coder-v2"],
+    "omniroute": ["auto"],
 }
 
+# Order matters: the more specific pattern must come first. The
+# `sk-[a-f0-9]{32}` DeepSeek pattern used to sit *after* the general
+# `sk-[A-Za-z0-9]{20,}` pattern, so a pure-hex key matched "openai"
+# first. Moving it up fixes that.
 KEY_PATTERNS = [
     (r"^AIza[0-9A-Za-z_\-]{30,}$", "gemini"),
     (r"^sk-or-v1-[0-9a-f]{40,}$", "openrouter"),
     (r"^sk-ant-[A-Za-z0-9_\-]{40,}$", "anthropic"),
     (r"^sk-proj-[A-Za-z0-9_\-]{30,}$", "openai"),
+    (r"^sk-[a-f0-9]{32}$", "deepseek"),        # <- moved up
     (r"^sk-[A-Za-z0-9]{20,}$", "openai"),
     (r"^gsk_[A-Za-z0-9]{40,}$", "groq"),
-    (r"^sk-[a-f0-9]{32}$", "deepseek"),
 ]
 
 
@@ -101,6 +111,7 @@ class Provider:
     model: str
     models: list = field(default_factory=list)
     models_fetched: float = 0.0
+    last_used_at: float = 0.0
 
     @property
     def pool(self):
@@ -113,13 +124,16 @@ class Provider:
 
 class Health:
     TRANSIENT = ("rate", "server", "network")
-    EXPIRE_INTERVAL = 5.0  # seconds between automatic prune passes
+    EXPIRE_INTERVAL = 5.0       # seconds between automatic prune passes
+    SAVE_DEBOUNCE = 2.0         # seconds to batch writes to state.json
 
     def __init__(self, path=None):
         self.path = path
         self.lock = threading.RLock()
         self.key, self.key_model, self.pool_model, self.stats = {}, {}, {}, {}
         self._last_expire = 0.0
+        self._dirty = False
+        self._last_save = 0.0
         if path:
             d, _ = read_json(path, {})
             self.key = d.get("key", {})
@@ -137,16 +151,33 @@ class Health:
             for k in [k for k, v in table.items() if v["until"] <= now]:
                 del table[k]
 
-    def save(self):
+    def _save_now(self):
         if not self.path:
             return
         with self.lock:
-            self._expire(force=True)  # drop dead entries before persisting
+            self._expire(force=True)
             try:
                 write_json(self.path, {"key": self.key, "key_model": self.key_model,
                                        "pool_model": self.pool_model, "stats": self.stats})
+                self._dirty = False
+                self._last_save = time.time()
             except Exception:
                 pass
+
+    def save(self, force=False):
+        """Debounced save. Writes immediately if `force=True` or if the last
+        write was more than SAVE_DEBOUNCE seconds ago."""
+        if not self.path:
+            return
+        now = time.time()
+        with self.lock:
+            self._dirty = True
+            if force or now - self._last_save >= self.SAVE_DEBOUNCE:
+                self._save_now()
+
+    def flush(self):
+        """Force a synchronous write. Call on shutdown."""
+        self._save_now()
 
     def state(self, p, model):
         with self.lock:
@@ -197,7 +228,7 @@ class Health:
                         del table[k]
                     elif pool and (base == pool or pool_of(base) == pool):
                         del table[k]
-            self.save()
+            self.save(force=True)
 
     def snapshot(self):
         """Deep-ish copy of the stats table for consistent scoring."""
@@ -217,7 +248,8 @@ class Manager:
         try:
             self.items = [Provider(**{k: d[k] for k in ("name", "base_url", "api_key", "model")},
                                    models=d.get("models", []),
-                                   models_fetched=d.get("models_fetched", 0.0))
+                                   models_fetched=d.get("models_fetched", 0.0),
+                                   last_used_at=d.get("last_used_at", 0.0))
                           for d in data]
         except Exception as e:
             self.items = []
@@ -286,14 +318,26 @@ class Manager:
         return list(self.settings["fallbacks"].get(pool, []))
 
     def set_fallbacks(self, pool, models):
+        """Returns (saved, dropped). `dropped` lists the entries that were
+        silently ignored because they were blank or equal to the main model."""
         pool = self.resolve_pool(pool)
         main = self.model_of(pool)
-        models = [m.strip() for m in models if m.strip() and m.strip() != main]
-        if models:
-            self.settings["fallbacks"][pool] = list(dict.fromkeys(models))
+        kept, dropped = [], []
+        for m in models:
+            s = m.strip()
+            if not s:
+                continue
+            if s == main:
+                dropped.append(s)
+                continue
+            if s not in kept:
+                kept.append(s)
+        if kept:
+            self.settings["fallbacks"][pool] = kept
         else:
             self.settings["fallbacks"].pop(pool, None)
         self.save_settings()
+        return kept, dropped
 
     def model_chain(self, pool):
         return [self.model_of(pool)] + self.fallbacks(pool)
@@ -354,6 +398,14 @@ class Manager:
     def note_used(self, pool, name):
         with self.lock:
             self.rr[pool] = name
+            # Record last-used for the UI's "used 2m ago" line.
+            try:
+                p = self.get(name)
+            except ValueError:
+                return
+            p.last_used_at = time.time()
+            # Don't save() here — the health save will pick it up on the
+            # next debounce tick, and saving per-request would hammer disk.
 
     def reset_rr(self):
         with self.lock:
@@ -383,17 +435,19 @@ class Manager:
                 self.items.append(new)
             self.health.clear(name=name)
             self.save()
-        try:
-            self.refresh_models(name)
-        except Exception:
-            pass
+        # Async refresh, like add_keys — the terminal `/add` must not block.
+        threading.Thread(target=self._safe_refresh, args=(name,), daemon=True).start()
 
     def add_keys(self, pool, keys, base_url=None, model=None):
         pool = pool.strip()
-        if pool not in PRESETS and keys:
+        # Only auto-detect a different pool if the user didn't give us a
+        # real name. Otherwise honour the name they typed.
+        if keys and pool in ("", "default", "new", "custom"):
             det = detect_provider(keys[0])
             if det:
                 pool = det
+        if not pool:
+            raise ValueError("pool name is empty")
         existing = self.providers_in(pool)
         pre = PRESETS.get(pool)
         base_url = base_url or (existing[0].base_url if existing else (pre[0] if pre else None))
@@ -443,13 +497,16 @@ class Manager:
         with self.lock:
             p.models = ids
             p.models_fetched = time.time()
-            # Only auto-pick when the key has NO model yet, or the current
-            # model is empty. Never silently replace a model the user chose —
-            # a flaky /models response would otherwise overwrite their setting.
+            # Inherit the pool's existing model when this key has none.
+            # Only auto-pick a *hint* when the pool itself has no model.
             if ids and not p.model:
-                preferred = _pick_default_model(p.pool, ids)
-                if preferred:
-                    p.model = preferred
+                existing_pool_model = self.model_of(p.pool)
+                if existing_pool_model:
+                    p.model = existing_pool_model
+                else:
+                    preferred = _pick_default_model(p.pool, ids)
+                    if preferred:
+                        p.model = preferred
             self.save()
         return ids
 
@@ -460,7 +517,7 @@ class Manager:
             try:
                 ids = self.refresh_models(p.name)
                 out[p.name] = ids
-                llm._MODEL_CACHE[p.pool] = (time.time(), ids)
+                llm._MODEL_CACHE[f"prov:{p.name}:{p.base_url}"] = (time.time(), ids)
             except Exception as e:
                 out[p.name] = f"error: {e}"
         return out
@@ -527,7 +584,6 @@ class Manager:
 
     def summary(self):
         out = []
-        # Take one snapshot of stats so we don't re-acquire the lock per key.
         stats_all = self.health.snapshot()
         now = time.time()
         for pool, ps in self.pools():
@@ -549,6 +605,7 @@ class Manager:
                     "remaining": st["remaining"] if st else 0,
                     "ok": stats.get("ok", 0), "fail": stats.get("fail", 0),
                     "last_error": stats.get("last_error", ""),
+                    "last_used_at": p.last_used_at or 0.0,
                     "model": p.model,
                     "models": p.models,
                     "models_fetched": p.models_fetched,

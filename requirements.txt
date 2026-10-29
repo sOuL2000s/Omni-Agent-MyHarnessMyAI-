@@ -6,7 +6,14 @@ python-docx>=1.1.0
 openpyxl>=3.1.2
 python-pptx>=0.6.23
 tzdata; sys_platform == "win32"
+pyreadline3; sys_platform == "win32"
 
 # Optional — only needed for AGENT_BROWSER=selenium.
 selenium
 webdriver-manager
+# Optional: local speech-to-text. Not installed by default — install
+# manually with:  pip install sherpa-onnx sounddevice
+# The app works without these; the mic button stays disabled.
+# sherpa-onnx
+# sounddevice
+# numpy

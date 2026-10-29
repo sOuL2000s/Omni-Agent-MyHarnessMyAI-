@@ -14,6 +14,17 @@ The `search()` output is shaped for the UI:
   {transport:"http", url}    remote streamable-http
   {unsupported: True, reason}
   None                       nothing we can prefill
+
+Time budget
+-----------
+`fetch_all_servers()` runs synchronously inside the web handler. A slow
+registry can block the whole MCP panel for minutes. To prevent that:
+  * each page request has its own HTTP_TIMEOUT (20s),
+  * the whole loop has a TOTAL_BUDGET (10s) — once exceeded, the loop
+    stops and returns what it has (plus, if any pages succeeded, that
+    partial list is cached so the next open is instant).
+This means the first open may show a partial list on a flaky registry;
+subsequent opens use the cache.
 """
 import json
 import time
@@ -24,6 +35,7 @@ from pathlib import Path
 REGISTRY_BASE = "https://registry.modelcontextprotocol.io/v0.1"
 CACHE_TTL = 3600
 HTTP_TIMEOUT = 20
+TOTAL_BUDGET = 10.0   # seconds; hard cap on the whole fetch loop
 MAX_PAGES = 20
 MAX_RESULTS = 500
 
@@ -48,13 +60,24 @@ def fetch_all_servers(cache_path: Path, max_age: int = CACHE_TTL):
                 pass
 
     servers, cursor, pages = [], None, 0
+    start = time.time()
     try:
         while pages < MAX_PAGES:
+            if time.time() - start > TOTAL_BUDGET:
+                # We've spent long enough. Return what we have; if
+                # anything succeeded, cache it so the next open is fast.
+                break
             pages += 1
             url = f"{REGISTRY_BASE}/servers?limit=100"
             if cursor:
                 url += "&cursor=" + urllib.parse.quote(cursor)
-            data = _get_json(url)
+            try:
+                data = _get_json(url)
+            except Exception:
+                if servers:
+                    # We got at least one page; stop and return partial.
+                    break
+                raise
             batch = data.get("servers") or data.get("data") or []
             for entry in batch:
                 if isinstance(entry, dict):
@@ -107,7 +130,7 @@ def _package_args(pkg):
 
 
 def _package_env(pkg):
-    """Extract env vars a package needs (name + description + required)."""
+    """Extract env vars a package needs (name + description + required + default)."""
     out = []
     for e in pkg.get("environmentVariables") or []:
         if not isinstance(e, dict):
@@ -117,6 +140,10 @@ def _package_env(pkg):
             "description": e.get("description") or "",
             "required": bool(e.get("required") or e.get("isRequired")),
             "secret": bool(e.get("secret") or e.get("isSecret")),
+            # Preserve `default` so the Add-form prefill shows a working
+            # value instead of an empty string. A server that works out of
+            # the box (e.g. HOME=/root) now works without user input.
+            "default": e.get("default") or "",
         })
     return out
 
@@ -159,7 +186,13 @@ def to_omni_config(entry):
     ident = pkg.get("identifier") or ""
     ver = pkg.get("version") or ""
     tmpl_args = _package_args(pkg)
-    env = {e["name"]: "" for e in _package_env(pkg) if e.get("name")}
+    # Prefill with defaults; the user overwrites any that need real values.
+    env = {}
+    for e in _package_env(pkg):
+        name = e.get("name")
+        if not name:
+            continue
+        env[name] = e.get("default") or ""
 
     if rtype == "npm":
         spec = f"{ident}@{ver}" if ver and ver != "latest" else ident

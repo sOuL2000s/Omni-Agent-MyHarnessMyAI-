@@ -41,6 +41,9 @@ def _set_par_text(p, text):
 def docx_edit_paragraph(cfg, path, index, text):
     p = resolve(cfg, path, write=True)
     d = _docx().Document(str(p))
+    n = len(d.paragraphs)
+    if not (0 <= index < n):
+        raise ValueError(f"paragraph index {index} out of range (document has {n} paragraphs)")
     _set_par_text(d.paragraphs[index], text)
     d.save(str(p))
     return f"Paragraph {index} updated"
@@ -73,17 +76,23 @@ def docx_replace_text(cfg, path, find, replace):
     return f"{n} paragraph(s)/run(s) changed"
 
 
-@tool("docx_insert_paragraph", "Insert a new paragraph after paragraph `after_index` (-1 = at end) with optional style.",
+@tool("docx_insert_paragraph",
+      "Insert a new paragraph after paragraph `after_index` (-1 = at end) with optional style.",
       {"path": S, "after_index": I, "text": S, "style": S}, ["path", "text"])
 def docx_insert_paragraph(cfg, path, text, after_index=-1, style=None):
     p = resolve(cfg, path, write=True)
     d = _docx().Document(str(p))
-    if after_index < 0 or after_index >= len(d.paragraphs) - 1:
+    n = len(d.paragraphs)
+    # `after_index` is the index to insert *after*. Appending at the end
+    # means "insert after the last paragraph", which is `after_index == n-1`.
+    # Any index >= n is out of range and is treated as "at end" (forgiving,
+    # since a model can easily overshoot).
+    if after_index < 0 or after_index >= n - 1:
         d.add_paragraph(text, style=style)
     else:
         d.paragraphs[after_index + 1].insert_paragraph_before(text, style=style)
     d.save(str(p))
-    return "inserted"
+    return f"inserted after paragraph {after_index if after_index >= 0 else 'end'}"
 
 
 @tool("docx_create", "Create a new .docx from a list of blocks: [{type:'heading'|'paragraph'|'bullet', text, level}].",
@@ -115,7 +124,12 @@ def _xl():
 @tool("xlsx_read", "Read an .xlsx sheet (or range like 'A1:D20').", {"path": S, "sheet": S, "range": S}, ["path"])
 def xlsx_read(cfg, path, sheet=None, range=None):
     wb = _xl().load_workbook(str(resolve(cfg, path)))
-    ws = wb[sheet] if sheet else wb.active
+    if sheet:
+        if sheet not in wb.sheetnames:
+            raise ValueError(f"sheet '{sheet}' not found (available: {wb.sheetnames})")
+        ws = wb[sheet]
+    else:
+        ws = wb.active
     rows = ws[range] if range else ws.iter_rows()
     out = [f"sheets: {wb.sheetnames}"]
     for r in rows:
@@ -128,7 +142,12 @@ def xlsx_read(cfg, path, sheet=None, range=None):
 def xlsx_set_cell(cfg, path, cell, value, sheet=None):
     p = resolve(cfg, path, write=True)
     wb = _xl().load_workbook(str(p))
-    ws = wb[sheet] if sheet else wb.active
+    if sheet:
+        if sheet not in wb.sheetnames:
+            raise ValueError(f"sheet '{sheet}' not found (available: {wb.sheetnames})")
+        ws = wb[sheet]
+    else:
+        ws = wb.active
     ws[cell] = value
     wb.save(str(p))
     return f"{cell} = {value}"

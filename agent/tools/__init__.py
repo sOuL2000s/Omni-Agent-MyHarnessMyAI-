@@ -1,5 +1,5 @@
 # agent/tools/__init__.py
-from . import files, shell, web, memory, office  # noqa: F401  (registers built-ins)
+from . import files, shell, web, memory, office, admin  # noqa: F401  (registers built-ins)
 try:
     from . import mcp_bridge  # noqa: F401  (registers MCP tools if any are configured)
 except Exception:

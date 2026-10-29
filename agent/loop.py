@@ -27,9 +27,10 @@ CORE RULES - do not break these:
   report concisely. When you run a command, quote its actual output.
 - DEV SERVERS (npm run dev, vite, next dev, flask run, uvicorn, python manage.py runserver,
   cargo watch, dotnet watch, etc.) MUST be launched with run_shell(..., background=true).
-  Foreground servers get killed by Stop and by the session timeout; background ones survive
-  and keep serving. After starting one, call tail_background(job_id=...) after a few seconds
-  to read its log and report the actual URL to the user.
+  The tool result often contains a DETECTED URL — if it does, report that URL and move on.
+  If it does NOT, call wait_background(job_id=..., timeout=20) exactly ONCE.
+  If wait_background reports no new output, STOP checking: the server is quiet, which is
+  normal. NEVER call tail_background in a loop. NEVER call it more than twice for the same job.
 - Make the smallest change that satisfies the request. Do not rewrite whole files unless asked.
 - If a tool call fails, DIAGNOSE it: wrong path? missing arg? different tool needed? Fix and retry.
   Do NOT repeat the exact same failing call.
@@ -37,6 +38,10 @@ CORE RULES - do not break these:
   in parallel.
 - Use memory_save for durable user preferences or facts worth keeping across sessions.
 - Ask the user only when truly blocked.
+- You can change Omni's own configuration when the user asks: admin_add_key,
+  admin_set_pool_model, admin_add_mcp_server, admin_set_setting, etc. These
+  always ask the user for approval before writing. Use them instead of telling
+  the user to open the Keys panel.
 {memory}"""
 
 
@@ -91,14 +96,34 @@ def _trim(history, limit=180_000, protect_from=None):
     `protect_from` is the history index where the CURRENT turn begins; we never
     trim messages at or after that index (the model may still be reasoning
     about them).
+
+    The size accounting includes `tool_calls`, not just `content`. A
+    `write_file` call with a 50 KB `content` argument lives in the
+    assistant's `tool_calls`, not in any `content` field — the old
+    accounting missed it entirely, so a transcript that was 500 KB of
+    tool-call payloads reported `total ≈ 0` and was never trimmed.
     """
-    total = sum(len(str(m.get("content") or "")) for m in history)
+    total = 0
+    for m in history:
+        total += len(str(m.get("content") or ""))
+        if m.get("tool_calls"):
+            total += len(str(m["tool_calls"]))
     if total <= limit:
         return
     end = len(history) if protect_from is None else max(1, protect_from)
     for m in history[1:end]:
-        if m.get("role") == "tool" and len(m["content"]) > 400:
+        if m.get("role") == "tool" and len(m.get("content") or "") > 400:
             m["content"] = m["content"][:300] + "\n...[old output trimmed]"
+        elif m.get("role") == "assistant" and m.get("tool_calls"):
+            trimmed_calls = []
+            for c in m["tool_calls"]:
+                fn = c.get("function") or {}
+                args = fn.get("arguments", "")
+                if isinstance(args, str) and len(args) > 500:
+                    fn = dict(fn, arguments=args[:500] + "…[trimmed]")
+                    c = dict(c, function=fn)
+                trimmed_calls.append(c)
+            m["tool_calls"] = trimmed_calls
 
 
 def cli_event(kind, text="", **extra):
@@ -143,6 +168,13 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
             _shell.set_emitter(None)
         except Exception:
             pass
+        # Also drop any per-thread approver left over from a web run; the CLI
+        # path will re-install its own on the next call.
+        try:
+            from . import safety
+            safety.set_approver(None)
+        except Exception:
+            pass
 
 
 def _run_inner(cfg, history, user_text, on_event, cancel):
@@ -159,11 +191,22 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
     history.append({"role": "user", "content": user_text})
     last_route = None
     failures = {}
+    # Budget counter for the whole task. A cheap/fast model can otherwise
+    # burn hundreds of calls in one user turn — the heartbeat and the
+    # "diagnose this error" hint don't help if the model just tries
+    # different broken calls.
+    tool_call_count = 0
+    max_calls = getattr(cfg, "max_total_tool_calls", 200) or 200
 
     for turn in range(cfg.max_turns):
         if cancel is not None and cancel.is_set():
             return "(stopped by you)"
         _trim(history, protect_from=turn_start)
+
+        # Emit a progress event *before* the LLM call so the UI has something
+        # to show during the 1-3s it takes to reach the first token.
+        on_event("progress", "thinking…", title="Sending to model",
+                 detail=f"{len(history)} message(s) in context")
 
         try:
             msg, route = llm.chat_ex(
@@ -195,9 +238,18 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
 
         if not calls:
             final = entry["content"]
-            if cfg.strict and len(final) > 120 and any(m.get("role") == "tool" for m in history[:-1]):
+            # Strict mode is scoped to the CURRENT turn: only run the
+            # verifier if *this* turn used a tool. A user turn that
+            # answers a knowledge question shouldn't pay for a verify
+            # call just because turn 3 of 40 used a tool.
+            current_turn_tools = [m for m in history[turn_start:-1]
+                                  if m.get("role") == "tool"]
+            if cfg.strict and len(final) > 120 and current_turn_tools:
                 try:
-                    claims = llm.verify(cfg, history[:-1], final)
+                    # Pass only the current turn's slice so the verifier
+                    # isn't re-reading 40 turns of context.
+                    verify_msgs = history[turn_start:-1] if turn_start > 0 else history[:-1]
+                    claims = llm.verify(cfg, verify_msgs, final)
                     unverified = [c for c in claims if not c.get("verified")]
                     if unverified:
                         on_event(
@@ -212,6 +264,16 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
         if entry["content"].strip():
             on_event("assistant", entry["content"])
 
+        # ---- budget check (before running the calls) ------------------
+        if tool_call_count + len(calls) > max_calls:
+            on_event(
+                "error",
+                f"Reached the tool-call budget ({max_calls}). "
+                f"Returning what I have; ask 'continue' to resume.",
+            )
+            return f"(stopped: exceeded tool-call budget of {max_calls})"
+        tool_call_count += len(calls)
+
         # ---- run the tool calls (parallel where safe) -------------------
         results = {}
 
@@ -225,8 +287,25 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
             on_event("tool", fn.get("arguments") or "", name=name, id=c["id"])
             if cancel is not None and cancel.is_set():
                 res = "ERROR: stopped by user"
-            else:
+                on_event("tool_result", res, name=name, id=c["id"], ok=False)
+                return c["id"], name, res
+
+            # Heartbeat so slow tools don't look frozen in the UI.
+            done = threading.Event()
+
+            def heartbeat():
+                i = 0
+                while not done.wait(1.0):
+                    i += 1
+                    on_event("progress", f"{name} running ({i}s)…",
+                             title=name, detail=f"{i}s elapsed")
+
+            hb = threading.Thread(target=heartbeat, daemon=True)
+            hb.start()
+            try:
                 res = call(cfg, name, fn.get("arguments"))
+            finally:
+                done.set()
             on_event("tool_result", res[:1500], name=name, id=c["id"],
                      ok=not res.startswith("ERROR"))
             return c["id"], name, res
@@ -273,6 +352,13 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                 failures.pop(name, None)
 
         if cancel is not None and cancel.is_set():
+            # Emit a synthetic tool_result for every call that never resolved
+            # so the live UI doesn't leave amber "running" cards behind after
+            # the user pressed Stop.
+            for c in calls:
+                if c["id"] not in results:
+                    on_event("tool_result", "ERROR: cancelled",
+                             name=c["function"]["name"], id=c["id"], ok=False)
             return "(stopped by you)"
 
     return "(stopped: reached max turns. Say 'continue' to go on.)"

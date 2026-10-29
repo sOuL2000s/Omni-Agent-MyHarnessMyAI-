@@ -1,11 +1,52 @@
 import argparse
+import os
 import sys
 import threading
 import time
+from pathlib import Path
 from . import config, loop, llm, commands
 
 
+def _setup_readline():
+    """Enable ↑ history, Ctrl+R search, and persistent history across runs.
+
+    Uses the stdlib `readline` on Unix/macOS (which ships with Python) and
+    `pyreadline3` on Windows if it's installed. If neither is available,
+    the REPL still works — it just doesn't remember history.
+    """
+    try:
+        import readline  # noqa: F401
+    except ImportError:
+        try:
+            import pyreadline3 as readline  # noqa: F401
+        except ImportError:
+            return  # no readline available; bare input() still works
+    try:
+        histfile = Path.home() / ".omni_history"
+        if histfile.exists():
+            readline.read_history_file(str(histfile))
+        readline.set_history_length(1000)
+        import atexit
+        def _save():
+            try:
+                readline.write_history_file(str(histfile))
+            except Exception:
+                pass
+        atexit.register(_save)
+    except Exception:
+        pass
+
+
+def _version() -> str:
+    try:
+        from . import __version__
+        return __version__
+    except Exception:
+        return "unknown"
+
+
 def chat_repl(cfg):
+    _setup_readline()
     pm = cfg.providers
     pools = pm.pool_names()
     print(f"Omni agent  |  primary pool={pools[0] if pools else 'none'}  |  keys={len(pm.items)}  |  strategy={pm.strategy}\n"
@@ -17,13 +58,14 @@ def chat_repl(cfg):
     if pm.load_error:
         print("WARNING:", pm.load_error, "\n")
     hist = loop.new_history(cfg)
-    jobs = {}       # id -> {"stop": Event, "out": list, "thread": Thread, "label": str}
+    jobs = {}       # id -> {"stop": Event, "out": list, "thread": Thread, "label": str, "done": Event}
 
     def launch_bg(text):
         job_id = str(len(jobs) + 1)
         while job_id in jobs:
             job_id = str(int(job_id) + 1)
         stop = threading.Event()
+        done = threading.Event()
         out = []
 
         def run():
@@ -36,11 +78,27 @@ def chat_repl(cfg):
                 out.append(f"[error] {e}")
             finally:
                 out.append("[done]")
+                done.set()
 
         t = threading.Thread(target=run, daemon=True, name=f"omni-bg-{job_id}")
-        jobs[job_id] = {"stop": stop, "out": out, "thread": t, "label": text[:60]}
+        jobs[job_id] = {"stop": stop, "out": out, "thread": t, "label": text[:60], "done": done}
         t.start()
         return job_id
+
+    def _bg_monitor(job_id, rec):
+        """Print a one-line completion notice when a background agent job finishes."""
+        rec["done"].wait()
+        # Give the final append a moment to land.
+        time.sleep(0.05)
+        tail = [x for x in rec["out"] if x and x != "[done]"]
+        first = (tail[-1] if tail else "")[:100].replace("\n", " ")
+        # Only print if we're still attached to a terminal (a /reset or a
+        # new task shouldn't spam the prompt).
+        try:
+            sys.stderr.write(f"\n[bg {job_id} done] {first}\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
 
     while True:
         try:
@@ -72,7 +130,8 @@ def chat_repl(cfg):
                 print(f"  agent {jid}: {status}  {j['label']}  {tail}")
             for d in detached:
                 status = "running" if d["alive"] else "exited"
-                print(f"  shell {d['id']}: {status}  {d['cmd'][:80]}  log={d['log']}")
+                started = time.strftime("%H:%M:%S", time.localtime(d["started"]))
+                print(f"  shell {d['id']}: {status}  started {started}  {d['cmd'][:80]}  log={d['log']}")
             continue
         if q.startswith("/kill "):
             jid = q[6:].strip()
@@ -89,6 +148,9 @@ def chat_repl(cfg):
                 print("usage: /bg <task>")
                 continue
             jid = launch_bg(text)
+            # Start a monitor thread that prints when it finishes.
+            threading.Thread(target=_bg_monitor, args=(jid, jobs[jid]),
+                             daemon=True, name=f"omni-bg-monitor-{jid}").start()
             print(f"started job {jid} in background; /jobs to check, /kill {jid} to stop")
             continue
         if q.startswith("/"):
@@ -104,6 +166,9 @@ def chat_repl(cfg):
 
 def main():
     ap = argparse.ArgumentParser(prog="omni-agent")
+    ap.add_argument("--version", action="version",
+                    version=f"omni-agent {_version()}",
+                    help="print the version and exit")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("chat", help="interactive terminal session (default when no GUI)")
     u = sub.add_parser("ui", help="open the web UI (chat + keys + models)")
@@ -173,7 +238,10 @@ def main():
         if not task:
             ap.error("give a prompt or -f file")
         try:
-            print(loop.run(cfg, loop.new_history(cfg), task))
+            # Live events: the user sees `-> tool(...)` lines while the
+            # task runs, instead of a silent 30-second wait for the final
+            # answer.
+            print(loop.run(cfg, loop.new_history(cfg), task, on_event=loop.cli_event))
         except llm.LLMError as e:
             print(f"[gateway error] {e}", file=sys.stderr)
             sys.exit(1)
@@ -183,7 +251,7 @@ def main():
         while True:
             print(f"\n[{time.strftime('%F %T')}] running {a.file}")
             try:
-                print(loop.run(cfg, loop.new_history(cfg), task))
+                print(loop.run(cfg, loop.new_history(cfg), task, on_event=loop.cli_event))
             except Exception as e:
                 print("run failed:", e)
             time.sleep(a.every)

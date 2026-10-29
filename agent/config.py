@@ -64,6 +64,11 @@ class Config:
     strict: bool = True
     home: Path = None
     mcp: object = None
+    # Runtime mode flags (see §6.2 / §7.3 in the README).
+    shell_bg: bool = False
+    # New: hard cap on total tool calls per task, so a runaway loop on a
+    # cheap/fast model can't burn 500 calls before max_turns trips.
+    max_total_tool_calls: int = 200
 
 
 def _default_workspace() -> Path:
@@ -110,17 +115,19 @@ def load() -> Config:
         model=g("AGENT_MODEL", "auto"),
         workspace=ws,
         allow_outside=g("AGENT_ALLOW_OUTSIDE", "1") == "1",
-        # ON by default. Set AGENT_AUTO_APPROVE=0 in .env (or export it) to
-        # restore the per-action Allow/Deny prompts. The web UI shows a
-        # persistent red banner when auto-approve is active, and the header
-        # toggle turns it off for a single session without touching the env.
-        auto_approve=_env_bool("AGENT_AUTO_APPROVE", default=True),
+        # OFF by default — matches .env.example and README §11.2. Set
+        # AGENT_AUTO_APPROVE=1 in .env to skip all Allow/Deny prompts.
+        # The web UI shows a persistent red banner when it is active, and
+        # the header toggle turns it off for a single session.
+        auto_approve=_env_bool("AGENT_AUTO_APPROVE", default=False),
         max_turns=int(g("AGENT_MAX_TURNS", "60")),
         temperature=float(g("AGENT_TEMPERATURE", "0.2")),
         timeout=int(g("AGENT_TIMEOUT", "180")),
         data_dir=data,
         strict=g("AGENT_STRICT", "1") == "1",
         home=Path.home().resolve(),
+        shell_bg=_env_bool("AGENT_SHELL_BG", default=False),
+        max_total_tool_calls=int(g("AGENT_MAX_TOOL_CALLS", "200")),
     )
 
     try:
@@ -166,6 +173,7 @@ def load() -> Config:
         cfg.mcp = None
 
     return cfg
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     """Read a boolean env var. Missing or empty -> `default`."""
