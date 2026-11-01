@@ -43,6 +43,8 @@ class WebTests(unittest.TestCase):
         self.srv.shutdown()
         self.srv.server_close()
         self.gw.close()
+        import gc
+        gc.collect()
         self.tmp.cleanup()
 
     # -- tiny client

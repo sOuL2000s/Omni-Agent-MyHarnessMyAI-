@@ -48,6 +48,8 @@ class StreamingTests(unittest.TestCase):
         self.srv.shutdown()
         self.srv.server_close()
         self.gw.close()
+        import gc
+        gc.collect()
         self.tmp.cleanup()
 
     def _handler(self, c):
@@ -130,6 +132,16 @@ class StreamingTests(unittest.TestCase):
             if not p["busy"] and not p["events"]:
                 break
         stream_text = "".join(e["text"] for e in events if e["type"] == "tool_stream")
+        # The coalescing buffer flushes on tool_result, but the flushed
+        # event may land one poll cycle after the loop above exited.
+        # Give it a bounded amount of time to arrive before asserting.
+        deadline = time.time() + 5
+        while "last" not in stream_text and time.time() < deadline:
+            st, p = self.req("GET", f"/api/poll?session={SID}&after={cursor}&wait=1")
+            cursor = p["next"]
+            events.extend(p["events"])
+            stream_text = "".join(e["text"] for e in events if e["type"] == "tool_stream")
+            time.sleep(0.1)
         self.assertIn("first", stream_text)
         self.assertIn("last", stream_text,
                       "the last line was lost — the coalesce buffer "

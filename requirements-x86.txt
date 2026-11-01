@@ -1,0 +1,11 @@
+# Runtime dependencies for the 32-bit Windows build.
+# lancedb and pyarrow are excluded: neither ships 32-bit wheels and their
+# native extensions do not compile for i686-pc-windows-msvc.
+# The agent's vector memory gracefully degrades (HAS_VECTOR=False); SQLite
+# memory still works because it uses the standard library.
+
+python-docx>=1.1.0
+openpyxl>=3.1.2
+python-pptx>=0.6.23
+tzdata; sys_platform == "win32"
+pyreadline3; sys_platform == "win32"

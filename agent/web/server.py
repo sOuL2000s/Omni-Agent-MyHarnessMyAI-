@@ -974,13 +974,13 @@ def make_handler(app):
         def api_memory_list(self, q):
             """List memories + facts for the UI's delete panel."""
             from ..tools.memory import _get_db
-            conn = _get_db(app.cfg)
-            mems = conn.execute(
-                "SELECT id, timestamp, content FROM memories ORDER BY id DESC LIMIT 200"
-            ).fetchall()
-            facts = conn.execute(
-                "SELECT key, value FROM facts ORDER BY key ASC"
-            ).fetchall()
+            with _get_db(app.cfg) as conn:
+                mems = conn.execute(
+                    "SELECT id, timestamp, content FROM memories ORDER BY id DESC LIMIT 200"
+                ).fetchall()
+                facts = conn.execute(
+                    "SELECT key, value FROM facts ORDER BY key ASC"
+                ).fetchall()
             self._send(200, {
                 "memories": [{"id": r["id"], "timestamp": r["timestamp"], "content": r["content"]} for r in mems],
                 "facts": [{"key": r["key"], "value": r["value"]} for r in facts],
@@ -1380,6 +1380,13 @@ def make_handler(app):
             self._send(200, {"path": str(target)})
 
         def api_workspace_pick(self, q):
+            import threading
+            if threading.current_thread() is not threading.main_thread():
+                return self._err(
+                    501,
+                    "the folder picker must run on the main thread; "
+                    "type the path instead (macOS/Tk requires this)",
+                )
             try:
                 import tkinter as tk
                 from tkinter import filedialog

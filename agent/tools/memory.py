@@ -3,6 +3,7 @@ import json
 import sqlite3
 import time
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from .registry import tool
 
@@ -15,11 +16,23 @@ except ImportError:
     HAS_VECTOR = False
 
 
-def _get_db(cfg):
+def _open_db(cfg):
     db_path = cfg.data_dir / "memory.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    
+    return conn
+
+
+@contextmanager
+def _get_db(cfg):
+    """Yield a connection and always close it.
+
+    Historically this returned a bare connection; sqlite3 kept a file
+    handle open until GC, which on Windows made ``tempfile.TemporaryDirectory
+    .cleanup()`` fail with ``PermissionError: [WinError 32]`` because
+    ``memory.db`` was still locked. Callers use ``with _get_db(cfg) as conn``.
+    """
+    conn = _open_db(cfg)
     # Initialize tables
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memories (
@@ -36,7 +49,6 @@ def _get_db(cfg):
             updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         )
     """)
-    
     # Migration from legacy memory.jsonl
     legacy_file = cfg.data_dir / "memory.jsonl"
     if legacy_file.exists():
@@ -57,6 +69,13 @@ def _get_db(cfg):
             legacy_file.rename(cfg.data_dir / "memory.jsonl.bak")
         except Exception as e:
             print(f"Memory migration failed: {e}")
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
             
     return conn
 
@@ -95,9 +114,9 @@ def _get_embeddings(cfg, texts):
       {"text": {"type": "string"}}, ["text"])
 def memory_save(cfg, text):
     # 1. Save to SQLite (Source of Truth)
-    conn = _get_db(cfg)
-    with conn:
-        conn.execute("INSERT INTO memories (content) VALUES (?)", (text,))
+    with _get_db(cfg) as conn:
+        with conn:
+            conn.execute("INSERT INTO memories (content) VALUES (?)", (text,))
     
     # 2. Save to Vector DB (for semantic search)
     if HAS_VECTOR:
@@ -127,10 +146,10 @@ def memory_save(cfg, text):
       {"query": {"type": "string"}}, ["query"])
 def memory_search(cfg, query=""):
     if not query:
-        conn = _get_db(cfg)
-        rows = conn.execute(
-            "SELECT timestamp, content FROM memories ORDER BY id DESC LIMIT 20"
-        ).fetchall()
+        with _get_db(cfg) as conn:
+            rows = conn.execute(
+                "SELECT timestamp, content FROM memories ORDER BY id DESC LIMIT 20"
+            ).fetchall()
         if not rows:
             return "(no memory yet)"
         return "\n".join(f"[{r['timestamp']}] {r['content']}" for r in reversed(rows))
@@ -153,16 +172,16 @@ def memory_search(cfg, query=""):
             print(f"Vector search failed: {e}")
 
     # Fallback to SQLite keyword search
-    conn = _get_db(cfg)
-    words = query.lower().split()
-    placeholders = " AND content LIKE ?" * len(words)
-    params = [f"%{w}%" for w in words]
-    
-    rows = conn.execute(
-        f"SELECT timestamp, content FROM memories WHERE 1=1 {placeholders} ORDER BY id ASC LIMIT 20",
-        params
-    ).fetchall()
-    
+    with _get_db(cfg) as conn:
+        words = query.lower().split()
+        placeholders = " AND content LIKE ?" * len(words)
+        params = [f"%{w}%" for w in words]
+
+        rows = conn.execute(
+            f"SELECT timestamp, content FROM memories WHERE 1=1 {placeholders} ORDER BY id ASC LIMIT 20",
+            params
+        ).fetchall()
+
     if not rows:
         return "no matches"
     
@@ -173,20 +192,20 @@ def memory_search(cfg, query=""):
 @tool("memory_store_fact", "Store a structured fact or preference (e.g. 'user_name', 'theme').",
       {"key": {"type": "string"}, "value": {"type": "string"}}, ["key", "value"])
 def memory_store_fact(cfg, key, value):
-    conn = _get_db(cfg)
-    with conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO facts (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))",
-            (key, value)
-        )
+    with _get_db(cfg) as conn:
+        with conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO facts (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))",
+                (key, value)
+            )
     return f"Fact '{key}' stored."
 
 
 @tool("memory_get_fact", "Retrieve a specific structured fact by its key.",
       {"key": {"type": "string"}}, ["key"])
 def memory_get_fact(cfg, key):
-    conn = _get_db(cfg)
-    row = conn.execute("SELECT value FROM facts WHERE key = ?", (key,)).fetchone()
+    with _get_db(cfg) as conn:
+        row = conn.execute("SELECT value FROM facts WHERE key = ?", (key,)).fetchone()
     if row:
         return row["value"]
     return "Fact not found."
@@ -194,8 +213,8 @@ def memory_get_fact(cfg, key):
 
 @tool("memory_list_facts", "List all stored structured facts.", {})
 def memory_list_facts(cfg):
-    conn = _get_db(cfg)
-    rows = conn.execute("SELECT key, value FROM facts ORDER BY key ASC").fetchall()
+    with _get_db(cfg) as conn:
+        rows = conn.execute("SELECT key, value FROM facts ORDER BY key ASC").fetchall()
     if not rows:
         return "No facts stored."
     return "\n".join(f"{r['key']}: {r['value']}" for r in rows)
@@ -206,31 +225,31 @@ def memory_list_facts(cfg):
       "If multiple matches are found, it returns the IDs for clarification.",
       {"query": {"type": "string"}}, ["query"])
 def memory_delete(cfg, query):
-    conn = _get_db(cfg)
     q = (query or "").strip()
     if not q:
         return "No query provided."
 
-    # Exact content match first (what the UI sends), then LIKE fallback.
-    rows = conn.execute(
-        "SELECT id, timestamp, content FROM memories WHERE content = ?",
-        (q,)
-    ).fetchall()
-    if not rows:
+    with _get_db(cfg) as conn:
+        # Exact content match first (what the UI sends), then LIKE fallback.
         rows = conn.execute(
-            "SELECT id, timestamp, content FROM memories WHERE content LIKE ? OR timestamp LIKE ?",
-            (f"%{q}%", f"%{q}%")
+            "SELECT id, timestamp, content FROM memories WHERE content = ?",
+            (q,)
         ).fetchall()
+        if not rows:
+            rows = conn.execute(
+                "SELECT id, timestamp, content FROM memories WHERE content LIKE ? OR timestamp LIKE ?",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
 
-    if not rows:
-        return f"No memories found matching '{q}'."
-    if len(rows) > 1:
-        lines = [f"ID {r['id']} [{r['timestamp']}]: {r['content']}" for r in rows]
-        return "Multiple matches found. Please specify the ID to delete:\n" + "\n".join(lines)
+        if not rows:
+            return f"No memories found matching '{q}'."
+        if len(rows) > 1:
+            lines = [f"ID {r['id']} [{r['timestamp']}]: {r['content']}" for r in rows]
+            return "Multiple matches found. Please specify the ID to delete:\n" + "\n".join(lines)
 
-    target_id, target_content = rows[0]['id'], rows[0]['content']
-    with conn:
-        conn.execute("DELETE FROM memories WHERE id = ?", (target_id,))
+        target_id, target_content = rows[0]['id'], rows[0]['content']
+        with conn:
+            conn.execute("DELETE FROM memories WHERE id = ?", (target_id,))
 
     if HAS_VECTOR:
         try:
@@ -247,21 +266,21 @@ def memory_delete(cfg, query):
 @tool("memory_delete_fact", "Delete a specific structured fact by its key.",
       {"key": {"type": "string"}}, ["key"])
 def memory_delete_fact(cfg, key):
-    conn = _get_db(cfg)
-    with conn:
-        cursor = conn.execute("DELETE FROM facts WHERE key = ?", (key,))
-        if cursor.rowcount > 0:
-            return f"Fact '{key}' deleted."
+    with _get_db(cfg) as conn:
+        with conn:
+            cursor = conn.execute("DELETE FROM facts WHERE key = ?", (key,))
+            if cursor.rowcount > 0:
+                return f"Fact '{key}' deleted."
     return f"Fact '{key}' not found."
 
 
 @tool("memory_clear_all", "WIPE ALL MEMORY (both facts and events). Use with extreme caution.", {})
 def memory_clear_all(cfg):
     # 1. Clear SQLite
-    conn = _get_db(cfg)
-    with conn:
-        conn.execute("DELETE FROM memories")
-        conn.execute("DELETE FROM facts")
+    with _get_db(cfg) as conn:
+        with conn:
+            conn.execute("DELETE FROM memories")
+            conn.execute("DELETE FROM facts")
     
     # 2. Clear Vector DB
     # Use drop_table rather than shutil.rmtree: LanceDB may hold open file
@@ -282,10 +301,10 @@ def memory_clear_all(cfg):
 def recent(cfg, n=15):
     """Return the latest n entries as bullet points, for the system prompt."""
     try:
-        conn = _get_db(cfg)
-        rows = conn.execute(
-            "SELECT content FROM memories ORDER BY id DESC LIMIT ?", (n,)
-        ).fetchall()
+        with _get_db(cfg) as conn:
+            rows = conn.execute(
+                "SELECT content FROM memories ORDER BY id DESC LIMIT ?", (n,)
+            ).fetchall()
         if not rows:
             return ""
         return "\n".join(f"- {r['content']}" for r in reversed(rows))
@@ -296,8 +315,8 @@ def recent(cfg, n=15):
 def get_all_facts_formatted(cfg):
     """Return all facts as a string for the system prompt."""
     try:
-        conn = _get_db(cfg)
-        rows = conn.execute("SELECT key, value FROM facts ORDER BY key ASC").fetchall()
+        with _get_db(cfg) as conn:
+            rows = conn.execute("SELECT key, value FROM facts ORDER BY key ASC").fetchall()
         if not rows:
             return ""
         return "\n".join(f"- {r['key']}: {r['value']}" for r in rows)

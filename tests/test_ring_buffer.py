@@ -34,6 +34,8 @@ class RingBufferTests(unittest.TestCase):
         self.s = Session(self.cfg, "abcdef0123456789")
 
     def tearDown(self):
+        import gc
+        gc.collect()
         self.tmp.cleanup()
 
     def test_seq_is_monotonic(self):
@@ -159,6 +161,8 @@ class SeqCursorTests(unittest.TestCase):
         self.s = Session(self.cfg, "abcdef0123456789")
 
     def tearDown(self):
+        import gc
+        gc.collect()
         self.tmp.cleanup()
 
     def test_seq_never_decreases_across_evictions(self):

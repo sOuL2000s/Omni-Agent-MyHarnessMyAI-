@@ -37,7 +37,14 @@ def ensure_nuitka():
 
 
 def ensure_requirements():
-    req = ROOT / "requirements.txt"
+    # 32-bit Windows can't build lancedb/pyarrow (no wheels, native code
+    # doesn't target i686-pc-windows-msvc). Use the reduced requirements
+    # there; the agent's vector memory degrades gracefully.
+    is_x86 = (os.name == "nt"
+              and sys.maxsize <= 2**32)
+    req = ROOT / ("requirements-x86.txt" if is_x86 else "requirements.txt")
+    if not req.exists():
+        req = ROOT / "requirements.txt"
     if req.exists():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req)])
 

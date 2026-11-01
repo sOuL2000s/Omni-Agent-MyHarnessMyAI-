@@ -38,6 +38,8 @@ class AgentLoop(unittest.TestCase):
         # Reset thread-local approver so the next test starts clean.
         safety.set_approver(None)
         self.gw.close()
+        import gc
+        gc.collect()
         self.tmp.cleanup()
 
     def test_tool_loop_writes_and_edits_a_file(self):
