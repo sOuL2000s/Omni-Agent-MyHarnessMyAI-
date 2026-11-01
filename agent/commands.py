@@ -29,6 +29,7 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /autodetect <key>                  guess the provider from the key format
   /workspace [path]                  show or change the agent's workspace (relative or absolute)
   /bgauto on|off                     when on, every run_shell call runs in the background
+  /killall                           stop every running background shell (dev servers, watchers)
   /config [key|key=value]            show every runtime setting, or set one (written to .env)
   /reset  /exit  /help"""
 
@@ -198,6 +199,14 @@ def handle(cfg, line):
         if c in ("revive", "clear"):
             pm.health.clear()
             return "all cooldowns cleared"
+        if c in ("killall", "kill-all"):
+            from .tools import shell as _sh
+            jobs = [j for j in _sh.list_detached() if j.get("alive")]
+            if not jobs:
+                return "no running background shells"
+            for j in jobs:
+                _sh.kill_detached(j["id"])
+            return f"stopped {len(jobs)} background shell(s)"
         if c == "test":
             return test(cfg, args[0] if args else None)
         if c == "help":

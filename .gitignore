@@ -1,17 +1,37 @@
-data/providers.json
-data/memory.jsonl
-data/mcp_registry.json
+# Core configuration and secrets
 .env
-.venv/
-__pycache__/
-combined_project_files.txt
-data/state.json
-data/sessions/
-data/*.corrupt-*
-data/*.tmp
+data/providers.json
+data/mcp_registry.json
+data/settings.json
+mcp.json
 settings.json
 
-# Build artifacts — do NOT commit these
+# Memory and Vector DB (User-specific data)
+data/memory.jsonl
+data/memory.jsonl.bak
+data/memory.db
+data/lancedb/
+
+# Runtime data and sessions
+data/state.json
+data/sessions/
+data/jobs/
+data/*.corrupt-*
+data/*.tmp
+data/stt-model/
+
+# Workspace
+workspace/*
+!workspace/.gitkeep
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Build artifacts
 dist/
 *.dist/
 *.build/
@@ -22,33 +42,11 @@ omni.onefile-build/
 *.exe
 *.pyd
 *.dll
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-
-# Runtime data (already there, keep it)
-data/providers.json
-data/state.json
-data/memory.jsonl
-data/sessions/
-data/jobs/
-data/*.corrupt-*
-data/*.tmp
-workspace/*
-!workspace/.gitkeep
-.env
-.*-mcp/
+combined_project_files.txt
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-mcp.json
-# STT model weights (~335 MB, downloaded from the sherpa-onnx releases page;
-# see agent/stt.py for the URL). Not committed — every user downloads
-# their own copy.
-data/stt-model/
+.*-mcp/

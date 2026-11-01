@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Omni</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23c2410c'/%3E%3Cstop offset='1' stop-color='%23ea580c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#f7f8fa; --bg-2:#eef0f4; --panel:#ffffff; --panel-2:#fbfcfe;
@@ -564,7 +564,12 @@ main{min-width:0}
     <div class="brand"><i></i> Omni</div>
     <div class="side-section"><button class="primary" id="newChat">New chat</button></div>
     <div class="side-section"><input id="sessSearch" placeholder="Search chats…" aria-label="Search chats"></div>
-    <div class="side-label">Shell jobs</div>
+    <div class="side-label" style="display:flex;align-items:center;gap:6px">
+      <span>Shell jobs</span>
+      <span style="flex:1"></span>
+      <button id="killAllShells" class="ghost" title="Stop every running background shell"
+              aria-label="Stop all background shells" style="font-size:11px;padding:1px 6px">stop all</button>
+    </div>
     <div id="shelljobs" class="scroll-sec shells"></div>
     <div class="side-label">Recent</div>
     <div id="sessions" class="scroll-sec sessions"></div>
@@ -586,7 +591,7 @@ main{min-width:0}
     </header>
     <div id="autoBanner">⚠ auto-approve is ON — the agent runs shell commands and writes files without asking. Turn it off in the header.</div>
     <div id="log"><div class="col" id="msgs"></div></div>
-    <button id="scrollDown" title="New messages">↓ new messages</button>
+    <button id="scrollDown" title="Jump to latest message">↓ new messages</button>
     <div id="composer"><div class="col">
       <div id="working"></div>
       <div class="box">
@@ -605,11 +610,15 @@ main{min-width:0}
       <button class="on" data-tab="keys">Keys</button>
       <button data-tab="mcp">MCP</button>
       <button data-tab="files">Files</button>
+      <button data-tab="memory">Memory</button>
+      <button data-tab="skills">Skills</button>
       <button id="closeRight" style="flex:0 0 44px" aria-label="Close panel">✕</button>
     </div>
     <div class="pane on" id="pane-keys"></div>
     <div class="pane" id="pane-mcp"></div>
     <div class="pane" id="pane-files"></div>
+    <div class="pane" id="pane-memory"></div>
+    <div class="pane" id="pane-skills"></div>
   </aside>
 </div>
 
@@ -674,6 +683,62 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
 };
+
+/* ----------------------------------------------------------------
+   Focus preservation.
+
+   Every panel re-render (renderKeys, renderMcp, loadFiles, …) rebuilds
+   its DOM, which destroys whatever element had focus. Without help, the
+   browser drops focus to <body> and the user's next keystroke is lost.
+
+   Two mechanisms fix this:
+     * withFocus(fn) snapshots document.activeElement by a stable id /
+       data-persist key, runs fn(), then restores focus to the same key.
+     * a "typing lock": while the user has text in #inp and is not in a
+       modal, an accidental blur back to <body> is refocused to #inp.
+   ---------------------------------------------------------------- */
+function _focusKey(el) {
+  if (!el || el === document.body || el === document.documentElement) return null;
+  if (el.id) return { kind: "id", key: el.id };
+  if (el.dataset && el.dataset.persist) return { kind: "persist", key: el.dataset.persist };
+  if (el.classList && el.classList.contains("sess")) {
+    return { kind: "sess", key: el.querySelector(".nm")?.textContent || "" };
+  }
+  return null;
+}
+function _findByFocusKey(fk) {
+  if (!fk) return null;
+  if (fk.kind === "id") return document.getElementById(fk.key);
+  if (fk.kind === "persist") {
+    return document.querySelector(`[data-persist="${fk.key.replace(/"/g, '\\"')}"]`);
+  }
+  return null;
+}
+let _focusRestore = null;    // pending restore, set by withFocus
+function withFocus(fn) {
+  const el = document.activeElement;
+  const fk = _focusKey(el);
+  const selStart = el && typeof el.selectionStart === "number" ? el.selectionStart : null;
+  const selEnd = el && typeof el.selectionEnd === "number" ? el.selectionEnd : null;
+  try { return fn(); }
+  finally {
+    _focusRestore = { fk, selStart, selEnd };
+    // Restore on the next frame so the DOM is fully rebuilt first.
+    requestAnimationFrame(() => {
+      const r = _focusRestore;
+      _focusRestore = null;
+      if (!r || !r.fk) return;
+      const target = _findByFocusKey(r.fk);
+      if (!target || target === document.activeElement) return;
+      try {
+        target.focus({ preventScroll: true });
+        if (r.selStart != null && typeof target.setSelectionRange === "function") {
+          target.setSelectionRange(r.selStart, r.selEnd ?? r.selStart);
+        }
+      } catch (_) {}
+    });
+  }
+}
 const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)),
   b => b.toString(16).padStart(2, "0")).join("");
 
@@ -741,12 +806,28 @@ let lastRoute = null;
 store.set("omni_sid", sid);
 const msgs = $("#msgs"), logEl = $("#log"), toolEls = {};
 function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140; }
-function scrollToBottom() { logEl.scrollTop = logEl.scrollHeight; $("#scrollDown").classList.remove("on"); }
-function maybeShowScrollDown() { if (busy && !atBottom()) $("#scrollDown").classList.add("on"); else $("#scrollDown").classList.remove("on"); }
+function scrollToBottom() {
+  logEl.scrollTop = logEl.scrollHeight;
+  $("#scrollDown").classList.remove("on");
+  // Return focus to the composer so the user can keep typing immediately.
+  const inp = $("#inp");
+  if (inp) { try { inp.focus({ preventScroll: true }); } catch (_) {} }
+}
+// Show the "new messages" pill whenever the user is scrolled away from the
+// bottom, regardless of whether the agent is busy. The old version only
+// showed it while `busy`, so scrolling up to read history hid the way back.
+function maybeShowScrollDown() { $("#scrollDown").classList.toggle("on", !atBottom()); }
 logEl.addEventListener("scroll", maybeShowScrollDown);
 $("#scrollDown").onclick = scrollToBottom;
 
-function add(el) { const stick = atBottom(); clearEmpty(); msgs.append(el); if (stick) scrollToBottom(); return el; }
+function add(el) {
+  const stick = atBottom();
+  clearEmpty();
+  msgs.append(el);
+  if (stick) scrollToBottom();
+  else maybeShowScrollDown();   // surface the pill as soon as new content lands
+  return el;
+}
 function clearEmpty() { const e = $("#emptyState"); if (e) e.remove(); }
 function showEmpty() {
   const examples = [
@@ -804,6 +885,7 @@ function renderStatus() {
 }
 function updateStatus(patch) { statusState = Object.assign({}, statusState, patch); renderStatus(); }
 function setBusy(b, reset = true) {
+  const hadFocus = document.activeElement === $("#stop") || document.activeElement === $("#send");
   busy = b;
   $("#send").style.display = b ? "none" : "";
   $("#stop").style.display = b ? "" : "none";
@@ -811,6 +893,21 @@ function setBusy(b, reset = true) {
   if (reset) statusState = {};
   renderStatus();
   maybeShowScrollDown();
+  // Hiding the focused button drops focus to <body>. Put the user back in
+  // the composer instead so they can keep typing the next message. We do
+  // this for BOTH transitions (busy -> idle and idle -> busy) because the
+  // Send/Stop buttons swap visibility each time.
+  if (hadFocus) {
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body && $("#inp")) {
+        $("#inp").focus({ preventScroll: true });
+      }
+    });
+  }
+  // When the run finishes, jump to the bottom so the final answer is visible.
+  if (!b) {
+    requestAnimationFrame(() => { scrollToBottom(); });
+  }
 }
 
 function actionsFor(kind, ev) {
@@ -885,6 +982,8 @@ function render(ev) {
       pre.firstChild.appendData(ev.text);
       const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
       if (nearBottom) pre.scrollTop = pre.scrollHeight;
+      // Only auto-scroll the main log if the user is already at the bottom.
+      // If they scrolled up to read, leave them there and show the pill.
       if (atBottom()) scrollToBottom(); else maybeShowScrollDown();
       return;
     }
@@ -899,9 +998,15 @@ function render(ev) {
       updateStatus({ route: ev.text });
       return;
     }
-    case "error": return add(h("div", { class: "note err" },
-      h("div", { text: ev.text }),
-      h("div", { style: "margin-top:6px" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
+    case "error": {
+      // Errors end the run; put focus back in the composer so the user can
+      // retype immediately instead of clicking into the box.
+      const el = add(h("div", { class: "note err" },
+        h("div", { text: ev.text }),
+        h("div", { style: "margin-top:6px" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
+      requestAnimationFrame(() => { try { $("#inp").focus({ preventScroll: true }); } catch (_) {} });
+      return el;
+    }
     case "approval": return askApproval(ev);
     case "approval_done": if (pendingApproval && pendingApproval.id === ev.id) closeModal(); return;
   }
@@ -922,7 +1027,19 @@ async function poll() {
       cursor = d.next;
       let done = false;
       for (const ev of d.events) { if (ev.type === "user") continue; if (ev.type === "done") done = true; else render(ev); }
-      if (done || (!d.busy && !d.events.length)) { setBusy(false); refreshKeys(); loadSessions(); loadShellJobs(); break; }
+      if (done || (!d.busy && !d.events.length)) {
+        setBusy(false);
+        // Refresh panels without interrupting the composer. refreshKeys()
+        // already skips when its pane has focus; the others are guarded
+        // by withFocus internally.
+        refreshKeys();
+        loadSessions();
+        loadShellJobs();
+        // Guarantee the final answer is on screen even if the user never
+        // scrolled during the run.
+        requestAnimationFrame(() => { scrollToBottom(); });
+        break;
+      }
     }
   } finally { polling = false; }
 }
@@ -932,6 +1049,9 @@ async function send() {
   const t = inp.value.trim(); if (!t || busy) return;
   const restore = inp.value;
   inp.value = ""; autoGrow();
+  // Keep the composer focused after sending; the user almost certainly
+  // wants to keep typing, and Clear-empty-then-blur feels broken.
+  try { inp.focus({ preventScroll: true }); } catch (_) {}
   store.set("omni_draft_" + sid, "");
   try {
     const r = await api("/api/chat", { session: sid, text: t });
@@ -1082,14 +1202,29 @@ async function loadSessions() {
     // Server-side search when the user is typing; otherwise the 40 newest.
     const url = q ? `/api/sessions?q=${encodeURIComponent(q)}` : "/api/sessions";
     sessionsCache = await api(url);
-    renderSessions();
+    // Snapshot focus *inside* the sidebar before we rebuild #sessions. If
+    // the user is typing in #sessSearch, renderSessions must not blur it.
+    const focused = document.activeElement;
+    const wasSearch = focused === $("#sessSearch");
+    const searchSel = wasSearch ? [focused.selectionStart, focused.selectionEnd] : null;
+    withFocus(renderSessions);
+    if (wasSearch && searchSel) {
+      requestAnimationFrame(() => {
+        const el = $("#sessSearch");
+        if (!el) return;
+        el.focus({ preventScroll: true });
+        try { el.setSelectionRange(searchSel[0], searchSel[1]); } catch (_) {}
+      });
+    }
   } catch (_) {}
 }
 
 async function loadShellJobs() {
   const box = $("#shelljobs"); if (!box) return;
+  // Never touch focus: this runs every 5s and must not interrupt typing.
   try {
     const d = await api("/api/shell_jobs");
+    window.__shellJobs = d.jobs || [];
     if (!d.jobs.length) {
       box.replaceChildren(h("div", { class: "small", style: "padding:4px 6px", text: "no background shells" }));
       return;
@@ -1100,10 +1235,31 @@ async function loadShellJobs() {
       h("span", { class: "nm", text: j.cmd.slice(0, 26) }),
       j.alive ? h("span", { title: "Running", text: "●", style: "color:var(--ok);font-size:10px" })
               : h("span", { title: "Exited", text: "○", style: "color:var(--muted);font-size:10px" }),
-      h("button", { text: "stop", title: "Kill this shell", disabled: !j.alive,
-        onclick: async () => { try { await api("/api/shell_jobs/kill", { job_id: j.id }); loadShellJobs(); } catch (e) { toast(e.message); } } })
+      // Copy the job id so the user can reference it in a prompt or terminal.
+      h("button", { text: "⧉", title: "Copy job id (" + j.id + ")", "aria-label": "Copy job id",
+        onclick: (e) => { e.stopPropagation(); copyText(j.id); } }),
+      // Open the live log in a new tab. The endpoint streams the file as
+      // text/plain; for a running server this is the equivalent of `tail -f`
+      // on refresh.
+      h("button", { text: "log", title: "Open this job's log", "aria-label": "Open log",
+        onclick: (e) => {
+          e.stopPropagation();
+          if (!j.log) return toast("No log file for this job");
+          window.open("/api/shell_jobs/log?job_id=" + encodeURIComponent(j.id),
+                      "_blank", "noopener,noreferrer");
+        } }),
+      // Kill with a confirmation so a stray click can't take down a dev server.
+      h("button", { class: "danger", text: "stop", title: "Kill this shell", disabled: !j.alive,
+        onclick: async (e) => {
+          e.stopPropagation();
+          if (!(await confirmDlg("Stop background job?",
+              "This will terminate:\n\n" + j.cmd, "Stop job"))) return;
+          try { await api("/api/shell_jobs/kill", { job_id: j.id }); loadShellJobs(); }
+          catch (err) { toast(err.message); }
+        } })
     )));
   } catch (e) { box.textContent = ""; }
+  // No focus restore — this pane is never the focus target.
 }
 
 function renderSessions() {
@@ -1158,6 +1314,7 @@ function confirmDlg(title, msg, yesText = "OK") {
   $("#confirmMsg").textContent = msg;
   $("#confirmYes").textContent = yesText;
   $("#confirm").classList.add("on");
+  setTimeout(() => { try { $("#confirmYes").focus(); } catch (_) {} }, 0);
   return new Promise(resolve => { _confirmResolve = resolve; });
 }
 function closeConfirm(result) {
@@ -1178,7 +1335,19 @@ function promptDlg(title, msg, initial = "") {
   box.value = initial;
   $("#confirmYes").textContent = "Save";
   $("#confirm").classList.add("on");
-  setTimeout(() => box.focus(), 0);
+  setTimeout(() => { box.focus(); box.select(); }, 0);
+  // Enter inside the input submits; Escape cancels — without relying on the
+  // global handler (which the browser may deliver to the input first).
+  box.onkeydown = (e) => {
+    if (e.isComposing) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      closePrompt(box.value ?? "");
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closePrompt(null);
+    }
+  };
   return new Promise(resolve => { _promptResolve = resolve; });
 }
 function closePrompt(result) {
@@ -1207,7 +1376,9 @@ function askApproval(ev) {
   hdr.textContent = `Omni wants to ${t === "run_shell" ? "run a shell command" : (ev.tool ? `use ${t}` : "act")}`;
   hdr.title = `Chat: ${sid} · Tool: ${t}`;
   $("#modal").classList.add("on");
-  setTimeout(() => $("#allow").focus(), 0);
+  // Focus the Allow button so a bare Enter approves; the user can Tab to
+  // Deny or to the "don't ask again" checkbox.
+  setTimeout(() => { try { $("#allow").focus(); } catch (_) {} }, 0);
 }
 function closeModal() { pendingApproval = null; $("#modal").classList.remove("on"); }
 async function answer(allow) {
@@ -1218,13 +1389,58 @@ async function answer(allow) {
   catch (e) { toast(e.message); }
 }
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") {
-    if ($("#modal").classList.contains("on")) answer(false);
-    else if ($("#confirm").classList.contains("on")) { if (_promptResolve) closePrompt(null); else closeConfirm(false); }
-    else if ($("#browse")) $("#browse").remove();
-  } else if (e.key === "Enter" && $("#modal").classList.contains("on") && !e.isComposing) {
-    e.preventDefault();
-    answer(!e.shiftKey);
+  if (e.isComposing) return;
+
+  // ---- approval modal (#modal): Escape = Deny, Enter = click the focused
+  // button (or Allow when focus is elsewhere, e.g. the checkbox/label).
+  if ($("#modal").classList.contains("on")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      answer(false);
+      return;
+    }
+    if (e.key === "Enter") {
+      // If the user explicitly focused Deny, honor that. Otherwise default
+      // to Allow — matching the visual "primary" button.
+      const focused = document.activeElement;
+      e.preventDefault();
+      if (focused && focused.id === "deny") answer(false);
+      else answer(true);
+      return;
+    }
+    return;
+  }
+
+  // ---- confirm / prompt dialog (#confirm)
+  if ($("#confirm").classList.contains("on")) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (_promptResolve) closePrompt(null); else closeConfirm(false);
+      return;
+    }
+    if (e.key === "Enter") {
+      const focused = document.activeElement;
+      e.preventDefault();
+      if (_promptResolve) {
+        // Prompt: Enter submits the text, unless focus is on Cancel.
+        if (focused && focused.id === "confirmNo") closePrompt(null);
+        else {
+          const el = $("#confirmInput");
+          closePrompt(el ? (el.value ?? "") : null);
+        }
+      } else {
+        // Confirm: Enter = OK, unless focus is on Cancel.
+        if (focused && focused.id === "confirmNo") closeConfirm(false);
+        else closeConfirm(true);
+      }
+      return;
+    }
+    return;
+  }
+
+  // ---- workspace browser (#browse)
+  if ($("#browse") && e.key === "Escape") {
+    $("#browse").remove();
   }
 });
 
@@ -1282,6 +1498,9 @@ function fmtUsedAt(ts) {
 }
 
 function renderKeys() {
+  return withFocus(_renderKeysInner);
+}
+function _renderKeysInner() {
   const pane = $("#pane-keys");
   const openKeys = new Set([...pane.querySelectorAll("details.kl")].filter(d => d.open).map(d => d.dataset.pool));
   const savedScroll = pane.scrollTop;
@@ -1608,6 +1827,9 @@ function mcpAddCard() {
 }
 
 async function renderMcp() {
+  return withFocus(() => _renderMcpInner());
+}
+async function _renderMcpInner() {
   const pane = $("#pane-mcp"); if (!pane || !S) return;
   const scroll = pane.scrollTop;
   pane.replaceChildren();
@@ -1714,8 +1936,9 @@ async function renderMcp() {
 }
 
 async function loadFiles() {
-  const pane = $("#pane-files");
-  try {
+  return withFocus(async () => {
+    const pane = $("#pane-files");
+    try {
     const list = await api("/api/files");
     pane.replaceChildren(
       h("div", { class: "row" },
@@ -1733,7 +1956,122 @@ async function loadFiles() {
           h("a", { href, target: inline ? "_blank" : undefined, rel: inline ? "noopener noreferrer" : undefined,
                    text: inline ? "open" : "download" }));
       })));
-  } catch (e) { pane.textContent = e.message; }
+    } catch (e) { pane.textContent = e.message; }
+  });
+}
+
+async function loadMemory() {
+  return withFocus(_loadMemoryInner);
+}
+async function _loadMemoryInner() {
+  const pane = $("#pane-memory");
+  if (!pane) return;
+  pane.replaceChildren(h("div", { class: "small", style: "padding:10px", text: "Loading memory…" }));
+  let d;
+  try { d = await api("/api/memory/list"); }
+  catch (e) { pane.textContent = e.message; return; }
+
+  const factsCard = h("div", { class: "card" },
+    h("h3", { text: "Known facts" }),
+    d.facts.length
+      ? h("div", { class: "files" }, ...d.facts.map(f =>
+          h("div", { class: "f" },
+            h("span", { text: f.key + ": " + f.value }),
+            h("button", { class: "danger", text: "✕", title: "Delete fact",
+              onclick: async () => {
+                if (!(await confirmDlg("Delete fact?", "Remove '" + f.key + "'?", "Delete"))) return;
+                try { await api("/api/memory/delete", { query: f.key, kind: "fact" }); loadMemory(); }
+                catch (e) { toast(e.message); }
+              } }))))
+      : h("div", { class: "small", text: "No facts stored yet." }));
+
+  const memCard = h("div", { class: "card" },
+    h("h3", { text: "Memories (" + d.memories.length + ")" }),
+    d.memories.length
+      ? h("div", { class: "files", style: "max-height:400px;overflow:auto" }, ...d.memories.map(m =>
+          h("div", { class: "f" },
+            h("span", { title: m.content, text: "[" + m.timestamp + "] " + m.content.slice(0, 120) }),
+            h("button", { class: "danger", text: "✕", title: "Delete memory",
+              onclick: async () => {
+                if (!(await confirmDlg("Delete memory?", "Remove this memory entry?", "Delete"))) return;
+                try { await api("/api/memory/delete", { query: m.content }); loadMemory(); }
+                catch (e) { toast(e.message); }
+              } }))))
+      : h("div", { class: "small", text: "No memories stored yet." }));
+
+  const dangerCard = h("div", { class: "card" },
+    h("h3", { text: "⚠ Danger zone" }),
+    h("div", { class: "small", text: "Wipes every memory and fact, and deletes the LanceDB vector store. This cannot be undone." }),
+    h("div", { class: "row", style: "margin-top:10px" },
+      h("button", { class: "danger", text: "Clear all memory",
+        onclick: async () => {
+          if (!(await confirmDlg("Clear ALL memory?",
+            "This deletes every saved memory, every fact, and the vector database. There is no undo.",
+            "Clear everything"))) return;
+          try { const r = await api("/api/memory/clear", { confirm: true }); toast(r.message || "Memory cleared"); loadMemory(); }
+          catch (e) { toast(e.message, 6000); }
+        } })));
+
+  pane.replaceChildren(
+    h("div", { class: "card" },
+      h("h3", { text: "Memory" }),
+      h("div", { class: "small", text: "Everything Omni remembers across sessions: structured facts and semantic memories." })),
+    factsCard, memCard, dangerCard);
+}
+
+async function loadSkills() {
+  return withFocus(_loadSkillsInner);
+}
+async function _loadSkillsInner() {
+  const pane = $("#pane-skills");
+  if (!pane) return;
+  pane.replaceChildren(h("div", { class: "small", style: "padding:10px", text: "Loading skills…" }));
+  let d;
+  try { d = await api("/api/skills"); }
+  catch (e) { pane.textContent = e.message; return; }
+
+  // --- new-skill form ---
+  const nameIn = h("input", { placeholder: "skill_name (letters, digits, _, ., -)", spellcheck: false });
+  const titleIn = h("input", { placeholder: "Title (optional, defaults to name)", spellcheck: false });
+  const bodyIn = h("textarea", { class: "keysbox", spellcheck: false,
+    placeholder: "Imperative steps the model should follow. E.g.\n1. Read main.py and utils.py\n2. Run pytest\n3. Write REVIEW.md with file:line refs",
+    style: "min-height:120px" });
+  const createBtn = h("button", { class: "primary", text: "Save skill",
+    onclick: () => act(async () => {
+      const r = await api("/api/skills/save", {
+        name: nameIn.value.trim(), title: titleIn.value.trim(), body: bodyIn.value
+      });
+      nameIn.value = ""; titleIn.value = ""; bodyIn.value = "";
+      return r;
+    }, r => r.created ? `Created ${r.name}` : `Updated ${r.name}`) });
+  const newCard = h("div", { class: "card card-hero" },
+    h("h3", { text: "Save a new skill" }),
+    h("div", { class: "small", text: "A skill is a reusable recipe the model can load before improvising. Saved as data/skills/<name>.md." }),
+    h("div", { class: "row" }, nameIn, titleIn),
+    bodyIn,
+    h("div", { class: "row" }, createBtn));
+
+  // --- existing skills ---
+  const listCard = h("div", { class: "card" },
+    h("h3", { text: "Skills (" + d.skills.length + ")" }),
+    d.skills.length
+      ? h("div", { class: "files" }, ...d.skills.map(s =>
+          h("div", { class: "f" },
+            h("span", { title: s.title, text: s.name + " — " + s.title }),
+            h("span", { class: "small", text: s.summary || "" }),
+            h("a", {
+              href: "/api/skills/read?name=" + encodeURIComponent(s.name),
+              target: "_blank", rel: "noopener noreferrer", text: "view"
+            }),
+            h("button", { class: "danger", text: "✕", title: "Delete skill",
+              onclick: async () => {
+                if (!(await confirmDlg("Delete skill?", "Remove '" + s.name + "' permanently?", "Delete"))) return;
+                try { await api("/api/skills/delete", { name: s.name }); loadSkills(); }
+                catch (e) { toast(e.message); }
+              } }))))
+      : h("div", { class: "small", text: "No skills yet. Create one above — the model will see it next turn." }));
+
+  pane.replaceChildren(newCard, listCard);
 }
 
 function uploadOne(file) {
@@ -1983,6 +2321,9 @@ $("#send").onclick = send;
 $("#stop").onclick = doStop;
 $("#inp").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 $("#inp").addEventListener("input", autoGrow);
+// Typing in the composer means the user is engaging again; hide the
+// "new messages" pill so it doesn't sit on top of their text.
+$("#inp").addEventListener("focus", () => $("#scrollDown").classList.remove("on"));
 $("#newChat").onclick = newChat;
 $("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
 $("#left-toggle").onclick = () => $("#app").classList.add("leftcollapsed");
@@ -2008,6 +2349,18 @@ $("#bgBox").onchange = async e => {
     toast("background shell executions " + (d.on ? "ON — run_shell will detach" : "OFF — run_shell streams live"));
   } catch (err) { toast(err.message); }
 };
+$("#killAllShells").onclick = async () => {
+  const running = (window.__shellJobs || []).filter(j => j.alive);
+  if (!running.length) return toast("No running background shells");
+  if (!(await confirmDlg("Stop all background shells?",
+      "This will terminate " + running.length + " running job(s):\n\n" +
+      running.map(j => "• " + j.cmd).join("\n"), "Stop all"))) return;
+  try {
+    const r = await api("/api/shell_jobs/kill_all", {});
+    toast("Stopped " + (r.stopped || running.length) + " job(s)");
+    loadShellJobs();
+  } catch (e) { toast(e.message, 6000); }
+};
 $("#attach").onclick = () => $("#fileIn").click();
 $("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = ""; };
 logEl.addEventListener("dragover", e => e.preventDefault());
@@ -2030,6 +2383,31 @@ document.addEventListener("keydown", e => {
   }
 });
 
+// ---- Focus watchdog --------------------------------------------------
+// Panels rebuild their DOM on a timer; if the element that had focus was
+// inside them, the browser drops focus to <body>. If the user was mid-
+// message in the composer, put the caret back. Overlays and busy state
+// suppress the guard so we never fight the user.
+let _refocusTimer = null;
+function _watchdogRefocus() {
+  if (_refocusTimer) clearTimeout(_refocusTimer);
+  _refocusTimer = setTimeout(() => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    if ($("#modal").classList.contains("on")) return;
+    if ($("#confirm").classList.contains("on")) return;
+    if ($("#browse")) return;
+    const inp = $("#inp");
+    if (!inp || !inp.value) return;
+    try { inp.focus({ preventScroll: true }); } catch (_) {}
+  }, 120);
+}
+// Fire on any focus change (including blur -> body).
+document.addEventListener("focusout", _watchdogRefocus, true);
+// Also fire after programmatic refreshes that don't go through withFocus.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") _watchdogRefocus();
+});
+
 function openRight(tab) {
   $("#app").classList.add("rightopen");
   store.set("omni_tab", tab);
@@ -2037,6 +2415,8 @@ function openRight(tab) {
   document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + tab));
   if (tab === "files") loadFiles();
   else if (tab === "mcp") { refreshKeys(true); }
+  else if (tab === "memory") { loadMemory(); }
+  else if (tab === "skills") { loadSkills(); }
   else refreshKeys(true);
 }
 $("#keysBtn").onclick = () => $("#app").classList.contains("rightopen") ? $("#app").classList.remove("rightopen") : openRight("keys");

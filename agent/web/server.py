@@ -52,6 +52,7 @@ from .. import loop, llm, safety, commands
 from ..providers import PRESETS, STRATEGIES
 from ..tools import shell as _shell
 from .. import stt as _stt
+from ..tools.memory import memory_clear_all
 
 
 def _find_index() -> Path:
@@ -945,6 +946,111 @@ def make_handler(app):
             s.set_title(title)
             self._send(200, {"ok": True, "title": s.title()})
 
+        def api_memory_delete(self, q):
+            """Delete memory rows matching `query`, or a fact by `key`.
+
+            The UI's Memories card sends {query: <full content>}; the
+            Known-facts card sends {query: <fact key>, kind: "fact"}.
+            Tries fact-delete first when kind=="fact", otherwise memory
+            (exact content, then LIKE). Falls through to the other store
+            so a plain {query} works from either card.
+            """
+            b = self._json_body()
+            qs = (b.get("query") or "").strip()
+            if not qs:
+                raise ValueError("query is required")
+            kind = (b.get("kind") or "").strip().lower()
+            from ..tools.memory import memory_delete as _mem_del
+            from ..tools.memory import memory_delete_fact as _fact_del
+
+            if kind == "fact":
+                result = _fact_del(app.cfg, qs)
+            else:
+                result = _mem_del(app.cfg, qs)
+                if result.startswith("No memories found"):
+                    result = _fact_del(app.cfg, qs)
+            self._send(200, {"ok": True, "result": result})
+
+        def api_memory_list(self, q):
+            """List memories + facts for the UI's delete panel."""
+            from ..tools.memory import _get_db
+            conn = _get_db(app.cfg)
+            mems = conn.execute(
+                "SELECT id, timestamp, content FROM memories ORDER BY id DESC LIMIT 200"
+            ).fetchall()
+            facts = conn.execute(
+                "SELECT key, value FROM facts ORDER BY key ASC"
+            ).fetchall()
+            self._send(200, {
+                "memories": [{"id": r["id"], "timestamp": r["timestamp"], "content": r["content"]} for r in mems],
+                "facts": [{"key": r["key"], "value": r["value"]} for r in facts],
+            })
+        api_memory_list.method = "GET"
+
+        def api_memory_clear(self, q):
+            # This is a dangerous operation, so we'll require a confirmation
+            # from the client side.
+            b = self._json_body()
+            if not b.get("confirm"):
+                raise ValueError("confirmation required to clear all memory")
+            
+            # Call the memory_clear_all tool
+            memory_clear_all(app.cfg)
+            self._send(200, {"ok": True, "message": "All memories and facts have been wiped."})
+
+        # ---- skills (CRUD on data/skills/*.md) ----
+        def api_skills(self, q):
+            from ..tools import skills as _sk
+            self._send(200, {"skills": _sk._list_files(app.cfg)})
+        api_skills.method = "GET"
+
+        def api_skills_read(self, q):
+            from ..tools import skills as _sk
+            name = q.get("name", "")
+            try:
+                p = _sk._path_for(app.cfg, name)
+            except ValueError as e:
+                return self._err(400, str(e))
+            if not p.exists():
+                return self._err(404, f"no skill named '{name}'")
+            text = p.read_text(encoding="utf-8")
+            title, body = _sk._title_and_body(text)
+            self._send(200, {"name": name, "title": title, "body": body})
+        api_skills_read.method = "GET"
+
+        def api_skills_save(self, q):
+            from ..tools import skills as _sk
+            b = self._json_body()
+            name = (b.get("name") or "").strip()
+            body = (b.get("body") or "").strip()
+            title = (b.get("title") or "").strip()
+            if not name:
+                raise ValueError("name is required")
+            if not body:
+                raise ValueError("body is required")
+            try:
+                p = _sk._path_for(app.cfg, name)
+            except ValueError as e:
+                return self._err(400, str(e))
+            existed = p.exists()
+            text = f"# {(title or name).strip() or name}\n\n{body}\n"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            self._send(200, {"ok": True, "name": name, "created": not existed})
+
+        def api_skills_delete(self, q):
+            from ..tools import skills as _sk
+            b = self._json_body()
+            name = (b.get("name") or "").strip()
+            try:
+                p = _sk._path_for(app.cfg, name)
+            except ValueError as e:
+                return self._err(400, str(e))
+            if not p.exists():
+                return self._err(404, f"no skill named '{name}'")
+            p.unlink()
+            self._send(200, {"ok": True, "name": name})
+
         def api_message_delete(self, q):
             b = self._json_body()
             s = app.session(b.get("session", ""))
@@ -990,6 +1096,53 @@ def make_handler(app):
             b = self._json_body()
             from ..tools import shell as _sh
             self._send(200, {"ok": True, "result": _sh.kill_detached(b.get("job_id", ""))})
+
+        def api_shell_jobs_kill_all(self, q):
+            """Stop every currently-running detached shell job.
+
+            Returns the count actually stopped so the UI can confirm.
+            Exited jobs are left in place (they'll be pruned by
+            list_detached() after 10 minutes).
+            """
+            from ..tools import shell as _sh
+            stopped = 0
+            for rec in _sh.list_detached():
+                if rec.get("alive"):
+                    _sh.kill_detached(rec["id"])
+                    stopped += 1
+            self._send(200, {"ok": True, "stopped": stopped})
+
+        def api_shell_jobs_log(self, q):
+            """Serve a background job's log file as text/plain.
+
+            Path-traversal safe: the job id is looked up in the live
+            _DETACHED table, and only the registered log_path is read —
+            the client's `job_id` never becomes a filesystem path directly.
+            """
+            from ..tools import shell as _sh
+            job_id = q.get("job_id", "")
+            if not job_id:
+                return self._err(400, "job_id is required")
+            rec = None
+            with _sh._ACTIVE_LOCK:
+                rec = _sh._DETACHED.get(job_id)
+                if not rec:
+                    # Allow a prefix match, same as tail_background.
+                    for jid, r in _sh._DETACHED.items():
+                        if jid.startswith(job_id):
+                            rec, job_id = r, jid
+                            break
+            if not rec:
+                return self._err(404, "no such background job")
+            log_path = rec.get("log_path")
+            if not log_path or not Path(log_path).is_file():
+                return self._err(404, "this job has no log file")
+            try:
+                data = Path(log_path).read_bytes()
+            except OSError as e:
+                return self._err(500, f"could not read log: {e}")
+            self._send(200, data, "text/plain; charset=utf-8")
+        api_shell_jobs_log.method = "GET"
 
         # ---- keys / models
         def api_pool_model(self, q):

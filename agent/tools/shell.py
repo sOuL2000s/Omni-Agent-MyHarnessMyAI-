@@ -256,7 +256,8 @@ def _run_detached(cfg, command, cwd):
 
     msg = (f"background job {job_id} started (pid {proc.pid}).\n"
            f"cmd: {command}\n"
-           f"log: {log_path}\n")
+           f"log: {log_path}\n"
+           f"job_id: {job_id}\n")
     if ready_url:
         msg += (f"DETECTED URL: {ready_url}\n"
                 f"The server appears to be up. Report this URL to the user; "

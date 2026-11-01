@@ -13,8 +13,11 @@ import zlib
 from math import hypot
 from pathlib import Path
 
-BG      = (79, 70, 229)     # --accent #4f46e5
-BG_DARK = (99, 102, 241)    # --accent-2 #6366f1 (subtle gradient)
+# Matches the web UI's "polish" palette: a warm accent gradient with a
+# single white ring. The previous indigo (#4f46e5) looked out of place
+# next to the current #c2410c accent.
+BG      = (194, 65, 12)     # --accent #c2410c
+BG_DARK = (234, 88, 12)     # --accent-2 #ea580c (subtle gradient)
 INK     = (255, 255, 255)
 
 SIZES = (16, 24, 32, 48, 64, 128, 256)
@@ -38,10 +41,11 @@ def render(size):
     """Return size*size*4 bytes (BGRA) for a single icon size."""
     W = H = size * SS
     r = W * 0.22                                   # corner radius
-    ring_r = W * 0.20
+    ring_r = W * 0.21                              # slightly wider ring
     # A ring thinner than ~1px disappears after downsampling at 16/24px,
-    # so scale the thickness up for the smallest sizes.
-    ring_t = max(W * 0.11, SS * 1.4)
+    # so scale the thickness up for the smallest sizes. Bumped from 0.11
+    # to 0.13 so the 16px icon stays legible.
+    ring_t = max(W * 0.13, SS * 1.6)
     buf = bytearray(W * H * 4)
     for py in range(H):
         for px in range(W):
@@ -56,6 +60,14 @@ def render(size):
             cb = round(BG[2] * (1 - t) + BG_DARK[2] * t)
             if _ring(px + 0.5, py + 0.5, W, H, W / 2, H / 2, ring_r, ring_t):
                 cr, cg, cb = INK
+            else:
+                # Subtle inner highlight: lift the top half a touch so the
+                # icon reads as a soft dome rather than a flat tile. The
+                # effect is only visible at >=48px; at 16px it averages out.
+                d = hypot(px + 0.5 - W / 2, py + 0.5 - H / 2)
+                if d < W * 0.46:
+                    lift = int(10 * (1 - d / (W * 0.46)))
+                    cr, cg, cb = min(255, cr + lift), min(255, cg + lift), min(255, cb + lift)
             buf[i:i + 4] = bytes((cb, cg, cr, 255))          # BGRA
     # box-downsample SSxSS -> size
     out = bytearray(size * size * 4)

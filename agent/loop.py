@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import llm
 from .tools import schemas, call, TOOLS
-from .tools.memory import recent
+from .tools.memory import recent, get_all_facts_formatted
 from .tools.registry import set_cancel as _set_tool_cancel
 from .tools import shell as _shell
 
@@ -42,6 +42,11 @@ CORE RULES - do not break these:
   admin_set_pool_model, admin_add_mcp_server, admin_set_setting, etc. These
   always ask the user for approval before writing. Use them instead of telling
   the user to open the Keys panel.
+- SAVED SKILLS: before improvising a multi-step workflow, call skill_list
+  to see whether the user has saved one. If a skill matches the task, call
+  skill_read(name) and follow it exactly. When you work out a good reusable
+  recipe for the user, offer to save it with skill_save — but only after
+  the task succeeds.
 {memory}"""
 
 
@@ -67,10 +72,18 @@ def _set_context(on_event, cancel):
 
 def system_prompt(cfg):
     mem = recent(cfg)
+    facts = get_all_facts_formatted(cfg)
     now = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
+    
+    memory_section = ""
+    if facts:
+        memory_section += "\nUser Preferences & Facts:\n" + facts
+    if mem:
+        memory_section += "\nRecent Chat Context:\n" + mem
+        
     return SYSTEM.format(ws=cfg.workspace,
                          datetime=now,
-                         memory=("\nKnown about the user:\n" + mem) if mem else "")
+                         memory=memory_section)
 
 
 def new_history(cfg):
@@ -146,7 +159,8 @@ PARALLEL_OK = {
     "read_file", "list_dir", "search_files",
     "web_fetch", "web_search",
     "docx_read", "xlsx_read", "pptx_read",
-    "memory_search",
+    "memory_search", "memory_get_fact", "memory_list_facts",
+    "skill_list", "skill_read",
 }
 # Retries per tool name before we stop trying the same thing.
 MAX_TOOL_RETRIES = 3

@@ -302,3 +302,22 @@ def admin_set_setting(cfg, key, value):
     )
     # Reuse the command handler's implementation.
     return _commands.handle(cfg, f"/config {key}={value}")
+
+
+@tool(
+    "admin_save_skill",
+    "Save a reusable skill (recipe) so future sessions can load it. Use "
+    "this after solving a multi-step task that the user is likely to ask "
+    "for again. The body should be imperative steps with concrete tool "
+    "names. Asks for approval before writing.",
+    {"name": {"type": "string"},
+     "title": {"type": "string"},
+     "body": {"type": "string"}},
+    ["name", "body"],
+)
+def admin_save_skill(cfg, name, body, title=""):
+    from .skills import skill_save as _sk_save
+    try:
+        return _sk_save(cfg, name=name, body=body, title=title or None)
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
