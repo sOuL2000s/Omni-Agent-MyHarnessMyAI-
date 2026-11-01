@@ -1,11 +1,23 @@
 # Runtime dependencies for the 32-bit Windows build.
-# lancedb and pyarrow are excluded: neither ships 32-bit wheels and their
-# native extensions do not compile for i686-pc-windows-msvc.
+#
+# lancedb and openai are excluded because their native dependencies do not
+# build for i686-pc-windows-msvc:
+#   * lancedb -> gearhash -> uses _mm256_insert_epi64 / _mm256_extract_epi64,
+#     AVX2 intrinsics that do not exist on 32-bit x86 targets.
+#   * openai -> pyarrow -> its CMake setup explicitly refuses 32-bit Windows.
 # The agent's vector memory gracefully degrades (HAS_VECTOR=False); SQLite
-# memory still works because it uses the standard library.
+# facts and keyword search still work because they use the standard library.
+#
+# Everything else below installs from a pure-Python wheel on 32-bit Windows
+# and is present in the 9.0.0 x86 build. Do not remove selenium /
+# webdriver-manager without updating the release notes: dropping them
+# silently downgrades AGENT_BROWSER=selenium to a no-op.
 
 python-docx>=1.1.0
 openpyxl>=3.1.2
 python-pptx>=0.6.23
 tzdata; sys_platform == "win32"
 pyreadline3; sys_platform == "win32"
+
+selenium
+webdriver-manager
