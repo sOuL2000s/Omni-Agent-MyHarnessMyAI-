@@ -11,12 +11,24 @@ Both outputs are fully self-contained: the end user does NOT need Python,
 pip, or any of the project's dependencies installed.
 
 Modes supported by the built binary:
-  omni            GUI launcher (Terminal chat / Web UI buttons)
+  omni            GUI launcher (Terminal chat / Web UI / Single prompt buttons)
   omni chat       terminal chat
   omni ui         web UI (opens browser)
   omni run "..."  one-shot task
   omni check      test keys
   omni provider   key management
+
+Notes
+-----
+* `--standalone` (always on) is what makes `sys.argv[0]` inside the frozen
+  exe point at `omni.exe` rather than the embedded `python.exe`. The
+  launcher's "Terminal chat" button relies on this: it re-execs
+  `sys.argv[0]` with `chat` to open a real console window. Under
+  `--onefile`, `sys.argv[0]` still resolves to the original exe, so
+  re-exec works there too.
+* `--windows-console-mode=force` (Windows) keeps a console attached to the
+  parent so the CLI modes (`run`, `check`, `provider`) print to it, and so
+  the child console spawned by "Terminal chat" inherits a working stdin.
 """
 import os
 import shutil
@@ -85,6 +97,7 @@ def build(onefile=False, with_browser=False):
         "--include-module=tkinter.ttk",
         "--include-module=tkinter.font",
         "--include-module=tkinter.messagebox",
+        "--include-module=tkinter.filedialog",
         "--include-module=_tkinter",
         # --- static data
         "--include-data-files=agent/web/index.html=agent/web/index.html",
@@ -151,7 +164,7 @@ def build(onefile=False, with_browser=False):
         # Try to find the dist folder regardless of its name
         old_dir = ROOT / "dist" / "omni_entry.dist"
         new_dir = ROOT / "dist" / "omni.dist"
-        
+
         if not new_dir.exists() and old_dir.exists():
             print(f"Renaming {old_dir.name} to {new_dir.name}")
             old_dir.rename(new_dir)
@@ -174,14 +187,14 @@ def build(onefile=False, with_browser=False):
     if onefile:
         exe = ROOT / "dist" / ("omni.exe" if os.name == "nt" else "omni")
         print(f"\nDone.  Single-file build:\n  {exe}\n")
-        print(f"  {exe}           launcher GUI (Terminal chat / Web UI)")
+        print(f"  {exe}           launcher GUI (Terminal chat / Web UI / Single prompt)")
         print(f"  {exe} chat      terminal chat (no GUI)")
         print(f"  {exe} ui        web UI")
     else:
         d = ROOT / "dist" / "omni.dist"
         exe = d / ("omni.exe" if os.name == "nt" else "omni")
         print(f"\nDone.  Folder build (fast startup):\n  {d}\n")
-        print(f"  {exe}           launcher GUI (Terminal chat / Web UI)")
+        print(f"  {exe}           launcher GUI (Terminal chat / Web UI / Single prompt)")
         print(f"  {exe} chat      terminal chat (no GUI)")
         print(f"  {exe} ui        web UI")
         print("\nShip the whole 'omni.dist' folder (zip it). The user runs omni.exe inside it.")
