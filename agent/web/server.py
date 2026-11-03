@@ -361,28 +361,35 @@ class App:
 
         def work():
             try:
-                safety.set_approver(lambda action, tool=None: ask(action, tool))
-            except TypeError:
-                safety.set_approver(ask)
-            try:
-                final = loop.run(self.cfg, sess.history, text,
-                                 on_event=sess.emit, cancel=sess.cancel)
-                final_idx = len(sess.history) - 1 if sess.history else None
                 try:
-                    sess.emit("final", final, idx=final_idx)
-                except Exception:
-                    pass
-            except llm.LLMError as e:
+                    safety.set_approver(lambda action, tool=None: ask(action, tool))
+                except TypeError:
+                    safety.set_approver(ask)
                 try:
-                    sess.emit("error", str(e))
-                except Exception:
-                    pass
-            except Exception as e:
-                try:
-                    sess.emit("error", f"{type(e).__name__}: {e}")
-                except Exception:
-                    pass
+                    final = loop.run(self.cfg, sess.history, text,
+                                     on_event=sess.emit, cancel=sess.cancel)
+                    final_idx = len(sess.history) - 1 if sess.history else None
+                    try:
+                        sess.emit("final", final, idx=final_idx)
+                    except Exception:
+                        pass
+                except llm.LLMError as e:
+                    try:
+                        sess.emit("error", str(e))
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        sess.emit("error", f"{type(e).__name__}: {e}")
+                    except Exception:
+                        pass
             finally:
+                # Always clear the per-thread approver so a crashed run
+                # doesn't leave a stale approver referencing a dead session.
+                try:
+                    safety.set_approver(None)
+                except Exception:
+                    pass
                 sess.busy = False
                 sess.save()
                 try:
@@ -643,6 +650,7 @@ class App:
                 self.stt_session.stop()
                 self.stt_session = None
         return {"ok": True}
+
 
 def make_handler(app):
     class H(BaseHTTPRequestHandler):
@@ -993,7 +1001,7 @@ def make_handler(app):
             b = self._json_body()
             if not b.get("confirm"):
                 raise ValueError("confirmation required to clear all memory")
-            
+
             # Call the memory_clear_all tool
             memory_clear_all(app.cfg)
             self._send(200, {"ok": True, "message": "All memories and facts have been wiped."})
@@ -1380,42 +1388,70 @@ def make_handler(app):
             self._send(200, {"path": str(target)})
 
         def api_workspace_pick(self, q):
-            import threading
-            if threading.current_thread() is not threading.main_thread():
-                return self._err(
-                    501,
-                    "the folder picker must run on the main thread; "
-                    "type the path instead (macOS/Tk requires this)",
-                )
-            try:
-                import tkinter as tk
-                from tkinter import filedialog
-            except Exception as e:
-                return self._err(501, f"no GUI available on the server: {e}")
-            try:
-                root = tk.Tk()
-            except Exception as e:
-                return self._err(501, f"no display on the server: {e}")
-            root.withdraw()
-            try:
-                root.attributes("-topmost", True)
-            except Exception:
-                pass
-            try:
-                chosen = filedialog.askdirectory(
-                    initialdir=str(app.cfg.workspace),
-                    title="Choose the Omni workspace folder",
-                    mustexist=True,
-                )
-            finally:
+            """Open the OS folder picker on the *server* machine.
+
+            Tk is single-threaded, but the HTTP handler runs on a worker
+            thread. The safe pattern is to spawn a *dedicated* thread that
+            creates its own Tk root, runs the dialog, destroys the root,
+            and hands the result back via a queue. This is exactly what
+            Tk wants: one thread, one root, no cross-thread Tk calls.
+
+            On genuinely headless setups (no DISPLAY on Linux, or Tk
+            missing) we return 501 with a clear message so the UI can
+            fall back to "type the path".
+            """
+            import queue as _queue
+            import threading as _threading
+
+            result_q: "_queue.Queue" = _queue.Queue()
+
+            def _worker():
                 try:
-                    root.destroy()
-                except Exception:
-                    pass
-            if not chosen:
+                    try:
+                        import tkinter as tk
+                        from tkinter import filedialog
+                    except Exception as e:
+                        result_q.put(("error", f"tkinter not available: {e}"))
+                        return
+                    try:
+                        root = tk.Tk()
+                    except Exception as e:
+                        result_q.put(("error", f"no display available on the server: {e}"))
+                        return
+                    root.withdraw()
+                    try:
+                        root.attributes("-topmost", True)
+                    except Exception:
+                        pass
+                    try:
+                        chosen = filedialog.askdirectory(
+                            initialdir=str(app.cfg.workspace),
+                            title="Choose the Omni workspace folder",
+                            mustexist=True,
+                        )
+                    finally:
+                        try:
+                            root.destroy()
+                        except Exception:
+                            pass
+                    result_q.put(("ok", chosen or ""))
+                except Exception as e:
+                    result_q.put(("error", f"{type(e).__name__}: {e}"))
+
+            t = _threading.Thread(target=_worker, daemon=True,
+                                  name="omni-folder-picker")
+            t.start()
+            # Wait up to 5 minutes for the user to pick (or cancel).
+            try:
+                status, value = result_q.get(timeout=300)
+            except _queue.Empty:
+                return self._err(504, "the folder picker timed out")
+            if status == "error":
+                return self._err(501, value)
+            if not value:
                 return self._send(200, {"cancelled": True})
             try:
-                new_ws = app.set_workspace(chosen)
+                new_ws = app.set_workspace(value)
             except ValueError as e:
                 return self._err(400, str(e))
             self._send(200, {"workspace": str(new_ws)})

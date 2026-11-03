@@ -15,6 +15,11 @@ Notable behaviours
 * Rich progress events: `notify` receives short human strings the UI can render.
 * Self-healing: 400s that mention `tools` are retried once without tools; 404s
   trigger a model-list refresh and one retry with the closest match.
+* Self-healing: empty replies (content null + no tool_calls) get a nudge
+  retry, then a "strip tools" retry, before cooling the key.
+* Self-healing: 400s that carry an API_KEY_INVALID signal (even when wrapped
+  in `"status": "INVALID_ARGUMENT"`) are classified as auth, not as a bad
+  request, so the run rotates to the next key instead of aborting.
 * Cancel is checked between attempts AND inside the wait loop AND inside the
   HTTP call itself. The HTTP call uses a live socket handle so Stop can
   actually close it (see `_post_json_abortable`).
@@ -106,6 +111,85 @@ def _short(text):
     return re.sub(r"\s+", " ", text)[:300]
 
 
+def _heal_arguments(raw):
+    """Return a JSON string (valid) for `raw`, or None if unrepairable.
+
+    `raw` may be: a dict (already parsed), a JSON string, an empty
+    string, `None`, or malformed JSON text. Models sometimes emit
+    arguments as broken JSON: trailing commas, single quotes, a bare
+    string, or a JSON object already (not stringified). We try to coerce
+    them into a dict here so the tool registry never has to raise a raw
+    JSONDecodeError that the model can't fix.
+    """
+    if raw is None:
+        return "{}"
+    if isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False)
+    if isinstance(raw, list):
+        return json.dumps(raw, ensure_ascii=False)
+    if not isinstance(raw, str):
+        return json.dumps(raw, ensure_ascii=False)
+    s = raw.strip()
+    if not s:
+        return "{}"
+    # Fast path.
+    try:
+        obj = json.loads(s)
+        return json.dumps(obj, ensure_ascii=False) if isinstance(obj, (dict, list)) else s
+    except ValueError:
+        pass
+    # Repair 1: extract the first balanced {…} or […] block.
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = s.find(opener)
+        if start < 0:
+            continue
+        depth = 0
+        for i in range(start, len(s)):
+            if s[i] == opener:
+                depth += 1
+            elif s[i] == closer:
+                depth -= 1
+                if depth == 0:
+                    candidate = s[start:i + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        return json.dumps(obj, ensure_ascii=False)
+                    except ValueError:
+                        break
+    # Repair 2: trailing commas before } or ].
+    fixed = re.sub(r",\s*([}\]])", r"\1", s)
+    # Repair 3: single quotes -> double (naive, but works for simple cases).
+    if "'" in fixed and '"' not in fixed:
+        fixed = fixed.replace("'", '"')
+    try:
+        obj = json.loads(fixed)
+        return json.dumps(obj, ensure_ascii=False) if isinstance(obj, (dict, list)) else fixed
+    except ValueError:
+        return None
+
+
+def _normalise(msg):
+    """Coerce a provider's tool_calls into a shape the registry accepts.
+
+    Guarantees each `function.arguments` is a JSON *string* (valid JSON).
+    If the arguments can't be repaired, we keep the raw text so the
+    registry can surface a structured error the model can learn from
+    instead of silently succeeding with `{}`.
+    """
+    calls = msg.get("tool_calls") or []
+    for c in calls:
+        fn = c.get("function") or {}
+        raw = fn.get("arguments", "")
+        healed = _heal_arguments(raw)
+        if healed is None:
+            # Keep the raw text; registry.call will report a parse error
+            # that the model can act on.
+            fn["arguments"] = raw if isinstance(raw, str) else json.dumps(raw)
+        else:
+            fn["arguments"] = healed
+    return msg
+
+
 def classify(status, text, headers=None, effective_code=None):
     """Return a Fail for a failed HTTP response.
 
@@ -118,7 +202,6 @@ def classify(status, text, headers=None, effective_code=None):
     low = text.lower()
     msg = _short(text)
     retry = _retry_after(headers, text)
-    # `code` is what we classify on. `wire` is what the user sees.
     wire = status
     code = effective_code if isinstance(effective_code, int) else status
     if effective_code is not None and effective_code != status:
@@ -126,22 +209,27 @@ def classify(status, text, headers=None, effective_code=None):
     else:
         prefix = f"HTTP {status}: " if status else ""
 
-    if code == 400 and "temperature" in low and re.search(r"unsupported|not support|only the default|invalid", low):
-        return Fail("param", msg, "none", 0, wire)
+    # ---- auth FIRST. A dead key is a dead key, no matter how the
+    # provider dresses it up. Gemini wraps 401 bodies in
+    # `"status": "INVALID_ARGUMENT"` (and some proxies do the same for
+    # `"code": 400`), so the generic `invalid_argument` branch below
+    # must NOT swallow an API_KEY_INVALID signal. If we let it, the
+    # classifier returns scope "none" and the run aborts without ever
+    # trying the next key in the pool — exactly the "agent stops
+    # working on the first error" behaviour the fallback exists to
+    # prevent.
+    if (code in (400, 401, 403)
+            and ("api_key_invalid" in low
+                 or "api key not valid" in low
+                 or "api key expired" in low
+                 or "invalid api key" in low
+                 or "incorrect api key" in low
+                 or "invalid_api_key" in low
+                 or "reported as leaked" in low
+                 or "api key was reported" in low)):
+        return Fail("auth", prefix + "bad/expired/revoked key: " + msg, "key", 6 * 3600, wire)
 
-    # Tools-schema complaints -> the caller may retry without tools.
-    if code == 400 and "tools" in low and re.search(r"unsupported|not support|invalid|schema|parameters", low):
-        return Fail("tools", msg, "none", 0, wire)
-
-    if code == 429 or "resource_exhausted" in low:
-        if re.search(r"per[ _-]?day|daily|requestsperday|PerDay", text, re.I):
-            return Fail("quota", prefix + "daily quota used up: " + msg, "key_model", _next_pacific_midnight(), wire)
-        cd = (retry + 2) if retry is not None else DEFAULT_RATE_COOLDOWN
-        return Fail("rate", prefix + "rate limited: " + msg, "key_model", min(max(cd, MIN_RATE_COOLDOWN), 900), wire)
-
-    if (code == 401 or "api_key_invalid" in low or "api key not valid" in low or "api key expired" in low
-            or "invalid api key" in low or "incorrect api key" in low or "invalid_api_key" in low
-            or "reported as leaked" in low or "api key was reported" in low):
+    if code == 401:
         return Fail("auth", prefix + "bad/expired/revoked key: " + msg, "key", 6 * 3600, wire)
 
     if code == 402 or (re.search(r"insufficient (credits|funds|balance)|billing|payment required|credit", low)
@@ -150,6 +238,34 @@ def classify(status, text, headers=None, effective_code=None):
 
     if code == 403:
         return Fail("auth", prefix + "access denied for this key: " + msg, "key", 1800, wire)
+
+    if code == 400 and "temperature" in low and re.search(r"unsupported|not support|only the default|invalid", low):
+        return Fail("param", msg, "none", 0, wire)
+
+    # ---- tool / function-schema complaints -> retry without tools
+    if code in (400, 422) and re.search(
+            r"(function|tool_call|tool call|tool_choice|tools?)[^\n]{0,80}"
+            r"(signature|missing|malformed|invalid|unsupported|not support|schema|parameters|argument)",
+            low):
+        return Fail("tools", prefix + "tool/function call rejected: " + msg, "none", 0, wire)
+
+    # ---- generic malformed-payload (after the auth branch above, so
+    # an `INVALID_ARGUMENT`-wrapped API_KEY_INVALID never lands here)
+    if code in (400, 422) and re.search(
+            r"invalid[ _]argument|malformed|parse error|invalid json|bad request|"
+            r"missing (?:required )?(?:field|parameter|argument)",
+            low):
+        # If it mentions tools, treat as a tool problem; otherwise it's a
+        # model-shape problem the caller can retry with a nudge.
+        if "tool" in low or "function" in low:
+            return Fail("tools", prefix + "malformed tool call: " + msg, "none", 0, wire)
+        return Fail("empty_param", prefix + "malformed request: " + msg, "none", 0, wire)
+
+    if code == 429 or "resource_exhausted" in low:
+        if re.search(r"per[ _-]?day|daily|requestsperday|PerDay", text, re.I):
+            return Fail("quota", prefix + "daily quota used up: " + msg, "key_model", _next_pacific_midnight(), wire)
+        cd = (retry + 2) if retry is not None else DEFAULT_RATE_COOLDOWN
+        return Fail("rate", prefix + "rate limited: " + msg, "key_model", min(max(cd, MIN_RATE_COOLDOWN), 900), wire)
 
     if code == 404 or (code in (400, 422) and re.search(
             r"(model|models/).{0,100}(not found|not exist|does not exist|is not valid|invalid model|not supported|unsupported|unknown|no endpoints)"
@@ -325,10 +441,6 @@ def _close_http_worker_socket(url, headers, body, timeout, cancel, box):
     # which is why we cap it at `timeout` anyway. The main thread returning
     # `Fail("network", "stopped by user")` is what matters; the worker
     # thread will eventually see the closed connection and exit.
-    #
-    # If the URL is https, we can at least tell the SSL layer to stop by
-    # closing the underlying socket via a best-effort lookup. In practice
-    # the read timeout is the real backstop.
     pass
 
 
@@ -366,28 +478,46 @@ def _headers(p):
     return h
 
 
-def _normalise(msg):
-    for c in msg.get("tool_calls") or []:
-        fn = c.get("function") or {}
-        if not isinstance(fn.get("arguments", ""), str):
-            fn["arguments"] = json.dumps(fn["arguments"])
-        elif fn.get("arguments") is None:
-            fn["arguments"] = "{}"
-    return msg
-
-
 def _attempt(cfg, p, model, base, cancel=None):
-    """One HTTP call to one key. Retries once without temperature if the model rejects it."""
+    """One HTTP call to one key, with self-healing for the common
+    provider-shape failures (temperature rejected, tools rejected, empty
+    response).
+
+    Retry ladder (all on the SAME key, so quota isn't wasted):
+      1. normal call
+      2. if 400 param -> drop temperature, retry once
+      3. if 400 tools  -> drop tools, retry once
+      4. if empty reply (content == null and no tool_calls) ->
+         a. retry once with a "your reply was empty" nudge
+         b. retry once with tools dropped entirely
+      5. give up with a precise Fail
+    """
     drop_tools_next = False
-    for _ in range(3):
+    nudged = False
+    stripped_tools = False
+    for _ in range(5):
         body = dict(base, model=model)
-        if drop_tools_next:
+        if drop_tools_next or stripped_tools:
             body.pop("tools", None)
             body.pop("tool_choice", None)
         with _NO_TEMP_LOCK:
             no_temp = (p.pool, model) in NO_TEMP
         if not no_temp:
             body["temperature"] = cfg.temperature
+
+        # If we're on the "empty reply" recovery step, append a nudge.
+        if nudged:
+            msgs = list(body.get("messages") or [])
+            msgs.append({
+                "role": "system",
+                "content": (
+                    "Your previous reply was empty. Respond now with either "
+                    "a tool call or a non-empty assistant message. Do not "
+                    "return an empty response."
+                ),
+            })
+            body["messages"] = msgs
+
         status, headers, text = _post_json_abortable(
             p.base_url + "/chat/completions", _headers(p), body, cfg.timeout, cancel)
         if status == 200:
@@ -396,16 +526,42 @@ def _attempt(cfg, p, model, base, cancel=None):
             except ValueError:
                 raise Fail("server", "gateway returned invalid JSON", "pool_model", 15)
             if isinstance(data, dict) and data.get("choices"):
-                msg = data["choices"][0].get("message") or {}
-                if msg.get("content") or msg.get("tool_calls"):
+                choice = data["choices"][0] or {}
+                msg = choice.get("message") or {}
+                finish = (choice.get("finish_reason") or "").lower()
+                has_content = bool((msg.get("content") or "").strip())
+                has_calls = bool(msg.get("tool_calls"))
+                if has_content or has_calls:
                     return _normalise(msg)
+
+                # --- empty reply: run the recovery ladder ---
+                # Some models return `content: null, tool_calls: null,
+                # finish_reason: "stop"` when they get confused. Nudge once.
+                if not nudged and not stripped_tools:
+                    nudged = True
+                    continue
+                # If still empty, try once with tools stripped entirely —
+                # some models choke on large tool schemas.
+                if not stripped_tools:
+                    stripped_tools = True
+                    nudged = False
+                    continue
+                # If a finish_reason of "length" is present, the model
+                # ran out of tokens mid-thought; retrying won't help.
+                if finish == "length":
+                    raise Fail("empty_param",
+                               "model returned an empty reply (finish_reason=length); "
+                               "increase max_tokens or use a different model",
+                               "none", 0)
                 raise Fail("empty", "model returned an empty reply", "none", 0)
+
             # 200 with error body (OpenRouter and some proxies do this).
             err = data.get("error") if isinstance(data, dict) else None
             code = err.get("code") if isinstance(err, dict) else None
             if isinstance(code, int):
                 raise classify(status, text, headers, effective_code=code)
             raise classify(status, text, headers)
+
         f = classify(status, text, headers)
         if f.kind == "param":
             with _NO_TEMP_LOCK:
@@ -528,6 +684,32 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                             except Exception:
                                 pass
 
+                        # ---- empty reply: retry once on the same key
+                        # with a corrective system message before cooling.
+                        if f.kind in ("empty", "empty_param"):
+                            try:
+                                healed_msgs = list(messages) + [{
+                                    "role": "system",
+                                    "content": (
+                                        "Your previous attempt produced an empty or "
+                                        "malformed reply. Please respond again with "
+                                        "either a valid tool call or a non-empty "
+                                        "assistant message."
+                                    ),
+                                }]
+                                healed_base = {"messages": healed_msgs}
+                                if tools:
+                                    healed_base["tools"] = tools
+                                    healed_base["tool_choice"] = "auto"
+                                msg = _attempt(cfg, p, model, healed_base, cancel=cancel)
+                                pm.health.ok(p)
+                                pm.note_used(pool, p.name)
+                                return msg, {"provider": p.name, "pool": pool,
+                                             "model": model, "fallback": True,
+                                             "reason": "retried-after-empty"}
+                            except Fail as f2:
+                                f = f2
+
                         if f.kind == "fatal":
                             # Last chance: retry once with a minimal request
                             try:
@@ -598,7 +780,9 @@ def _summary(log):
              "model": "this model name is not available for that service - choose another one (UI -> model list, or /models)",
              "billing": "add credits / check billing for that service",
              "network": "could not reach the service - check your internet / VPN / base_url",
-             "server": "the service is having problems - try again shortly"}
+             "server": "the service is having problems - try again shortly",
+             "empty": "the model returned an empty reply - try a different model or retry",
+             "empty_param": "the model returned an empty or malformed reply - try a different model or retry"}
     lines = ["All keys/providers failed:"]
     seen = set()
     for (pool, model), kinds in groups.items():

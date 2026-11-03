@@ -1,5 +1,6 @@
 # agent/loop.py
 """Tool loop with parallel read-only tool calls, self-healing retries and rich events."""
+import json
 import threading
 import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -74,13 +75,13 @@ def system_prompt(cfg):
     mem = recent(cfg)
     facts = get_all_facts_formatted(cfg)
     now = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
-    
+
     memory_section = ""
     if facts:
         memory_section += "\nUser Preferences & Facts:\n" + facts
     if mem:
         memory_section += "\nRecent Chat Context:\n" + mem
-        
+
     return SYSTEM.format(ws=cfg.workspace,
                          datetime=now,
                          memory=memory_section)
@@ -304,6 +305,26 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                 on_event("tool_result", res, name=name, id=c["id"], ok=False)
                 return c["id"], name, res
 
+            # Pre-flight: if the model called a tool with `{}` but the
+            # tool has required args, inject a corrective error so the
+            # NEXT turn fixes it instead of the model repeating the same
+            # broken call. This is cheap (no API call) and catches the
+            # single most common "invalid argument" pattern.
+            _required = (TOOLS.get(name) or {}).get("required") or []
+            try:
+                _parsed = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                _parsed = {}
+            if _required and isinstance(_parsed, dict) and not any(k in _parsed for k in _required):
+                on_event("notice", f"{name} called without required args; nudging model")
+                res = (
+                    f"ERROR: `{name}` requires {', '.join(_required)}. "
+                    f"You called it with {json.dumps(_parsed)[:120]}. "
+                    f"Re-issue with all required arguments."
+                )
+                on_event("tool_result", res, name=name, id=c["id"], ok=False)
+                return c["id"], name, res
+
             # Heartbeat so slow tools don't look frozen in the UI.
             done = threading.Event()
 
@@ -346,7 +367,21 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
             # self-healing hint on errors
             if res.startswith("ERROR"):
                 failures[name] = failures.get(name, 0) + 1
-                if failures[name] <= MAX_TOOL_RETRIES:
+                low = res.lower()
+                if "missing required argument" in low or "could not parse arguments" in low \
+                        or "rejected the arguments" in low:
+                    # Argument-shape errors: tell the model to fix the CALL,
+                    # not to give up on the tool.
+                    history.append({
+                        "role": "system",
+                        "content": (
+                            f"The last `{name}` call had a bad argument shape. "
+                            "Look at the tool's schema (in the tools array) and "
+                            "re-issue the call with the exact argument names and "
+                            "types it expects. Do not reuse the same arguments."
+                        ),
+                    })
+                elif failures[name] <= MAX_TOOL_RETRIES:
                     history.append({
                         "role": "system",
                         "content": ("The last `" + name + "` call failed. Diagnose: "
