@@ -1,13 +1,24 @@
 # agent/loop.py
-"""Tool loop with parallel read-only tool calls, self-healing retries and rich events."""
+"""Tool loop with parallel read-only tool calls, self-healing retries and rich events.
+
+Adds an optional, conservative auto-save heuristic: when a user turn
+contains durable-preference language ("remember", "always", "from now on",
+"my name is", "I prefer", "don't … again"), the loop saves a short memory
+entry after the answer succeeds. This is a heuristic, not an LLM call, so
+it costs no extra tokens. Near-identical entries are deduped locally by
+memory_save().
+"""
 import json
+import os
+import re
+import sys
 import threading
 import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import llm
 from .tools import schemas, call, TOOLS
-from .tools.memory import recent, get_all_facts_formatted
+from .tools.memory import recent, get_all_facts_formatted, memory_save
 from .tools.registry import set_cancel as _set_tool_cancel
 from .tools import shell as _shell
 
@@ -37,7 +48,8 @@ CORE RULES - do not break these:
   Do NOT repeat the exact same failing call.
 - For independent reads (multiple files, several URLs) you may batch them into one turn - they run
   in parallel.
-- Use memory_save for durable user preferences or facts worth keeping across sessions.
+- Use memory_save for durable user preferences or facts worth keeping across sessions. When the
+  user says "remember", "always", "from now on", "I prefer", or "my name is", save it.
 - Ask the user only when truly blocked.
 - You can change Omni's own configuration when the user asks: admin_add_key,
   admin_set_pool_model, admin_add_mcp_server, admin_set_setting, etc. These
@@ -92,9 +104,7 @@ def new_history(cfg):
 
 
 def refresh_system_prompt(cfg, history):
-    """Rewrite history[0] if the workspace (or memory) changed since it was
-    created. Cheap and idempotent — safe to call at the top of every turn.
-    Returns True if it changed anything."""
+    """Rewrite history[0] if the workspace (or memory) changed."""
     if not history or history[0].get("role") != "system":
         return False
     new_sp = system_prompt(cfg)
@@ -105,18 +115,7 @@ def refresh_system_prompt(cfg, history):
 
 
 def _trim(history, limit=180_000, protect_from=None):
-    """Drop the oldest tool outputs when the transcript gets too large.
-
-    `protect_from` is the history index where the CURRENT turn begins; we never
-    trim messages at or after that index (the model may still be reasoning
-    about them).
-
-    The size accounting includes `tool_calls`, not just `content`. A
-    `write_file` call with a 50 KB `content` argument lives in the
-    assistant's `tool_calls`, not in any `content` field — the old
-    accounting missed it entirely, so a transcript that was 500 KB of
-    tool-call payloads reported `total ≈ 0` and was never trimmed.
-    """
+    """Drop the oldest tool outputs when the transcript gets too large."""
     total = 0
     for m in history:
         total += len(str(m.get("content") or ""))
@@ -140,22 +139,96 @@ def _trim(history, limit=180_000, protect_from=None):
             m["tool_calls"] = trimmed_calls
 
 
+# ---------------------------------------------------------------- styling
+# `_NO_COLOR` is decided at import time as a *conservative* default:
+# piped output and NO_COLOR are the two conditions that always disable
+# color. On Windows the parent module (`agent.__main__`) calls
+# `SetConsoleMode(ENABLE_VIRTUAL_TERMINAL_PROCESSING)` and then calls
+# `set_color(True)` so classic cmd.exe doesn't print raw `\033[…m`
+# escapes. If that call never happens (e.g. tests import loop directly),
+# the conservative default stands.
+_NO_COLOR = (not sys.stdout.isatty()) or bool(os.environ.get("NO_COLOR"))
+
+
+def set_color(enabled: bool) -> None:
+    """Allow the parent module to override the color decision.
+
+    `agent.__main__` calls `set_color(True)` after successfully enabling
+    Windows VT processing, and `set_color(False)` if that failed. This
+    keeps `omni run` / `omni schedule` consistent with the interactive
+    REPL even though they may run in a separate process.
+    """
+    global _NO_COLOR
+    _NO_COLOR = not enabled
+
+
+def _w(text, code=""):
+    if _NO_COLOR or not code:
+        return str(text)
+    return f"{code}{text}\033[0m"
+
+
 def cli_event(kind, text="", **extra):
+    ORANGE = "" if _NO_COLOR else "\033[38;5;208m"
+    AMBER = "" if _NO_COLOR else "\033[38;5;214m"
+    GREEN = "" if _NO_COLOR else "\033[38;5;42m"
+    RED = "" if _NO_COLOR else "\033[38;5;203m"
+    CYAN = "" if _NO_COLOR else "\033[38;5;51m"
+    PURPLE = "" if _NO_COLOR else "\033[38;5;141m"
+    GRAY = "" if _NO_COLOR else "\033[38;5;245m"
+    BOLD = "" if _NO_COLOR else "\033[1m"
+
     if kind == "tool":
-        print(f"  -> {extra.get('name')}({text[:120]})")
+        name = extra.get("name") or "tool"
+        args = (text or "").replace("\n", " ")[:110]
+        print(f"  {_w('▸', CYAN)} {_w(name, BOLD + CYAN)}({_w(args, GRAY)})")
     elif kind == "tool_stream":
-        print(text, end="")
+        sys.stdout.write(_w(text, GRAY))
+        sys.stdout.flush()
+    elif kind == "tool_result":
+        ok = extra.get("ok", True)
+        mark = _w("✓", GREEN + BOLD) if ok else _w("✗", RED + BOLD)
+        first = (text or "").splitlines()[0][:110] if text else ""
+        print(f"  {mark} {_w(first, GRAY)}")
     elif kind == "notice":
-        import sys
-        print(f"  ! {text}", file=sys.stderr)
+        print(f"  {_w('↪', AMBER)} {_w(text, AMBER)}")
     elif kind == "progress":
-        import sys
-        print(f"  ... {text}", file=sys.stderr)
+        title = extra.get("title") or text or "working"
+        detail = extra.get("detail") or ""
+        sys.stderr.write(f"\r  {_w('… ' + title + ' ' + detail, GRAY)}")
+        sys.stderr.flush()
+    elif kind == "route":
+        print(_w(f"  ◆ route: {extra.get('provider','')} · {extra.get('model','')}", PURPLE))
     elif kind == "assistant" and text.strip():
-        print(f"  · {text.strip()[:300]}")
+        print()
+        print(_simple_box("Omni", text.strip(), ORANGE))
+    elif kind == "verify":
+        print(_simple_box("⚠ Unverified claims", text, AMBER))
+    elif kind == "error":
+        print(_simple_box("✗ Error", text, RED), file=sys.stderr)
 
 
-# Tools that can safely run in parallel with each other (read-only / side-effect-free).
+def _simple_box(title, body, color):
+    """A minimal box used by the non-interactive cli_event."""
+    import textwrap
+    if _NO_COLOR:
+        color = ""
+    inner_w = 76
+    top_label = f" {title} "
+    top = f"{color}╭{top_label}{'─' * max(1, inner_w - len(top_label))}╮\033[0m" if color else \
+          f"╭{top_label}{'─' * max(1, inner_w - len(top_label))}╮"
+    out = [top]
+    for para in (body or "").rstrip().split("\n"):
+        if not para:
+            out.append((color + "│" if color else "│") + " " * inner_w + (color + "│\033[0m" if color else "│"))
+            continue
+        for line in textwrap.wrap(para, width=inner_w - 2, replace_whitespace=False, drop_whitespace=False) or [""]:
+            out.append((color + "│" if color else "│") + " " + line.ljust(inner_w - 2) + " " + (color + "│\033[0m" if color else "│"))
+    out.append((color + "╰" + "─" * inner_w + "╯\033[0m") if color else ("╰" + "─" * inner_w + "╯"))
+    return "\n".join(out)
+
+
+# Tools that can safely run in parallel with each other.
 PARALLEL_OK = {
     "read_file", "list_dir", "search_files",
     "web_fetch", "web_search",
@@ -163,8 +236,35 @@ PARALLEL_OK = {
     "memory_search", "memory_get_fact", "memory_list_facts",
     "skill_list", "skill_read",
 }
-# Retries per tool name before we stop trying the same thing.
 MAX_TOOL_RETRIES = 3
+
+# Heuristic for "the user asked us to remember something". Deliberately
+# conservative: a false positive only costs one memory entry, but it
+# should not fire on every "always run the tests".
+_SAVE_RX = re.compile(
+    r"\b(remember|from now on|always|never|my name is|i prefer|i like|"
+    r"i hate|don'?t (?:ever )?(?:do|use|run)|do not (?:ever )?(?:do|use|run))\b",
+    re.I,
+)
+
+
+def _maybe_autosave(cfg, user_text, final_answer):
+    """Save a short memory entry if the user turn looks durable.
+
+    No LLM call: we truncate the user's own words. Runs after the answer
+    succeeds so a failed turn doesn't pollute memory.
+    """
+    if not user_text or not final_answer:
+        return
+    if len(user_text) > 400:
+        return
+    if not _SAVE_RX.search(user_text):
+        return
+    snippet = " ".join(user_text.split())
+    try:
+        memory_save(cfg, f"User preference: {snippet[:300]}")
+    except Exception:
+        pass
 
 
 def run(cfg, history, user_text, on_event=cli_event, cancel=None):
@@ -175,16 +275,11 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
     try:
         return _run_inner(cfg, history, user_text, on_event, cancel)
     finally:
-        # Clear the thread-locals so a subsequent run on the same thread
-        # (e.g. a fresh session) doesn't accidentally inherit an old cancel
-        # event or emitter.
         _set_tool_cancel(None)
         try:
             _shell.set_emitter(None)
         except Exception:
             pass
-        # Also drop any per-thread approver left over from a web run; the CLI
-        # path will re-install its own on the next call.
         try:
             from . import safety
             safety.set_approver(None)
@@ -193,23 +288,16 @@ def run(cfg, history, user_text, on_event=cli_event, cancel=None):
 
 
 def _run_inner(cfg, history, user_text, on_event, cancel):
-    # If the workspace (or saved memory) changed since this session's system
-    # prompt was built, rewrite it in place so the model isn't told to use a
-    # stale path.
     if refresh_system_prompt(cfg, history):
         try:
             on_event("notice", "workspace changed — system prompt updated")
         except Exception:
             pass
 
-    turn_start = len(history)  # protect this turn's tool outputs from trimming
+    turn_start = len(history)
     history.append({"role": "user", "content": user_text})
     last_route = None
     failures = {}
-    # Budget counter for the whole task. A cheap/fast model can otherwise
-    # burn hundreds of calls in one user turn — the heartbeat and the
-    # "diagnose this error" hint don't help if the model just tries
-    # different broken calls.
     tool_call_count = 0
     max_calls = getattr(cfg, "max_total_tool_calls", 200) or 200
 
@@ -218,8 +306,6 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
             return "(stopped by you)"
         _trim(history, protect_from=turn_start)
 
-        # Emit a progress event *before* the LLM call so the UI has something
-        # to show during the 1-3s it takes to reach the first token.
         on_event("progress", "thinking…", title="Sending to model",
                  detail=f"{len(history)} message(s) in context")
 
@@ -253,16 +339,10 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
 
         if not calls:
             final = entry["content"]
-            # Strict mode is scoped to the CURRENT turn: only run the
-            # verifier if *this* turn used a tool. A user turn that
-            # answers a knowledge question shouldn't pay for a verify
-            # call just because turn 3 of 40 used a tool.
             current_turn_tools = [m for m in history[turn_start:-1]
                                   if m.get("role") == "tool"]
             if cfg.strict and len(final) > 120 and current_turn_tools:
                 try:
-                    # Pass only the current turn's slice so the verifier
-                    # isn't re-reading 40 turns of context.
                     verify_msgs = history[turn_start:-1] if turn_start > 0 else history[:-1]
                     claims = llm.verify(cfg, verify_msgs, final)
                     unverified = [c for c in claims if not c.get("verified")]
@@ -274,12 +354,12 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                         )
                 except Exception:
                     pass
+            _maybe_autosave(cfg, user_text, final)
             return final
 
         if entry["content"].strip():
             on_event("assistant", entry["content"])
 
-        # ---- budget check (before running the calls) ------------------
         if tool_call_count + len(calls) > max_calls:
             on_event(
                 "error",
@@ -289,12 +369,9 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
             return f"(stopped: exceeded tool-call budget of {max_calls})"
         tool_call_count += len(calls)
 
-        # ---- run the tool calls (parallel where safe) -------------------
         results = {}
 
         def run_one(c):
-            # Worker threads don't inherit the main thread's threading.local
-            # state, so re-attach the cancel event and the event emitter here.
             _set_tool_cancel(cancel)
             _shell.set_emitter(lambda kind, text, **kw: _emit(kind, text, **kw))
             fn = c["function"]
@@ -305,11 +382,6 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                 on_event("tool_result", res, name=name, id=c["id"], ok=False)
                 return c["id"], name, res
 
-            # Pre-flight: if the model called a tool with `{}` but the
-            # tool has required args, inject a corrective error so the
-            # NEXT turn fixes it instead of the model repeating the same
-            # broken call. This is cheap (no API call) and catches the
-            # single most common "invalid argument" pattern.
             _required = (TOOLS.get(name) or {}).get("required") or []
             try:
                 _parsed = json.loads(fn.get("arguments") or "{}")
@@ -325,7 +397,6 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                 on_event("tool_result", res, name=name, id=c["id"], ok=False)
                 return c["id"], name, res
 
-            # Heartbeat so slow tools don't look frozen in the UI.
             done = threading.Event()
 
             def heartbeat():
@@ -359,19 +430,15 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                 cid, name, res = run_one(c)
                 results[cid] = (name, res)
 
-        # ---- append tool results in the original call order -------------
         for c in calls:
             cid = c["id"]
             name, res = results.get(cid, (c["function"]["name"], "ERROR: cancelled"))
             history.append({"role": "tool", "tool_call_id": cid, "content": res})
-            # self-healing hint on errors
             if res.startswith("ERROR"):
                 failures[name] = failures.get(name, 0) + 1
                 low = res.lower()
                 if "missing required argument" in low or "could not parse arguments" in low \
                         or "rejected the arguments" in low:
-                    # Argument-shape errors: tell the model to fix the CALL,
-                    # not to give up on the tool.
                     history.append({
                         "role": "system",
                         "content": (
@@ -396,14 +463,9 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                                     "and either use a different approach or tell the user you're stuck."),
                     })
             else:
-                # A success clears the streak so we don't blacklist a tool
-                # that failed 3 times 40 turns ago for unrelated reasons.
                 failures.pop(name, None)
 
         if cancel is not None and cancel.is_set():
-            # Emit a synthetic tool_result for every call that never resolved
-            # so the live UI doesn't leave amber "running" cards behind after
-            # the user pressed Stop.
             for c in calls:
                 if c["id"] not in results:
                     on_event("tool_result", "ERROR: cancelled",

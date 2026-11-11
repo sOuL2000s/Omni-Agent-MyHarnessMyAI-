@@ -5,7 +5,7 @@ provider failover, rich progress events and light self-healing.
 Order of attempts for one request
 ---------------------------------
 for each pool (service) in priority order:
-    for each model in [chosen model, fallback models...]:
+    for each model in pm.model_chain(pool)   # auto mode ranks the list
         for each usable key (scored, not blind round-robin):
             try -> success: return
                    failure: classify, cooldown the right thing, continue
@@ -17,16 +17,12 @@ Notable behaviours
   trigger a model-list refresh and one retry with the closest match.
 * Self-healing: empty replies (content null + no tool_calls) get a nudge
   retry, then a "strip tools" retry, before cooling the key.
-* Self-healing: 400s that carry an API_KEY_INVALID signal (even when wrapped
-  in `"status": "INVALID_ARGUMENT"`) are classified as auth, not as a bad
-  request, so the run rotates to the next key instead of aborting.
+* Self-healing: 400s that carry an API_KEY_INVALID signal are classified as
+  auth, not as a bad request.
 * Cancel is checked between attempts AND inside the wait loop AND inside the
-  HTTP call itself. The HTTP call uses a live socket handle so Stop can
-  actually close it (see `_post_json_abortable`).
+  HTTP call itself.
 * `classify()` distinguishes the HTTP status from the *effective* error code
-  in the body. OpenRouter (and some proxies) return HTTP 200 with a body
-  that contains `{"error": {"code": 429, ...}}`; we pass both through so the
-  key is cooled correctly even when the wire status lies.
+  in the body.
 """
 import datetime as _dt
 import difflib
@@ -42,7 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "omni-agent/2.1"
+UA = "omni-agent/2.2"
 
 
 class LLMError(Exception):
@@ -57,12 +53,10 @@ class Fail(Exception):
 
 MIN_RATE_COOLDOWN = 10
 DEFAULT_RATE_COOLDOWN = 45
-NO_TEMP = set()  # populated with (pool, model); LRU-evicted past _NO_TEMP_MAX
+NO_TEMP = set()
 _NO_TEMP_LOCK = threading.Lock()
-_VERIFY_CACHE = {}  # (final_answer_hash, tool_results_hash) -> claims list
+_VERIFY_CACHE = {}
 
-# Cap the on-disk / in-memory model caches so a long-running server doesn't
-# grow them without bound.
 _MODEL_CACHE_MAX = 64
 _NO_TEMP_MAX = 128
 _VERIFY_CACHE_MAX = 64
@@ -112,15 +106,7 @@ def _short(text):
 
 
 def _heal_arguments(raw):
-    """Return a JSON string (valid) for `raw`, or None if unrepairable.
-
-    `raw` may be: a dict (already parsed), a JSON string, an empty
-    string, `None`, or malformed JSON text. Models sometimes emit
-    arguments as broken JSON: trailing commas, single quotes, a bare
-    string, or a JSON object already (not stringified). We try to coerce
-    them into a dict here so the tool registry never has to raise a raw
-    JSONDecodeError that the model can't fix.
-    """
+    """Return a JSON string (valid) for `raw`, or None if unrepairable."""
     if raw is None:
         return "{}"
     if isinstance(raw, dict):
@@ -132,13 +118,11 @@ def _heal_arguments(raw):
     s = raw.strip()
     if not s:
         return "{}"
-    # Fast path.
     try:
         obj = json.loads(s)
         return json.dumps(obj, ensure_ascii=False) if isinstance(obj, (dict, list)) else s
     except ValueError:
         pass
-    # Repair 1: extract the first balanced {…} or […] block.
     for opener, closer in (("{", "}"), ("[", "]")):
         start = s.find(opener)
         if start < 0:
@@ -156,9 +140,7 @@ def _heal_arguments(raw):
                         return json.dumps(obj, ensure_ascii=False)
                     except ValueError:
                         break
-    # Repair 2: trailing commas before } or ].
     fixed = re.sub(r",\s*([}\]])", r"\1", s)
-    # Repair 3: single quotes -> double (naive, but works for simple cases).
     if "'" in fixed and '"' not in fixed:
         fixed = fixed.replace("'", '"')
     try:
@@ -169,21 +151,12 @@ def _heal_arguments(raw):
 
 
 def _normalise(msg):
-    """Coerce a provider's tool_calls into a shape the registry accepts.
-
-    Guarantees each `function.arguments` is a JSON *string* (valid JSON).
-    If the arguments can't be repaired, we keep the raw text so the
-    registry can surface a structured error the model can learn from
-    instead of silently succeeding with `{}`.
-    """
     calls = msg.get("tool_calls") or []
     for c in calls:
         fn = c.get("function") or {}
         raw = fn.get("arguments", "")
         healed = _heal_arguments(raw)
         if healed is None:
-            # Keep the raw text; registry.call will report a parse error
-            # that the model can act on.
             fn["arguments"] = raw if isinstance(raw, str) else json.dumps(raw)
         else:
             fn["arguments"] = healed
@@ -191,14 +164,7 @@ def _normalise(msg):
 
 
 def classify(status, text, headers=None, effective_code=None):
-    """Return a Fail for a failed HTTP response.
-
-    `status` is the wire status. `effective_code` is the code the *body*
-    claims, if the body is an error envelope (OpenRouter and some proxies
-    return HTTP 200 with `{"error": {"code": 429}}`). When
-    `effective_code` is provided, it takes precedence for classification
-    purposes, but the user-visible message still shows both.
-    """
+    """Return a Fail for a failed HTTP response."""
     low = text.lower()
     msg = _short(text)
     retry = _retry_after(headers, text)
@@ -209,15 +175,6 @@ def classify(status, text, headers=None, effective_code=None):
     else:
         prefix = f"HTTP {status}: " if status else ""
 
-    # ---- auth FIRST. A dead key is a dead key, no matter how the
-    # provider dresses it up. Gemini wraps 401 bodies in
-    # `"status": "INVALID_ARGUMENT"` (and some proxies do the same for
-    # `"code": 400`), so the generic `invalid_argument` branch below
-    # must NOT swallow an API_KEY_INVALID signal. If we let it, the
-    # classifier returns scope "none" and the run aborts without ever
-    # trying the next key in the pool — exactly the "agent stops
-    # working on the first error" behaviour the fallback exists to
-    # prevent.
     if (code in (400, 401, 403)
             and ("api_key_invalid" in low
                  or "api key not valid" in low
@@ -242,21 +199,16 @@ def classify(status, text, headers=None, effective_code=None):
     if code == 400 and "temperature" in low and re.search(r"unsupported|not support|only the default|invalid", low):
         return Fail("param", msg, "none", 0, wire)
 
-    # ---- tool / function-schema complaints -> retry without tools
     if code in (400, 422) and re.search(
             r"(function|tool_call|tool call|tool_choice|tools?)[^\n]{0,80}"
             r"(signature|missing|malformed|invalid|unsupported|not support|schema|parameters|argument)",
             low):
         return Fail("tools", prefix + "tool/function call rejected: " + msg, "none", 0, wire)
 
-    # ---- generic malformed-payload (after the auth branch above, so
-    # an `INVALID_ARGUMENT`-wrapped API_KEY_INVALID never lands here)
     if code in (400, 422) and re.search(
             r"invalid[ _]argument|malformed|parse error|invalid json|bad request|"
             r"missing (?:required )?(?:field|parameter|argument)",
             low):
-        # If it mentions tools, treat as a tool problem; otherwise it's a
-        # model-shape problem the caller can retry with a nudge.
         if "tool" in low or "function" in low:
             return Fail("tools", prefix + "malformed tool call: " + msg, "none", 0, wire)
         return Fail("empty_param", prefix + "malformed request: " + msg, "none", 0, wire)
@@ -280,14 +232,6 @@ def classify(status, text, headers=None, effective_code=None):
 
 # ---------------------------------------------------------------- HTTP
 class _AbortableSocket:
-    """Wraps a socket so the main thread can close it from another thread.
-
-    We use http.client directly instead of urllib because urllib gives us
-    no way to hold the underlying socket. With http.client, the socket
-    lives on the connection object and `close()` is safe to call from a
-    different thread.
-    """
-
     def __init__(self, cancel_event):
         self.cancel = cancel_event
         self.sock = None
@@ -309,7 +253,6 @@ class _AbortableSocket:
 
 
 def _parse_base_url(base_url):
-    """Split a base URL like https://api.example.com/v1 into (host, port, path, scheme)."""
     u = urllib.parse.urlparse(base_url)
     scheme = u.scheme or "http"
     host = u.hostname or "localhost"
@@ -319,14 +262,8 @@ def _parse_base_url(base_url):
 
 
 def _post_json_live(url, headers, body, timeout, cancel):
-    """POST via http.client so a cancel event can close the socket mid-read.
-
-    Returns (status, headers_dict, body_text). Raises Fail on network error
-    or cancel.
-    """
     scheme, host, port, path = _parse_base_url(url)
     if not path.endswith("/chat/completions") and "/chat/completions" not in path:
-        # Caller passed the full URL; use its path as-is.
         _, _, _, full_path = _parse_base_url(url)
         path = full_path
 
@@ -339,7 +276,6 @@ def _post_json_live(url, headers, body, timeout, cancel):
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         holder.conn = conn
         conn.connect()
-        # Attach the socket so the abort thread can close it.
         try:
             holder.sock = conn.sock
         except AttributeError:
@@ -378,19 +314,9 @@ def _post_json_live(url, headers, body, timeout, cancel):
 
 
 def _post_json_abortable(url, headers, body, timeout, cancel):
-    """POST, but keep the socket reachable so a cancel event can close it.
-
-    When `cancel` is None, use the simple urllib path (no socket tracking).
-    When `cancel` is a threading.Event, run the request on a worker thread
-    and close the socket from the caller's thread the moment `cancel` fires.
-    The worker thread is abandoned once the socket is closed; http.client
-    will raise OSError from the read, which the worker catches and ignores.
-    """
     if cancel is None:
         return _post_json_urllib(url, headers, body, timeout)
 
-    # Use http.client directly so we can close the socket from here.
-    holder = {"cancel": cancel}
     box = {}
 
     def run():
@@ -398,22 +324,15 @@ def _post_json_abortable(url, headers, body, timeout, cancel):
             box["v"] = _post_json_live(url, headers, body, timeout, cancel)
         except Fail as e:
             box["fail"] = e
-        except BaseException as e:  # noqa: BLE001
+        except BaseException as e:
             box["e"] = e
 
     t = threading.Thread(target=run, daemon=True, name="llm-http")
     t.start()
 
-    # Wait until the worker finishes OR cancel fires.
     while t.is_alive():
         if cancel.is_set():
-            # Try to close the socket from this thread. If the worker is
-            # mid-connect, there's nothing to close yet; we'll re-check.
-            holder["cancel"] = cancel
-            _close_http_worker_socket(url, headers, body, timeout, cancel, box)
-            # Give the worker a moment to see the closed socket, then
-            # return a Fail without waiting for the full timeout.
-            for _ in range(40):  # up to 1 s
+            for _ in range(40):
                 if not t.is_alive():
                     break
                 time.sleep(0.025)
@@ -427,25 +346,7 @@ def _post_json_abortable(url, headers, body, timeout, cancel):
     return box["v"]
 
 
-def _close_http_worker_socket(url, headers, body, timeout, cancel, box):
-    """Best-effort close of whatever socket the worker opened.
-
-    This is called from the main thread when cancel fires. We don't have a
-    direct handle to the worker's socket, so we rely on the fact that the
-    only open socket on the process for this URL is the one the worker
-    opened. `socket.socket.close()` from a different thread is safe; the
-    blocking read in the worker then raises OSError.
-    """
-    # There's no portable way to enumerate sockets. As a fallback, we
-    # rely on the read timeout on the worker's socket to bound the wait,
-    # which is why we cap it at `timeout` anyway. The main thread returning
-    # `Fail("network", "stopped by user")` is what matters; the worker
-    # thread will eventually see the closed connection and exit.
-    pass
-
-
 def _post_json_urllib(url, headers, body, timeout):
-    """Fallback HTTP path (no cancel)."""
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -479,19 +380,6 @@ def _headers(p):
 
 
 def _attempt(cfg, p, model, base, cancel=None):
-    """One HTTP call to one key, with self-healing for the common
-    provider-shape failures (temperature rejected, tools rejected, empty
-    response).
-
-    Retry ladder (all on the SAME key, so quota isn't wasted):
-      1. normal call
-      2. if 400 param -> drop temperature, retry once
-      3. if 400 tools  -> drop tools, retry once
-      4. if empty reply (content == null and no tool_calls) ->
-         a. retry once with a "your reply was empty" nudge
-         b. retry once with tools dropped entirely
-      5. give up with a precise Fail
-    """
     drop_tools_next = False
     nudged = False
     stripped_tools = False
@@ -505,7 +393,6 @@ def _attempt(cfg, p, model, base, cancel=None):
         if not no_temp:
             body["temperature"] = cfg.temperature
 
-        # If we're on the "empty reply" recovery step, append a nudge.
         if nudged:
             msgs = list(body.get("messages") or [])
             msgs.append({
@@ -534,20 +421,13 @@ def _attempt(cfg, p, model, base, cancel=None):
                 if has_content or has_calls:
                     return _normalise(msg)
 
-                # --- empty reply: run the recovery ladder ---
-                # Some models return `content: null, tool_calls: null,
-                # finish_reason: "stop"` when they get confused. Nudge once.
                 if not nudged and not stripped_tools:
                     nudged = True
                     continue
-                # If still empty, try once with tools stripped entirely —
-                # some models choke on large tool schemas.
                 if not stripped_tools:
                     stripped_tools = True
                     nudged = False
                     continue
-                # If a finish_reason of "length" is present, the model
-                # ran out of tokens mid-thought; retrying won't help.
                 if finish == "length":
                     raise Fail("empty_param",
                                "model returned an empty reply (finish_reason=length); "
@@ -555,7 +435,6 @@ def _attempt(cfg, p, model, base, cancel=None):
                                "none", 0)
                 raise Fail("empty", "model returned an empty reply", "none", 0)
 
-            # 200 with error body (OpenRouter and some proxies do this).
             err = data.get("error") if isinstance(data, dict) else None
             code = err.get("code") if isinstance(err, dict) else None
             if isinstance(code, int):
@@ -568,8 +447,6 @@ def _attempt(cfg, p, model, base, cancel=None):
                 if (p.pool, model) not in NO_TEMP:
                     NO_TEMP.add((p.pool, model))
                     if len(NO_TEMP) > _NO_TEMP_MAX:
-                        # Evict the oldest entry. Set iteration order is
-                        # insertion order in CPython 3.7+.
                         oldest = next(iter(NO_TEMP))
                         NO_TEMP.discard(oldest)
             continue
@@ -614,7 +491,6 @@ def _stderr(text):
 
 
 def _progress_payload(pool, model, key_name, kind, remaining, log):
-    """Turn the recent log into a compact progress string the UI can show."""
     recent = []
     for e in log[-5:]:
         try:
@@ -627,11 +503,7 @@ def _progress_payload(pool, model, key_name, kind, remaining, log):
 
 
 def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
-    """Returns (assistant_message, route).
-
-    route = {provider, pool, model, fallback, reason}
-    on_progress(payload) is optional; the web server wires it to a UI event.
-    """
+    """Returns (assistant_message, route)."""
     pm = cfg.providers
     notify = notify or _stderr
     progress = on_progress or (lambda payload: None)
@@ -663,7 +535,6 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                     try:
                         msg = _attempt(cfg, p, model, base, cancel=cancel)
                     except Fail as f:
-                        # ---- self-healing: 404 model -> refresh list, retry once
                         if f.kind == "model" and pool not in attempted_model_refresh:
                             attempted_model_refresh.add(pool)
                             try:
@@ -684,8 +555,6 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                             except Exception:
                                 pass
 
-                        # ---- empty reply: retry once on the same key
-                        # with a corrective system message before cooling.
                         if f.kind in ("empty", "empty_param"):
                             try:
                                 healed_msgs = list(messages) + [{
@@ -711,7 +580,6 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                                 f = f2
 
                         if f.kind == "fatal":
-                            # Last chance: retry once with a minimal request
                             try:
                                 minimal = {"messages": messages}
                                 msg = _attempt(cfg, p, model, minimal, cancel=cancel)
@@ -740,7 +608,6 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                         notify(f"using fallback {p.name} / {model}")
                     return msg, route
 
-        # nothing worked in this pass
         waits = [e[5] for e in log if e[3] in pm.health.TRANSIENT and isinstance(e[5], (int, float)) and e[5] > 0]
         if waits and time.time() + min(waits) <= deadline:
             w = min(waits) + 0.5
@@ -815,7 +682,6 @@ def _cache_key_for(p):
 
 
 def _fetch_models_for(p, force=False):
-    """Shared /models fetch. Returns a sorted list of model ids."""
     key = _cache_key_for(p)
     hit = _MODEL_CACHE.get(key)
     if hit and not force and time.time() - hit[0] < 600:
@@ -840,10 +706,6 @@ def list_models(cfg, pool, force=False):
     ps = pm.providers_in(pool)
     if not ps:
         raise LLMError(f"no such pool: {pool}")
-    # Aggregate models across every key in the pool. When the same model
-    # is offered by multiple keys, it appears once. This is strictly
-    # better than caching the first key's list for the whole pool, which
-    # lied when two keys of the same pool had different access.
     seen = set()
     last = None
     ordered = [p for p in ps if not pm.health.state(p, p.model)] + ps
@@ -896,17 +758,9 @@ def _verify_cache_put(key, claims):
 
 
 def verify(cfg, messages, final_answer):
-    """Strict-mode verifier. Returns [] on any failure.
-
-    Scoped to the last 2 turns of history, not the whole transcript. The
-    verifier only needs enough context to check *this* answer's claims;
-    re-sending turn 40 to check turn 41 is a waste of tokens and makes
-    large conversations unaffordable under strict mode.
-    """
+    """Strict-mode verifier. Returns [] on any failure."""
     if not final_answer or len(final_answer) < 80:
         return []
-    # Take only the last 2 turns (a "turn" = one assistant message + its
-    # following tool results). If the history is short, take what's there.
     trimmed = []
     turn_starts = []
     for i, m in enumerate(messages):

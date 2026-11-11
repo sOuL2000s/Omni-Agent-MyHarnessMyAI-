@@ -25,15 +25,8 @@ def _open_db(cfg):
 
 @contextmanager
 def _get_db(cfg):
-    """Yield a connection and always close it.
-
-    Historically this returned a bare connection; sqlite3 kept a file
-    handle open until GC, which on Windows made ``tempfile.TemporaryDirectory
-    .cleanup()`` fail with ``PermissionError: [WinError 32]`` because
-    ``memory.db`` was still locked. Callers use ``with _get_db(cfg) as conn``.
-    """
+    """Yield a connection and always close it."""
     conn = _open_db(cfg)
-    # Initialize tables
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +42,6 @@ def _get_db(cfg):
             updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         )
     """)
-    # Migration from legacy memory.jsonl
     legacy_file = cfg.data_dir / "memory.jsonl"
     if legacy_file.exists():
         try:
@@ -76,8 +68,6 @@ def _get_db(cfg):
             conn.close()
         except Exception:
             pass
-            
-    return conn
 
 
 def _get_vector_db(cfg):
@@ -85,22 +75,17 @@ def _get_vector_db(cfg):
         return None
     db_path = cfg.data_dir / "lancedb"
     db = lancedb.connect(db_path)
-    
-    # We'll use a table named 'memories'
-    # Schema: vector (float32), text (str), timestamp (str)
     if "memories" not in db.table_names():
-        # Table will be created on first insert
         return db
     return db.open_table("memories")
 
 
 def _get_embeddings(cfg, texts):
     """Get embeddings using OpenAI-compatible API."""
-    # Use the same API key and base URL as the agent, but check for specific embedding model
     api_key = os.environ.get("AGENT_API_KEY", cfg.api_key)
     base_url = os.environ.get("AGENT_BASE_URL", cfg.base_url)
     model = os.environ.get("AGENT_EMBEDDING_MODEL", "text-embedding-3-small")
-    
+
     client = OpenAI(api_key=api_key, base_url=base_url)
     try:
         response = client.embeddings.create(input=texts, model=model)
@@ -110,15 +95,35 @@ def _get_embeddings(cfg, texts):
         return None
 
 
+def _normalise(text):
+    """Lowercase + collapse whitespace, for dedupe comparison."""
+    return " ".join((text or "").lower().split())
+
+
+def _recent_dupe(cfg, text, window=20):
+    """Return True if `text` (normalised) already exists in the last `window`
+    memories. Cheap local dedupe so auto-save doesn't pile up near-identical
+    entries."""
+    target = _normalise(text)
+    if not target:
+        return False
+    with _get_db(cfg) as conn:
+        rows = conn.execute(
+            "SELECT content FROM memories ORDER BY id DESC LIMIT ?", (window,)
+        ).fetchall()
+    return any(_normalise(r["content"]) == target for r in rows)
+
+
 @tool("memory_save", "Save a durable fact/preference/note for future sessions.",
       {"text": {"type": "string"}}, ["text"])
 def memory_save(cfg, text):
-    # 1. Save to SQLite (Source of Truth)
+    # Local dedupe: skip if an identical (normalised) entry was saved recently.
+    if _recent_dupe(cfg, text):
+        return "skipped (duplicate of a recent memory)"
     with _get_db(cfg) as conn:
         with conn:
             conn.execute("INSERT INTO memories (content) VALUES (?)", (text,))
-    
-    # 2. Save to Vector DB (for semantic search)
+
     if HAS_VECTOR:
         try:
             embeddings = _get_embeddings(cfg, [text])
@@ -137,7 +142,7 @@ def memory_save(cfg, text):
                     db.create_table(table_name, data=data)
         except Exception as e:
             print(f"Vector save failed: {e}")
-            
+
     return "saved"
 
 
@@ -153,8 +158,7 @@ def memory_search(cfg, query=""):
         if not rows:
             return "(no memory yet)"
         return "\n".join(f"[{r['timestamp']}] {r['content']}" for r in reversed(rows))
-    
-    # Try Vector Search first if available
+
     if HAS_VECTOR:
         try:
             embedding = _get_embeddings(cfg, [query])
@@ -162,16 +166,13 @@ def memory_search(cfg, query=""):
                 db = lancedb.connect(cfg.data_dir / "lancedb")
                 if "memories" in db.table_names():
                     table = db.open_table("memories")
-                    # Search for top 20 similar
                     results = table.search(embedding[0]).limit(20).to_list()
                     if results:
-                        # Sort by timestamp or just return as is (LanceDB returns by similarity)
                         lines = [f"[{r['timestamp']}] {r['text']}" for r in results]
                         return "\n".join(lines)
         except Exception as e:
             print(f"Vector search failed: {e}")
 
-    # Fallback to SQLite keyword search
     with _get_db(cfg) as conn:
         words = query.lower().split()
         placeholders = " AND content LIKE ?" * len(words)
@@ -184,7 +185,7 @@ def memory_search(cfg, query=""):
 
     if not rows:
         return "no matches"
-    
+
     lines = [f"[{r['timestamp']}] {r['content']}" for r in rows]
     return "\n".join(lines)
 
@@ -221,7 +222,7 @@ def memory_list_facts(cfg):
 
 
 @tool("memory_delete",
-      "Delete a specific memory by its timestamp, id, or content substring. "
+      "Delete a specific memory by its numeric id, timestamp, or content substring. "
       "If multiple matches are found, it returns the IDs for clarification.",
       {"query": {"type": "string"}}, ["query"])
 def memory_delete(cfg, query):
@@ -230,24 +231,31 @@ def memory_delete(cfg, query):
         return "No query provided."
 
     with _get_db(cfg) as conn:
-        # Exact content match first (what the UI sends), then LIKE fallback.
-        rows = conn.execute(
-            "SELECT id, timestamp, content FROM memories WHERE content = ?",
-            (q,)
-        ).fetchall()
-        if not rows:
+        # Numeric id: delete that exact row.
+        row = None
+        if q.isdigit():
+            row = conn.execute(
+                "SELECT id, timestamp, content FROM memories WHERE id = ?", (int(q),)
+            ).fetchone()
+        if row is None:
+            # Exact content match (what the UI sends), then LIKE fallback.
             rows = conn.execute(
-                "SELECT id, timestamp, content FROM memories WHERE content LIKE ? OR timestamp LIKE ?",
-                (f"%{q}%", f"%{q}%")
+                "SELECT id, timestamp, content FROM memories WHERE content = ?",
+                (q,)
             ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    "SELECT id, timestamp, content FROM memories WHERE content LIKE ? OR timestamp LIKE ?",
+                    (f"%{q}%", f"%{q}%")
+                ).fetchall()
+            if not rows:
+                return f"No memories found matching '{q}'."
+            if len(rows) > 1:
+                lines = [f"ID {r['id']} [{r['timestamp']}]: {r['content']}" for r in rows]
+                return "Multiple matches found. Please specify the ID to delete:\n" + "\n".join(lines)
+            row = rows[0]
 
-        if not rows:
-            return f"No memories found matching '{q}'."
-        if len(rows) > 1:
-            lines = [f"ID {r['id']} [{r['timestamp']}]: {r['content']}" for r in rows]
-            return "Multiple matches found. Please specify the ID to delete:\n" + "\n".join(lines)
-
-        target_id, target_content = rows[0]['id'], rows[0]['content']
+        target_id, target_content = row["id"], row["content"]
         with conn:
             conn.execute("DELETE FROM memories WHERE id = ?", (target_id,))
 
@@ -260,7 +268,7 @@ def memory_delete(cfg, query):
         except Exception as e:
             print(f"Vector delete failed: {e}")
 
-    return f"Deleted memory: [{rows[0]['timestamp']}] {target_content}"
+    return f"Deleted memory: [{row['timestamp']}] {target_content}"
 
 
 @tool("memory_delete_fact", "Delete a specific structured fact by its key.",
@@ -276,17 +284,11 @@ def memory_delete_fact(cfg, key):
 
 @tool("memory_clear_all", "WIPE ALL MEMORY (both facts and events). Use with extreme caution.", {})
 def memory_clear_all(cfg):
-    # 1. Clear SQLite
     with _get_db(cfg) as conn:
         with conn:
             conn.execute("DELETE FROM memories")
             conn.execute("DELETE FROM facts")
-    
-    # 2. Clear Vector DB
-    # Use drop_table rather than shutil.rmtree: LanceDB may hold open file
-    # handles (Windows locks them), and rmtree leaves ghost rows behind if
-    # it fails silently. drop_table releases the handles and clears the
-    # table in one call.
+
     if HAS_VECTOR:
         try:
             db = lancedb.connect(cfg.data_dir / "lancedb")
@@ -294,7 +296,7 @@ def memory_clear_all(cfg):
                 db.drop_table("memories")
         except Exception as e:
             print(f"Vector clear failed: {e}")
-            
+
     return "All memories and facts have been wiped."
 
 

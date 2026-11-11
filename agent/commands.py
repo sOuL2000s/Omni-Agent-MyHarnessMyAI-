@@ -12,15 +12,17 @@ from . import llm
 from .providers import PRESETS, STRATEGIES, detect_provider
 
 HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini". The model is chosen per pool.
-  /providers                         overview: one line per pool (model, fallbacks, ready/cooling/invalid keys)
+  /providers                         overview: one line per pool (model, chain, ready/cooling/invalid keys)
   /keys [pool]                       every key with its health
   /add <name> <key> [model] [url]    add/replace one key. Presets: """ + ", ".join(PRESETS) + """
-  /addkeys <pool> <key> <key> ...    add many keys at once (or  /addkeys <pool> @keys.txt  = one key per line)
+  /addkeys <pool> <key> <key> ...    add many keys at once (or  /addkeys <pool> @keys.txt)
   /key <name> [new_key]              change one key (hidden prompt if omitted)
   /model <model>                     model for the primary pool (all its keys)   |   /model <pool> <model>
   /models [pool] [filter]            list the model ids the service offers
-  /fallback <pool> m1,m2 | clear     models to try when the chosen one is exhausted (quota is per model!)
+  /fallback <pool> m1,m2 | clear     models to try when the chosen one is exhausted (manual mode)
   /strategy round_robin|failover     round_robin spreads calls over the keys; failover uses them in order
+  /modelmode [auto|manual]           auto = rank the discovered model list per request and walk it
+  /preference [m1,m2,...|clear]      ordered model preference for auto mode
   /use <pool|key>                    make it the primary     /order a,b,c   pool priority
   /remove <key>   /removepool <pool>
   /test [key|pool|all]               real test call(s)      /revive   clear all cooldowns
@@ -29,7 +31,12 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /autodetect <key>                  guess the provider from the key format
   /workspace [path]                  show or change the agent's workspace (relative or absolute)
   /bgauto on|off                     when on, every run_shell call runs in the background
+  /auto [on|off]                     per-session auto-approve (skips Allow/Deny prompts)
   /killall                           stop every running background shell (dev servers, watchers)
+  /memory [list|delete <id|text>|clear|facts|deletefact <key>|clearfacts]   manage long-term memory
+  /files                             list files in the workspace
+  /skills [list|read <name>|delete <name>|save <name>]                       manage saved skills
+  /mcp [list|add|remove <name>|start|stop|restart <name>]                    manage MCP servers
   /config [key|key=value]            show every runtime setting, or set one (written to .env)
   /reset  /exit  /help"""
 
@@ -37,12 +44,13 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
 def _fmt_pool(pm, e):
     c = e["counts"]
     fb = ("  fallbacks: " + ", ".join(e["fallbacks"])) if e["fallbacks"] else ""
-    return (f"{e['pool']:<12} model={e['model']}{fb}\n"
+    chain = e.get("chain") or []
+    ch = ("  auto-chain: " + " > ".join(chain[:5])) if e.get("model_mode") == "auto" and len(chain) > 1 else ""
+    return (f"{e['pool']:<12} model={e['model']}{fb}{ch}\n"
             f"{'':<12} keys: {len(e['keys'])} total = {c['ready']} ready, {c['cooling']} cooling, {c['invalid']} invalid   {e['base_url']}")
 
 
 def _fmt_config(cfg):
-    """Return a readable dump of every non-secret config field."""
     rows = [
         ("AGENT_BASE_URL", cfg.base_url),
         ("AGENT_MODEL", cfg.model),
@@ -51,6 +59,8 @@ def _fmt_config(cfg):
         ("AGENT_AUTO_APPROVE", "1" if cfg.auto_approve else "0"),
         ("AGENT_STRICT", "1" if cfg.strict else "0"),
         ("AGENT_SHELL_BG", "1" if cfg.shell_bg else "0"),
+        ("AGENT_MODEL_MODE", cfg.providers.model_mode if cfg.providers else "?"),
+        ("AGENT_MODEL_PREFERENCE", ",".join(cfg.providers.settings.get("model_preference") or []) or "(none)"),
         ("AGENT_MAX_TURNS", str(cfg.max_turns)),
         ("AGENT_MAX_TOOL_CALLS", str(getattr(cfg, "max_total_tool_calls", 200))),
         ("AGENT_TEMPERATURE", str(cfg.temperature)),
@@ -59,14 +69,11 @@ def _fmt_config(cfg):
         ("AGENT_MAX_WAIT", str(cfg.providers.max_wait) if cfg.providers else "?"),
         ("AGENT_API_KEY", "(hidden)" if cfg.api_key else "(empty)"),
     ]
-    return "\n".join(f"  {k:<22} = {v}" for k, v in rows)
+    return "\n".join(f"  {k:<24} = {v}" for k, v in rows)
 
 
 def _write_env_var(key, value):
-    """Write or update KEY=value in .env, preserving comments and order.
-
-    Creates .env if it doesn't exist. Returns the path written.
-    """
+    """Write or update KEY=value in .env, preserving comments and order."""
     from .config import ROOT
     env_path = ROOT / ".env"
     line = f"{key}={value}\n"
@@ -108,7 +115,9 @@ def handle(cfg, line):
             if not s:
                 return "No keys yet. Try:  /add openrouter YOUR_KEY   or   /addkeys gemini KEY1 KEY2 ..."
             rows = [("* " if i == 0 else "  ") + _fmt_pool(pm, e) for i, e in enumerate(s)]
-            return "\n".join(rows) + f"\n(* = primary pool; strategy={pm.strategy}; next pools are used when it is exhausted)"
+            return ("\n".join(rows)
+                    + f"\n(* = primary pool; strategy={pm.strategy}; model_mode={pm.model_mode}; "
+                      f"next pools are used when it is exhausted)")
         if c == "keys":
             pool = pm.resolve_pool(args[0]) if args else None
             rows = []
@@ -183,6 +192,37 @@ def handle(cfg, line):
                 return f"strategy = {pm.strategy}   (options: {', '.join(STRATEGIES)})"
             pm.set_strategy(args[0])
             return f"strategy = {pm.strategy}"
+        if c == "modelmode":
+            if not args:
+                return (f"model_mode = {pm.model_mode}\n"
+                        f"  auto = rank the discovered model list per request and walk it\n"
+                        f"  manual = pool default + explicit /fallback list")
+            pm.set_model_mode(args[0])
+            cfg.model_mode = pm.model_mode
+            cfg.providers.settings["model_mode"] = pm.model_mode
+            try:
+                _write_env_var("AGENT_MODEL_MODE", pm.model_mode)
+            except Exception:
+                pass
+            return f"model_mode = {pm.model_mode} (saved to .env)"
+        if c == "preference":
+            if not args:
+                pref = pm.settings.get("model_preference") or []
+                return "preference: " + (", ".join(pref) if pref else "(none)")
+            if args[0].lower() == "clear":
+                pm.set_model_preference([])
+                try:
+                    _write_env_var("AGENT_MODEL_PREFERENCE", "")
+                except Exception:
+                    pass
+                return "preference cleared"
+            models = " ".join(args).replace(",", " ").split()
+            kept = pm.set_model_preference(models)
+            try:
+                _write_env_var("AGENT_MODEL_PREFERENCE", ",".join(kept))
+            except Exception:
+                pass
+            return "preference: " + ", ".join(kept)
         if c == "use":
             pm.use(args[0])
             return f"{args[0]} is now primary"
@@ -256,8 +296,6 @@ def handle(cfg, line):
                 return f"error: cannot resolve {raw}"
             if not p.is_dir():
                 return f"error: not a directory: {p}"
-            # Same guard as config.load(): refuse a filesystem root, because
-            # that would silently disable the outside-workspace approval.
             if p == p.parent:
                 return f"error: refusing a filesystem root ({p}) as the workspace"
             cfg.workspace = p
@@ -270,7 +308,6 @@ def handle(cfg, line):
                 return f"background shell executions = {_shell.default_background()}"
             on = args[0].lower() in ("on", "1", "true", "yes")
             _shell.set_default_background(on)
-            # Also reflect on cfg and persist to .env so it survives restart.
             cfg.shell_bg = on
             try:
                 _write_env_var("AGENT_SHELL_BG", "1" if on else "0")
@@ -278,7 +315,31 @@ def handle(cfg, line):
                 pass
             return f"background shell executions = {on} (saved to .env)"
 
-        # ---- config --------------------------------------------------------
+        # ---- per-session auto-approve (terminal) --------------------------
+        if c == "auto":
+            if not args:
+                return f"auto-approve = {cfg.auto_approve}  (this process)"
+            on = args[0].lower() in ("on", "1", "true", "yes")
+            cfg.auto_approve = on
+            return f"auto-approve = {on}  (this process; use /config AGENT_AUTO_APPROVE=... to persist)"
+
+        # ---- memory -------------------------------------------------------
+        if c == "memory":
+            return _memory_cmd(cfg, args)
+
+        # ---- files --------------------------------------------------------
+        if c == "files":
+            return _files_cmd(cfg, args)
+
+        # ---- skills -------------------------------------------------------
+        if c == "skills":
+            return _skills_cmd(cfg, args)
+
+        # ---- MCP ----------------------------------------------------------
+        if c == "mcp":
+            return _mcp_cmd(cfg, args)
+
+        # ---- config -------------------------------------------------------
         if c == "config":
             if not args:
                 return _fmt_config(cfg)
@@ -297,7 +358,6 @@ def handle(cfg, line):
                 _write_env_var(key, value)
             except Exception as e:
                 return f"error: could not write .env: {e}"
-            # Apply the live in-process value where possible.
             applied = ""
             try:
                 if key == "AGENT_AUTO_APPROVE":
@@ -312,6 +372,14 @@ def handle(cfg, line):
                     _shell.set_default_background(on)
                     cfg.shell_bg = on
                     applied = f" (shell_bg = {on})"
+                elif key == "AGENT_MODEL_MODE":
+                    pm.set_model_mode(value)
+                    cfg.model_mode = pm.model_mode
+                    applied = f" (model_mode = {pm.model_mode})"
+                elif key == "AGENT_MODEL_PREFERENCE":
+                    kept = pm.set_model_preference(value.replace(",", " ").split())
+                    cfg.model_preference = kept
+                    applied = f" (preference = {', '.join(kept) or '(none)'})"
                 elif key == "AGENT_MAX_TURNS":
                     cfg.max_turns = int(value)
                     applied = f" (max_turns = {cfg.max_turns})"
@@ -341,12 +409,124 @@ def handle(cfg, line):
         return f"error: {e}"
 
 
-def test(cfg, target=None):
-    """Real ping(s). target: key name, pool name, 'all' or None (one key of the primary pool).
+# ---------------------------------------------------------------- sub-commands
 
-    When target == "all" (or a pool with many keys), the probes run in
-    parallel (8 workers) so 30 keys don't take 60 seconds.
-    """
+def _memory_cmd(cfg, args):
+    from .tools import memory as _mem
+    sub = (args[0].lower() if args else "list")
+    if sub in ("list", "ls"):
+        with _mem._get_db(cfg) as conn:
+            mems = conn.execute(
+                "SELECT id, timestamp, content FROM memories ORDER BY id DESC LIMIT 200"
+            ).fetchall()
+            facts = conn.execute(
+                "SELECT key, value FROM facts ORDER BY key ASC"
+            ).fetchall()
+        lines = []
+        if mems:
+            lines.append(f"Memories ({len(mems)}):")
+            for r in mems:
+                lines.append(f"  [{r['id']}] {r['timestamp']}  {r['content'][:120]}")
+        else:
+            lines.append("No memories stored.")
+        if facts:
+            lines.append(f"Facts ({len(facts)}):")
+            for r in facts:
+                lines.append(f"  {r['key']}: {r['value']}")
+        return "\n".join(lines)
+    if sub == "delete" and len(args) >= 2:
+        q = " ".join(args[1:]).strip()
+        return _mem.memory_delete(cfg, q)
+    if sub == "facts":
+        return _mem.memory_list_facts(cfg)
+    if sub == "deletefact" and len(args) >= 2:
+        return _mem.memory_delete_fact(cfg, " ".join(args[1:]).strip())
+    if sub in ("clear", "clearfacts"):
+        if sub == "clearfacts":
+            return _mem.memory_clear_all(cfg)  # clears facts + events
+        return _mem.memory_clear_all(cfg)
+    return ("usage: /memory list | delete <id|text> | facts | deletefact <key> | clear\n"
+            "  Tip: /memory list shows numeric ids; /memory delete <id> removes one entry.")
+
+
+def _files_cmd(cfg, args):
+    ws = cfg.workspace
+    out = []
+    try:
+        for p in sorted(ws.rglob("*")):
+            rel = p.relative_to(ws)
+            if p.is_file() and not any(x.startswith(".") or x in ("__pycache__", "node_modules")
+                                       for x in rel.parts):
+                out.append(f"  {rel.as_posix()}  ({p.stat().st_size} B)")
+            if len(out) >= 500:
+                out.append("  …(truncated at 500 files)")
+                break
+    except Exception as e:
+        return f"error: {e}"
+    return "\n".join(out) or "(workspace is empty)"
+
+
+def _skills_cmd(cfg, args):
+    from .tools import skills as _sk
+    sub = (args[0].lower() if args else "list")
+    if sub in ("list", "ls"):
+        rows = _sk._list_files(cfg)
+        if not rows:
+            return "No skills saved."
+        return "\n".join(f"  {r['name']} — {r['title']}" + (f": {r['summary']}" if r['summary'] else "")
+                         for r in rows)
+    if sub == "read" and len(args) >= 2:
+        return _sk.skill_read(cfg, args[1])
+    if sub == "delete" and len(args) >= 2:
+        return _sk.skill_delete(cfg, args[1])
+    if sub == "save":
+        return "Use the web UI's Skills tab, or the model can call skill_save. (Body text is long for the CLI.)"
+    return "usage: /skills list | read <name> | delete <name>"
+
+
+def _mcp_cmd(cfg, args):
+    from . import mcp_admin
+    reg = getattr(cfg, "mcp", None)
+    sub = (args[0].lower() if args else "list")
+    if sub in ("list", "ls"):
+        if not reg or not reg.servers:
+            return "No MCP servers configured."
+        lines = []
+        for name, srv in reg.servers.items():
+            status = "running" if srv.ready else "stopped"
+            lines.append(f"  {name}: {status}, {len(srv.tools or [])} tool(s)"
+                         + (f" — {srv.last_error}" if srv.last_error else ""))
+        return "\n".join(lines)
+    if sub == "start" and len(args) >= 2:
+        try:
+            r = mcp_admin.start_server(cfg, reg, args[1])
+            return f"{r['name']}: {r['tools']} tools"
+        except Exception as e:
+            return f"error: {e}"
+    if sub == "stop" and len(args) >= 2:
+        mcp_admin.stop_server(cfg, reg, args[1])
+        return f"stopped {args[1]}"
+    if sub == "restart" and len(args) >= 2:
+        try:
+            mcp_admin.stop_server(cfg, reg, args[1])
+            r = mcp_admin.start_server(cfg, reg, args[1])
+            return f"{r['name']}: {r['tools']} tools"
+        except Exception as e:
+            return f"error: {e}"
+    if sub == "remove" and len(args) >= 2:
+        try:
+            mcp_admin.delete_server(cfg, reg, args[1])
+            return f"removed {args[1]}"
+        except Exception as e:
+            return f"error: {e}"
+    if sub == "add":
+        return ("Use the web UI's MCP tab (or the model can call admin_add_mcp_server). "
+                "Adding a server needs command/args/url/env/headers, which is awkward in one line.")
+    return "usage: /mcp list | start <name> | stop <name> | restart <name> | remove <name>"
+
+
+def test(cfg, target=None):
+    """Real ping(s). target: key name, pool name, 'all' or None."""
     pm = cfg.providers
     if not pm.items:
         return "no keys"
@@ -371,7 +551,6 @@ def test(cfg, target=None):
                        else f"{p.name} FAILED [{kind}]: {text[:200]}")
         return "\n".join(out)
 
-    # Parallel probes: 8 at a time so we don't hammer the provider.
     results = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {ex.submit(llm.probe, cfg, p): p for p in targets}

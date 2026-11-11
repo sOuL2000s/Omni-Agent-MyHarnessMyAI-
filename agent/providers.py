@@ -4,14 +4,23 @@
 Design notes:
   * score-based key selection (health-weighted, not blind round-robin),
   * last_error_at tracking so recently-failed keys deprioritize briefly,
-  * `Health.save()` is debounced so a burst of key failures doesn't write
-    `state.json` dozens of times per second,
-  * `refresh_models()` only auto-picks a default when the key has no model yet
-    (so a flaky /models response can't silently change the user's choice),
+  * `Health.save()` is debounced,
+  * `refresh_models()` only auto-picks a default when the key has no model yet,
   * `add()` is async: the `/models` fetch happens on a background thread,
-    so the terminal `/add` command doesn't block for 20 s,
   * `add_keys()` never silently renames a user-chosen pool,
   * `summary()` carries `last_used_at` for the UI's "last used" line.
+
+Auto model mode
+---------------
+When `settings["model_mode"] == "auto"`, `model_chain(pool)` returns a
+ranked list built from the discovered model list instead of the static
+[default, *fallbacks]. Ranking order:
+  1. models listed in `settings["model_preference"]` (in that order),
+  2. PREFERRED_MODEL_HINTS for the pool,
+  3. the pool's current default model,
+  4. remaining discovered models, filtered to skip embedding/image/etc.
+The chain is capped at AUTO_CHAIN_MAX entries so a huge list doesn't
+turn every request into a long walk.
 """
 import json
 import os
@@ -33,7 +42,12 @@ PRESETS = {
 }
 
 STRATEGIES = ("round_robin", "failover")
-DEFAULT_SETTINGS = {"strategy": "round_robin", "fallbacks": {}, "max_wait": 90}
+DEFAULT_SETTINGS = {
+    "strategy": "round_robin", "fallbacks": {}, "max_wait": 90,
+    "model_mode": "manual", "model_preference": [],
+}
+
+AUTO_CHAIN_MAX = 8
 
 PREFERRED_MODEL_HINTS = {
     "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
@@ -48,19 +62,19 @@ PREFERRED_MODEL_HINTS = {
     "omniroute": ["auto"],
 }
 
-# Order matters: the more specific pattern must come first. The
-# `sk-[a-f0-9]{32}` DeepSeek pattern used to sit *after* the general
-# `sk-[A-Za-z0-9]{20,}` pattern, so a pure-hex key matched "openai"
-# first. Moving it up fixes that.
+# Order matters: the more specific pattern must come first.
 KEY_PATTERNS = [
     (r"^AIza[0-9A-Za-z_\-]{30,}$", "gemini"),
     (r"^sk-or-v1-[0-9a-f]{40,}$", "openrouter"),
     (r"^sk-ant-[A-Za-z0-9_\-]{40,}$", "anthropic"),
     (r"^sk-proj-[A-Za-z0-9_\-]{30,}$", "openai"),
-    (r"^sk-[a-f0-9]{32}$", "deepseek"),        # <- moved up
+    (r"^sk-[a-f0-9]{32}$", "deepseek"),
     (r"^sk-[A-Za-z0-9]{20,}$", "openai"),
     (r"^gsk_[A-Za-z0-9]{40,}$", "groq"),
 ]
+
+# Substrings that mark a model as not useful for chat.
+_NON_CHAT = re.compile(r"embed|aqa|imagen|veo|tts|whisper|moderation|dall-e|image-gen", re.I)
 
 
 def detect_provider(key: str):
@@ -124,8 +138,8 @@ class Provider:
 
 class Health:
     TRANSIENT = ("rate", "server", "network")
-    EXPIRE_INTERVAL = 5.0       # seconds between automatic prune passes
-    SAVE_DEBOUNCE = 2.0         # seconds to batch writes to state.json
+    EXPIRE_INTERVAL = 5.0
+    SAVE_DEBOUNCE = 2.0
 
     def __init__(self, path=None):
         self.path = path
@@ -165,8 +179,6 @@ class Health:
                 pass
 
     def save(self, force=False):
-        """Debounced save. Writes immediately if `force=True` or if the last
-        write was more than SAVE_DEBOUNCE seconds ago."""
         if not self.path:
             return
         now = time.time()
@@ -176,7 +188,6 @@ class Health:
                 self._save_now()
 
     def flush(self):
-        """Force a synchronous write. Call on shutdown."""
         self._save_now()
 
     def state(self, p, model):
@@ -231,7 +242,6 @@ class Health:
             self.save(force=True)
 
     def snapshot(self):
-        """Deep-ish copy of the stats table for consistent scoring."""
         with self.lock:
             return {k: dict(v) for k, v in self.stats.items()}
 
@@ -257,7 +267,7 @@ class Manager:
         if not self.items and default and (default.api_key or default.base_url):
             self.items = [default]
         self.settings_path = settings_path
-        self.settings = dict(DEFAULT_SETTINGS, fallbacks={})
+        self.settings = dict(DEFAULT_SETTINGS, fallbacks={}, model_preference=[])
         if settings_path:
             s, _ = read_json(settings_path, {})
             if isinstance(s, dict):
@@ -318,8 +328,6 @@ class Manager:
         return list(self.settings["fallbacks"].get(pool, []))
 
     def set_fallbacks(self, pool, models):
-        """Returns (saved, dropped). `dropped` lists the entries that were
-        silently ignored because they were blank or equal to the main model."""
         pool = self.resolve_pool(pool)
         main = self.model_of(pool)
         kept, dropped = [], []
@@ -339,7 +347,75 @@ class Manager:
         self.save_settings()
         return kept, dropped
 
+    # ---- model mode
+    @property
+    def model_mode(self):
+        return (self.settings.get("model_mode") or "manual").lower()
+
+    def set_model_mode(self, mode):
+        mode = (mode or "").strip().lower()
+        if mode not in ("manual", "auto"):
+            raise ValueError("model mode must be 'manual' or 'auto'")
+        self.settings["model_mode"] = mode
+        self.save_settings()
+
+    def set_model_preference(self, models):
+        cleaned = [m.strip() for m in (models or []) if m and m.strip()]
+        self.settings["model_preference"] = cleaned
+        self.save_settings()
+        return cleaned
+
+    def _auto_chain(self, pool):
+        """Ranked model list for auto mode."""
+        default = self.model_of(pool)
+        discovered = []
+        for p in self.providers_in(pool):
+            for m in (p.models or []):
+                if not _NON_CHAT.search(m) and m not in discovered:
+                    discovered.append(m)
+        if not discovered:
+            return ([default] + self.fallbacks(pool)) if default else self.fallbacks(pool)
+
+        ordered = []
+        def push(m):
+            if m and m not in ordered:
+                ordered.append(m)
+
+        # 1. explicit user preference
+        for m in self.settings.get("model_preference") or []:
+            # allow a bare name to match a discovered full id
+            if m in discovered:
+                push(m)
+            else:
+                for d in discovered:
+                    if d == m or d.endswith("/" + m) or m in d:
+                        push(d)
+                        break
+        # 2. per-pool hints
+        for hint in PREFERRED_MODEL_HINTS.get(pool, []):
+            for d in discovered:
+                if d == hint or d.endswith("/" + hint) or hint in d:
+                    push(d)
+        # 3. current default
+        if default in discovered:
+            push(default)
+        elif default:
+            for d in discovered:
+                if d == default or d.endswith("/" + default) or default in d:
+                    push(d)
+        # 4. the rest, in provider order
+        for d in discovered:
+            push(d)
+        # 5. static fallbacks as a last resort
+        for m in self.fallbacks(pool):
+            push(m)
+        return ordered[:AUTO_CHAIN_MAX]
+
     def model_chain(self, pool):
+        if self.model_mode == "auto":
+            chain = self._auto_chain(pool)
+            if chain:
+                return chain
         return [self.model_of(pool)] + self.fallbacks(pool)
 
     # ---- strategy
@@ -357,9 +433,8 @@ class Manager:
     def max_wait(self):
         return int(self.settings.get("max_wait", 90))
 
-    # ---- smart key picking -------------------------------------------------
+    # ---- smart key picking
     def _score(self, p, now=None, stats=None):
-        """Higher = better. Health-weighted with a mild recency penalty."""
         now = now or time.time()
         if stats is None:
             stats = self.health.snapshot().get(p.name, {})
@@ -368,10 +443,8 @@ class Manager:
         ok = stats.get("ok", 0)
         fail = stats.get("fail", 0)
         total = ok + fail
-        # Bayesian success rate with 1 ok / 1 fail priors so new keys aren't frozen out.
         rate = (ok + 1) / (total + 2)
         recent_fail = 1.0 if (now - stats.get("last_error_at", 0)) < 60 else 0.0
-        # small penalty for lifetime fail count, capped so it never dominates
         fail_pen = min(0.3, 0.02 * fail)
         return rate - 0.25 * recent_fail - fail_pen
 
@@ -382,10 +455,8 @@ class Manager:
                 return ps
             now = time.time()
             stats = self.health.snapshot()
-            # Sort once by score (failover = strictly best-first).
             ps.sort(key=lambda p: self._score(p, now, stats), reverse=True)
             if self.strategy == "round_robin" and len(ps) > 1:
-                # Rotate the top 3 to spread quota across them.
                 top, rest = ps[:3], ps[3:]
                 names = [p.name for p in top]
                 last = self.rr.get(pool)
@@ -398,14 +469,11 @@ class Manager:
     def note_used(self, pool, name):
         with self.lock:
             self.rr[pool] = name
-            # Record last-used for the UI's "used 2m ago" line.
             try:
                 p = self.get(name)
             except ValueError:
                 return
             p.last_used_at = time.time()
-            # Don't save() here — the health save will pick it up on the
-            # next debounce tick, and saving per-request would hammer disk.
 
     def reset_rr(self):
         with self.lock:
@@ -435,13 +503,10 @@ class Manager:
                 self.items.append(new)
             self.health.clear(name=name)
             self.save()
-        # Async refresh, like add_keys — the terminal `/add` must not block.
         threading.Thread(target=self._safe_refresh, args=(name,), daemon=True).start()
 
     def add_keys(self, pool, keys, base_url=None, model=None):
         pool = pool.strip()
-        # Only auto-detect a different pool if the user didn't give us a
-        # real name. Otherwise honour the name they typed.
         if keys and pool in ("", "default", "new", "custom"):
             det = detect_provider(keys[0])
             if det:
@@ -497,8 +562,6 @@ class Manager:
         with self.lock:
             p.models = ids
             p.models_fetched = time.time()
-            # Inherit the pool's existing model when this key has none.
-            # Only auto-pick a *hint* when the pool itself has no model.
             if ids and not p.model:
                 existing_pool_model = self.model_of(p.pool)
                 if existing_pool_model:
@@ -612,6 +675,8 @@ class Manager:
                     "score": round(self._score(p, now, stats_all), 3),
                 })
             out.append({"pool": pool, "model": model, "fallbacks": self.fallbacks(pool),
+                        "chain": self.model_chain(pool),
+                        "model_mode": self.model_mode,
                         "base_url": ps[0].base_url, "counts": counts, "keys": keys})
         return out
 

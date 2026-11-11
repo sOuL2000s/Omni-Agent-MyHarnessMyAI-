@@ -25,8 +25,7 @@ def _load_env():
       3. The code default in load().
 
     A line that just says `AGENT_AUTO_APPROVE=` (no value) is treated as
-    "not set" so the code default applies — this is the difference from
-    the old version, which treated it as the empty string.
+    "not set" so the code default applies.
     """
     for p in (ROOT / ".env", Path.cwd() / ".env"):
         if not p.exists():
@@ -43,7 +42,6 @@ def _load_env():
             k = k.strip()
             v = v.strip().strip('"').strip("'")
             if not k or not v:
-                # empty value -> ignore so the code default wins
                 continue
             os.environ.setdefault(k, v)
 
@@ -66,9 +64,14 @@ class Config:
     mcp: object = None
     # Runtime mode flags (see §6.2 / §7.3 in the README).
     shell_bg: bool = False
-    # New: hard cap on total tool calls per task, so a runaway loop on a
-    # cheap/fast model can't burn 500 calls before max_turns trips.
+    # Hard cap on total tool calls per task.
     max_total_tool_calls: int = 200
+    # Model selection mode: "manual" (pool default + explicit fallbacks)
+    # or "auto" (rank the discovered model list per request and walk it).
+    # Opt-in via AGENT_MODEL_MODE=auto.
+    model_mode: str = "manual"
+    # Optional ordered preference list for auto mode (comma-separated).
+    model_preference: list = None
 
 
 def _default_workspace() -> Path:
@@ -87,16 +90,6 @@ def _is_fs_root(p: Path) -> bool:
     return rp == rp.parent
 
 
-def _is_ancestor_of(a: Path, b: Path) -> bool:
-    """True if `a` is `b` or a parent of `b` (both resolved)."""
-    try:
-        a = a.resolve()
-        b = b.resolve()
-    except OSError:
-        pass
-    return a == b or a in b.parents
-
-
 def load() -> Config:
     _load_env()
     g = os.environ.get
@@ -105,9 +98,16 @@ def load() -> Config:
     data = ROOT / "data"
     data.mkdir(exist_ok=True)
     try:
-        os.chmod(data, 0o700)  # owner-only on Unix; no-op on Windows
+        os.chmod(data, 0o700)
     except OSError:
         pass
+
+    pref_raw = g("AGENT_MODEL_PREFERENCE", "").strip()
+    preference = [x.strip() for x in re.split(r"[,\s]+", pref_raw) if x.strip()] if pref_raw else None
+
+    mode = (g("AGENT_MODEL_MODE", "manual") or "manual").strip().lower()
+    if mode not in ("manual", "auto"):
+        mode = "manual"
 
     cfg = Config(
         base_url=g("AGENT_BASE_URL", "http://localhost:20128/v1").rstrip("/"),
@@ -115,10 +115,6 @@ def load() -> Config:
         model=g("AGENT_MODEL", "auto"),
         workspace=ws,
         allow_outside=g("AGENT_ALLOW_OUTSIDE", "1") == "1",
-        # OFF by default — matches .env.example and README §11.2. Set
-        # AGENT_AUTO_APPROVE=1 in .env to skip all Allow/Deny prompts.
-        # The web UI shows a persistent red banner when it is active, and
-        # the header toggle turns it off for a single session.
         auto_approve=_env_bool("AGENT_AUTO_APPROVE", default=False),
         max_turns=int(g("AGENT_MAX_TURNS", "60")),
         temperature=float(g("AGENT_TEMPERATURE", "0.2")),
@@ -128,6 +124,8 @@ def load() -> Config:
         home=Path.home().resolve(),
         shell_bg=_env_bool("AGENT_SHELL_BG", default=False),
         max_total_tool_calls=int(g("AGENT_MAX_TOOL_CALLS", "200")),
+        model_mode=mode,
+        model_preference=preference,
     )
 
     try:
@@ -161,6 +159,10 @@ def load() -> Config:
         cfg.providers.settings["max_wait"] = int(g("AGENT_MAX_WAIT"))
     if g("AGENT_STRATEGY") in ("round_robin", "failover"):
         cfg.providers.settings["strategy"] = g("AGENT_STRATEGY")
+    # Propagate the auto-mode flag to the manager so model_chain can use it.
+    cfg.providers.settings["model_mode"] = cfg.model_mode
+    if cfg.model_preference:
+        cfg.providers.settings["model_preference"] = list(cfg.model_preference)
 
     try:
         from .mcp import MCPRegistry
