@@ -10,6 +10,15 @@ for each pool (service) in priority order:
             try -> success: return
                    failure: classify, cooldown the right thing, continue
 
+Never-fail behaviour
+--------------------
+`chat_ex` does NOT raise on a "all keys failed" cycle. It waits (up to
+`max_wait`, then a growing backoff capped at 60s) and tries again. It
+only raises `LLMError("stopped by user")` when the caller's cancel event
+is set. A truly fatal 400 (bad request, no retry will help) still raises
+so the user can fix the prompt — but the caller (loop) treats it as a
+normal error event, not a crash.
+
 Notable behaviours
 ------------------
 * Rich progress events: `notify` receives short human strings the UI can render.
@@ -38,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "omni-agent/2.2"
+UA = "omni-agent/2.3"
 
 
 class LLMError(Exception):
@@ -60,6 +69,11 @@ _VERIFY_CACHE = {}
 _MODEL_CACHE_MAX = 64
 _NO_TEMP_MAX = 128
 _VERIFY_CACHE_MAX = 64
+
+# Backoff between full retry cycles when every key is cooling. Capped so a
+# user who left the agent overnight doesn't wake to a 4-hour sleep.
+BACKOFF_MIN = 2.0
+BACKOFF_MAX = 60.0
 
 
 # ---------------------------------------------------------------- classification
@@ -486,6 +500,15 @@ def probe(cfg, p, model=None):
         return False, f.kind, f.msg
 
 
+def probe_model(cfg, p, model):
+    """Like probe() but for an arbitrary model on a provider. Used by
+    Manager.pick_auto_models to verify a candidate actually answers."""
+    msg = _attempt(cfg, p, model,
+                   {"messages": [{"role": "user", "content": "Reply with the word pong."}],
+                    "max_tokens": 64})
+    return msg
+
+
 def _stderr(text):
     print("  ! " + text, file=sys.stderr)
 
@@ -503,7 +526,12 @@ def _progress_payload(pool, model, key_name, kind, remaining, log):
 
 
 def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
-    """Returns (assistant_message, route)."""
+    """Returns (assistant_message, route).
+
+    Retries forever (with capped backoff) until either the request
+    succeeds or `cancel` is set. A truly fatal 400 (bad request) still
+    raises so the loop can surface it as an error event.
+    """
     pm = cfg.providers
     notify = notify or _stderr
     progress = on_progress or (lambda payload: None)
@@ -511,21 +539,29 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
     if tools:
         base["tools"] = tools
         base["tool_choice"] = "auto"
-    deadline = time.time() + pm.max_wait
+
+    backoff = BACKOFF_MIN
     waited_notice = False
-    attempted_model_refresh = set()
+    attempt_round = 0
 
     while True:
         if cancel is not None and cancel.is_set():
             raise LLMError("stopped by user")
+        attempt_round += 1
         pools = pm.pools()
         if not pools:
+            # Nothing configured. This is not retryable — the user has to add
+            # a key. Raise a clear error (the loop renders it as a note).
             raise LLMError("No provider configured. Add keys in the UI or:  /add openrouter YOUR_KEY")
         log = []
+        attempted_model_refresh = set()
+
         for pi, (pool, _) in enumerate(pools):
             chain = pm.model_chain(pool)
             for mi, model in enumerate(chain):
                 for p in pm.pick_order(pool, model):
+                    if cancel is not None and cancel.is_set():
+                        raise LLMError("stopped by user")
                     st = pm.health.state(p, model)
                     if st:
                         log.append((pool, model, p.name, st["kind"], st["reason"], st["remaining"]))
@@ -580,15 +616,8 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                                 f = f2
 
                         if f.kind == "fatal":
-                            try:
-                                minimal = {"messages": messages}
-                                msg = _attempt(cfg, p, model, minimal, cancel=cancel)
-                                pm.health.ok(p)
-                                pm.note_used(pool, p.name)
-                                return msg, {"provider": p.name, "pool": pool, "model": model,
-                                             "fallback": True, "reason": "retried-without-tools"}
-                            except Fail:
-                                raise LLMError(f"{p.name} ({model}): {f.msg}")
+                            # A 400 that no retry will fix. Surface it.
+                            raise LLMError(f"{p.name} ({model}): {f.msg}")
 
                         pm.health.mark(p, model, f.scope, f.kind, f.cooldown, f.msg)
                         log.append((pool, model, p.name, f.kind, f.msg, f.cooldown))
@@ -596,7 +625,9 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                         if f.scope == "pool_model":
                             break
                         if f.scope == "none":
-                            raise LLMError(f"{p.name} ({model}): {f.msg}")
+                            # Parameter error on this key/model, but another
+                            # key/model might work. Keep going.
+                            continue
                         continue
                     pm.health.ok(p)
                     pm.note_used(pool, p.name)
@@ -608,30 +639,37 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                         notify(f"using fallback {p.name} / {model}")
                     return msg, route
 
+        # ---- nothing worked this round. Wait and try again (forever).
         waits = [e[5] for e in log if e[3] in pm.health.TRANSIENT and isinstance(e[5], (int, float)) and e[5] > 0]
-        if waits and time.time() + min(waits) <= deadline:
-            w = min(waits) + 0.5
-            if not waited_notice:
-                notify(f"every key is busy - waiting {int(w)}s for the first one to free up")
-                waited_notice = True
-            last_pool = log[-1][0] if log else "?"
-            last_model = log[-1][1] if log else "?"
-            progress(_progress_payload(last_pool, last_model,
-                                       log[-1][2] if log else "?",
-                                       log[-1][3] if log else "?", w, log))
-            slept = 0.0
-            while slept < w:
-                if cancel is not None and cancel.is_set():
-                    raise LLMError("stopped by user")
-                time.sleep(min(0.5, w - slept))
-                slept += 0.5
-                if int(slept * 2) % 6 == 0:
-                    progress({"title": f"Waiting {int(w - slept)}s",
-                              "detail": "checking keys again shortly",
-                              "recent": [f"{e[2]} [{e[1]}] -> {e[3]}" for e in log[-4:]],
-                              "route": f"{last_pool} · {last_model}"})
-            continue
-        raise LLMError(_summary(log))
+        wait_s = min(waits) + 0.5 if waits else min(backoff, BACKOFF_MAX)
+        wait_s = max(1.0, wait_s)
+
+        if not waited_notice:
+            notify(f"every key is busy - retrying (cycle {attempt_round}); "
+                   f"next check in {int(wait_s)}s (press Stop to cancel)")
+            waited_notice = True
+
+        last_pool = log[-1][0] if log else "?"
+        last_model = log[-1][1] if log else "?"
+        progress(_progress_payload(last_pool, last_model,
+                                   log[-1][2] if log else "?",
+                                   log[-1][3] if log else "?", wait_s, log))
+
+        slept = 0.0
+        while slept < wait_s:
+            if cancel is not None and cancel.is_set():
+                raise LLMError("stopped by user")
+            time.sleep(min(0.5, wait_s - slept))
+            slept += 0.5
+            if int(slept * 2) % 6 == 0:
+                progress({"title": f"Waiting {int(wait_s - slept)}s",
+                          "detail": f"cycle {attempt_round}; checking keys again shortly",
+                          "recent": [f"{e[2]} [{e[1]}] -> {e[3]}" for e in log[-4:]],
+                          "route": f"{last_pool} · {last_model}"})
+
+        # Grow the backoff for the next all-fail cycle.
+        backoff = min(backoff * 1.6, BACKOFF_MAX)
+        waited_notice = False
 
 
 def _summary(log):

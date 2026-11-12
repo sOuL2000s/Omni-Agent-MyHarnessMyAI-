@@ -1,7 +1,16 @@
 # agent/commands.py
 """Slash commands to manage keys/models/workspace without leaving the harness.
 
-The web UI has the same powers (plus a folder picker).
+The web UI has the same powers (plus a folder picker). New in 2.3:
+
+  * `handle(cfg, line, interactive=None)` — the caller may pass an
+    `interactive(question, options, default)` callback. Commands like
+    `/auto`, `/modelmode`, `/strategy` use it to ask the user (on/off,
+    manual/auto, round_robin/failover) instead of requiring a full
+    argument. In the terminal this is wired to input(); elsewhere it's
+    None and the command falls back to printing the current value.
+  * `/automodel [pool]` — probe candidates and pick a main + fallback
+    that actually answer (same logic as the UI's Auto button).
 """
 import getpass
 import os
@@ -20,9 +29,10 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /model <model>                     model for the primary pool (all its keys)   |   /model <pool> <model>
   /models [pool] [filter]            list the model ids the service offers
   /fallback <pool> m1,m2 | clear     models to try when the chosen one is exhausted (manual mode)
-  /strategy round_robin|failover     round_robin spreads calls over the keys; failover uses them in order
-  /modelmode [auto|manual]           auto = rank the discovered model list per request and walk it
+  /strategy [round_robin|failover]   ask (or set) the rotation strategy
+  /modelmode [auto|manual]           ask (or set) the model-selection mode
   /preference [m1,m2,...|clear]      ordered model preference for auto mode
+  /automodel [pool]                  probe candidates, pick a working main+fallback, save them
   /use <pool|key>                    make it the primary     /order a,b,c   pool priority
   /remove <key>   /removepool <pool>
   /test [key|pool|all]               real test call(s)      /revive   clear all cooldowns
@@ -30,13 +40,10 @@ HELP = """Keys are grouped in POOLS: gemini-1, gemini-2 ... are the pool "gemini
   /keymodel <key-name> <model>       set the model for ONE key (overrides the pool default)
   /autodetect <key>                  guess the provider from the key format
   /workspace [path]                  show or change the agent's workspace (relative or absolute)
-  /bgauto on|off                     when on, every run_shell call runs in the background
-  /auto [on|off]                     per-session auto-approve (skips Allow/Deny prompts)
-  /killall                           stop every running background shell (dev servers, watchers)
-  /memory [list|delete <id|text>|clear|facts|deletefact <key>|clearfacts]   manage long-term memory
-  /files                             list files in the workspace
-  /skills [list|read <name>|delete <name>|save <name>]                       manage saved skills
-  /mcp [list|add|remove <name>|start|stop|restart <name>]                    manage MCP servers
+  /bgauto [on|off]                   ask (or set) background-by-default for run_shell
+  /auto [on|off]                     ask (or set) per-session auto-approve
+  /killall                           stop every running background shell
+  /memory [...]  /files  /skills [...]  /mcp [...]   (same as before)
   /config [key|key=value]            show every runtime setting, or set one (written to .env)
   /reset  /exit  /help"""
 
@@ -61,8 +68,8 @@ def _fmt_config(cfg):
         ("AGENT_SHELL_BG", "1" if cfg.shell_bg else "0"),
         ("AGENT_MODEL_MODE", cfg.providers.model_mode if cfg.providers else "?"),
         ("AGENT_MODEL_PREFERENCE", ",".join(cfg.providers.settings.get("model_preference") or []) or "(none)"),
-        ("AGENT_MAX_TURNS", str(cfg.max_turns)),
-        ("AGENT_MAX_TOOL_CALLS", str(getattr(cfg, "max_total_tool_calls", 200))),
+        ("AGENT_MAX_TURNS", str(cfg.max_turns) if cfg.max_turns else "0 (unlimited)"),
+        ("AGENT_MAX_TOOL_CALLS", str(getattr(cfg, "max_total_tool_calls", 0)) if getattr(cfg, "max_total_tool_calls", 0) else "0 (unlimited)"),
         ("AGENT_TEMPERATURE", str(cfg.temperature)),
         ("AGENT_TIMEOUT", str(cfg.timeout)),
         ("AGENT_STRATEGY", cfg.providers.strategy if cfg.providers else "?"),
@@ -100,7 +107,17 @@ def _write_env_var(key, value):
     return env_path
 
 
-def handle(cfg, line):
+def _ask(interactive, question, options, default=None):
+    """Ask via the interactive callback, or return None if unavailable."""
+    if interactive is None:
+        return None
+    try:
+        return interactive(question, options, default)
+    except Exception:
+        return None
+
+
+def handle(cfg, line, interactive=None):
     pm = cfg.providers
     try:
         a = shlex.split(line)
@@ -189,14 +206,24 @@ def handle(cfg, line):
             return msg
         if c == "strategy":
             if not args:
-                return f"strategy = {pm.strategy}   (options: {', '.join(STRATEGIES)})"
+                cur = pm.strategy
+                ans = _ask(interactive, "Rotation strategy?",
+                           ["round_robin", "failover"], cur)
+                if ans is None:
+                    return f"strategy = {cur}   (options: {', '.join(STRATEGIES)}; use /strategy round_robin|failover)"
+                args = [ans]
             pm.set_strategy(args[0])
             return f"strategy = {pm.strategy}"
         if c == "modelmode":
             if not args:
-                return (f"model_mode = {pm.model_mode}\n"
-                        f"  auto = rank the discovered model list per request and walk it\n"
-                        f"  manual = pool default + explicit /fallback list")
+                cur = pm.model_mode
+                ans = _ask(interactive, "Model-selection mode?",
+                           ["manual", "auto"], cur)
+                if ans is None:
+                    return (f"model_mode = {cur}\n"
+                            f"  auto = rank the discovered model list per request and walk it\n"
+                            f"  manual = pool default + explicit /fallback list")
+                args = [ans]
             pm.set_model_mode(args[0])
             cfg.model_mode = pm.model_mode
             cfg.providers.settings["model_mode"] = pm.model_mode
@@ -223,6 +250,23 @@ def handle(cfg, line):
             except Exception:
                 pass
             return "preference: " + ", ".join(kept)
+        if c in ("automodel", "auto-model"):
+            pool = pm.resolve_pool(args[0]) if args else pm.pool_names()[0]
+            try:
+                main, fb = pm.pick_auto_models(pool, cfg=cfg)
+            except Exception as e:
+                return f"error while probing: {e}"
+            if not main:
+                return (f"could not find a model that answers on '{pool}'. "
+                        f"Add keys, or pick a model manually with /model {pool} <id>.")
+            pm.set_model(pool, main)
+            if fb:
+                pm.set_fallbacks(pool, [fb])
+            else:
+                pm.set_fallbacks(pool, [])
+            return (f"{pool}: auto-picked main={main}"
+                    + (f", fallback={fb}" if fb else " (no distinct fallback found)")
+                    + "  — both were probed with a tiny real call.")
         if c == "use":
             pm.use(args[0])
             return f"{args[0]} is now primary"
@@ -305,7 +349,12 @@ def handle(cfg, line):
         if c in ("bgauto", "bg-shell", "bgshell", "shell-bg"):
             from .tools import shell as _shell
             if not args:
-                return f"background shell executions = {_shell.default_background()}"
+                cur = _shell.default_background()
+                ans = _ask(interactive, "Run every run_shell in the background by default?",
+                           ["on", "off"], "on" if cur else "off")
+                if ans is None:
+                    return f"background shell executions = {cur}  (use /bgauto on|off)"
+                args = [ans]
             on = args[0].lower() in ("on", "1", "true", "yes")
             _shell.set_default_background(on)
             cfg.shell_bg = on
@@ -318,7 +367,12 @@ def handle(cfg, line):
         # ---- per-session auto-approve (terminal) --------------------------
         if c == "auto":
             if not args:
-                return f"auto-approve = {cfg.auto_approve}  (this process)"
+                cur = cfg.auto_approve
+                ans = _ask(interactive, "Skip all Allow/Deny prompts (auto-approve)?",
+                           ["on", "off"], "on" if cur else "off")
+                if ans is None:
+                    return f"auto-approve = {cur}  (this process; use /auto on|off or /config AGENT_AUTO_APPROVE=...)"
+                args = [ans]
             on = args[0].lower() in ("on", "1", "true", "yes")
             cfg.auto_approve = on
             return f"auto-approve = {on}  (this process; use /config AGENT_AUTO_APPROVE=... to persist)"
@@ -382,10 +436,10 @@ def handle(cfg, line):
                     applied = f" (preference = {', '.join(kept) or '(none)'})"
                 elif key == "AGENT_MAX_TURNS":
                     cfg.max_turns = int(value)
-                    applied = f" (max_turns = {cfg.max_turns})"
+                    applied = f" (max_turns = {cfg.max_turns or 'unlimited'})"
                 elif key == "AGENT_MAX_TOOL_CALLS":
                     cfg.max_total_tool_calls = int(value)
-                    applied = f" (max_total_tool_calls = {cfg.max_total_tool_calls})"
+                    applied = f" (max_total_tool_calls = {cfg.max_total_tool_calls or 'unlimited'})"
                 elif key == "AGENT_TEMPERATURE":
                     cfg.temperature = float(value)
                     applied = f" (temperature = {cfg.temperature})"

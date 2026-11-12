@@ -4,12 +4,9 @@
 Three buttons: Terminal chat, Web UI, and Single prompt. The launcher stays
 open after either of the first two so the user can start the other as well.
 "Single prompt" opens a modal where the user picks a workspace, types one
-prompt, and gets the answer streamed back. That mode forces strict +
-auto-approve + bg-shell on for the run (and restores the previous values
-when the modal closes).
-
-The window is deliberately plain: no images, no fonts beyond the defaults, so
-it starts instantly and works on any Windows/macOS/Linux box Nuitka targets.
+prompt, and gets the answer streamed back. Strict, auto-approve and
+bg-shell start ON for the run but the user can toggle each of them off
+before running, and there is a Stop button that cancels a running prompt.
 """
 import os
 import subprocess
@@ -21,20 +18,9 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- helpers
 def _python_cmd() -> list:
-    """How to relaunch ourselves as a subprocess.
-
-    * Frozen (Nuitka): re-exec the *bundled exe* itself, not the embedded
-      python interpreter. On a `--standalone` build, `sys.executable` is
-      `<dist>/python.exe`, not `<dist>/omni.exe`; re-execing python.exe
-      with `chat` makes Python try to open a file named `chat`, which
-      dies silently under CREATE_NEW_CONSOLE. `sys.argv[0]` is the real
-      exe path Nuitka set for us.
-    * Source tree:     re-exec sys.executable -m agent <subcommand>.
-    """
+    """How to relaunch ourselves as a subprocess."""
     if getattr(sys, "frozen", False):
         exe = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else sys.executable
-        # Sanity: if argv[0] is not an existing file, fall back to the
-        # bare executable (some launchers strip argv[0]).
         if not os.path.isfile(exe):
             exe = sys.executable
         return [exe]
@@ -42,13 +28,7 @@ def _python_cmd() -> list:
 
 
 def _spawn_and_check(cmd: list, cwd: str, wait_ms: int = 700):
-    """Popen `cmd` and return (proc, ok).
-
-    `ok` is True if the child is still alive after `wait_ms`. If it died
-    (missing file, wrong interpreter, CREATE_NEW_CONSOLE absorbed the
-    console, etc.), the caller should fall back to in-process execution
-    instead of pretending it worked.
-    """
+    """Popen `cmd` and return (proc, ok)."""
     try:
         if os.name == "nt":
             proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE,
@@ -70,7 +50,6 @@ def _spawn_and_check(cmd: list, cwd: str, wait_ms: int = 700):
                     break
             else:
                 return None, False
-        # Give the child a moment to fail fast (bad exe, missing module).
         for _ in range(wait_ms // 50):
             if proc.poll() is not None:
                 return proc, False
@@ -81,28 +60,15 @@ def _spawn_and_check(cmd: list, cwd: str, wait_ms: int = 700):
 
 
 def _open_terminal_chat(cfg):
-    """Open a *new console window* running `omni chat` so the launcher stays
-    alive. Falls back to running in this process if the child dies.
-
-    Returns True if a new window was actually opened, False if we fell back.
-    """
     args = _python_cmd() + ["chat"]
     proc, ok = _spawn_and_check(args, str(_cwd()))
     if ok:
         return True
-    # Fallback: run the CLI in this process. The launcher window will
-    # close as the CLI takes over stdin/stdout, which is better than the
-    # user staring at a window that does nothing.
     _run_in_process(cfg, ["chat"])
     return False
 
 
 def _open_web_ui(cfg, on_url=None):
-    """Start the web UI server in a background thread and open the browser.
-
-    `on_url` is called (from the server thread) with the real URL once the
-    socket is bound, so the launcher can display the actual port.
-    """
     from .web.server import serve
     t = threading.Thread(target=serve, kwargs=dict(
         cfg=cfg, host="127.0.0.1", port=8765, open_browser=True,
@@ -114,15 +80,15 @@ def _open_web_ui(cfg, on_url=None):
 
 def _open_single_prompt(cfg, parent):
     """Open the single-prompt window: workspace picker, prompt box,
-    Run button. Strict + auto-approve + bg-shell are forced on for the run
-    (and reverted when the window closes)."""
+    toggles, Run/Stop buttons. Strict + auto-approve + bg-shell start ON
+    for the run but can be toggled off before starting."""
 
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
 
     win = tk.Toplevel(parent)
     win.title("Omni — single prompt")
-    win.minsize(560, 480)
+    win.minsize(560, 540)
     win.transient(parent)
 
     # ---- workspace row -------------------------------------------------
@@ -134,8 +100,6 @@ def _open_single_prompt(cfg, parent):
     ws_entry.pack(side="left", fill="x", expand=True, padx=(8, 8))
 
     def pick_workspace():
-        # tkinter's native picker — works because the launcher already
-        # owns a Tk root. (No need to round-trip through the web server.)
         path = filedialog.askdirectory(
             initialdir=ws_var.get() or str(cfg.workspace),
             title="Choose the workspace for this prompt",
@@ -145,13 +109,17 @@ def _open_single_prompt(cfg, parent):
 
     ttk.Button(ws_row, text="Browse…", command=pick_workspace).pack(side="left")
 
-    # ---- mode summary --------------------------------------------------
-    modes = ttk.Label(
-        win, padding=(12, 0, 12, 8),
-        foreground="#666",
-        text="strict=on · auto-approve=on · bg-shell=on "
-             "(forced for single-prompt runs)")
-    modes.pack(fill="x")
+    # ---- mode toggles (editable) --------------------------------------
+    toggles = ttk.Frame(win, padding=(12, 0, 12, 6))
+    toggles.pack(fill="x")
+    strict_v = tk.BooleanVar(value=True)
+    auto_v = tk.BooleanVar(value=True)
+    bg_v = tk.BooleanVar(value=True)
+    ttk.Checkbutton(toggles, text="strict", variable=strict_v).pack(side="left")
+    ttk.Checkbutton(toggles, text="auto-approve", variable=auto_v).pack(side="left", padx=(10, 0))
+    ttk.Checkbutton(toggles, text="bg-shell", variable=bg_v).pack(side="left", padx=(10, 0))
+    ttk.Label(toggles, text="(all on by default for single-prompt runs)",
+              foreground="#666").pack(side="left", padx=(10, 0))
 
     # ---- prompt box ----------------------------------------------------
     ttk.Label(win, text="Prompt", padding=(12, 0, 12, 2)).pack(anchor="w")
@@ -160,7 +128,6 @@ def _open_single_prompt(cfg, parent):
     prompt = tk.Text(prompt_frame, height=6, wrap="word",
                      font=("Consolas", 10) if os.name == "nt" else ("Menlo", 11))
     prompt.pack(fill="both", expand=True)
-    prompt.insert("1.0", "")
 
     # ---- output --------------------------------------------------------
     ttk.Label(win, text="Output", padding=(12, 0, 12, 2)).pack(anchor="w")
@@ -190,12 +157,12 @@ def _open_single_prompt(cfg, parent):
     btns.pack(fill="x")
     run_btn = ttk.Button(btns, text="Run")
     run_btn.pack(side="right")
-    cancel_btn = ttk.Button(btns, text="Close", command=win.destroy)
-    cancel_btn.pack(side="right", padx=(0, 8))
+    stop_btn = ttk.Button(btns, text="Stop", state="disabled")
+    stop_btn.pack(side="right", padx=(0, 8))
+    close_btn = ttk.Button(btns, text="Close", command=win.destroy)
+    close_btn.pack(side="right", padx=(0, 8))
 
     # ---- run ----------------------------------------------------------
-    # Snapshot the config so we can restore it if the user runs a second
-    # prompt later in the same launcher session.
     prev = {
         "workspace": cfg.workspace,
         "strict": cfg.strict,
@@ -209,13 +176,20 @@ def _open_single_prompt(cfg, parent):
         cfg.strict = prev["strict"]
         cfg.auto_approve = prev["auto_approve"]
         _shell.set_default_background(prev["shell_bg"])
+
+    state = {"running": False, "cancel": None, "thread": None}
+
+    def do_stop():
+        if state["cancel"] is not None:
+            state["cancel"].set()
+            append_out("\n[stop requested]\n")
+
+    stop_btn.configure(command=do_stop)
     win.protocol("WM_DELETE_WINDOW",
                  lambda: (restore_prev(), win.destroy()))
 
-    running = {"flag": False}
-
     def do_run():
-        if running["flag"]:
+        if state["running"]:
             return
         text = prompt.get("1.0", "end").strip()
         if not text:
@@ -242,33 +216,24 @@ def _open_single_prompt(cfg, parent):
                 parent=win)
             return
 
-        # Apply the workspace + forced toggles.
         cfg.workspace = ws_path
-        cfg.strict = True
-        cfg.auto_approve = True
-        _shell.set_default_background(True)
-
-        # Persist the workspace to .env so the next launch remembers it.
-        try:
-            from .commands import _write_env_var
-            _write_env_var("AGENT_WORKSPACE", str(ws_path))
-            _write_env_var("AGENT_STRICT", "1")
-            _write_env_var("AGENT_AUTO_APPROVE", "1")
-            _write_env_var("AGENT_SHELL_BG", "1")
-        except Exception:
-            pass
+        cfg.strict = bool(strict_v.get())
+        cfg.auto_approve = bool(auto_v.get())
+        _shell.set_default_background(bool(bg_v.get()))
 
         clear_out()
         append_out(f"[workspace] {ws_path}\n")
-        append_out("[mode] strict=on  auto-approve=on  bg-shell=on\n\n")
+        append_out(f"[mode] strict={'on' if cfg.strict else 'off'}  "
+                   f"auto-approve={'on' if cfg.auto_approve else 'off'}  "
+                   f"bg-shell={'on' if _shell.default_background() else 'off'}\n\n")
         append_out("[running…]\n")
 
         run_btn.configure(state="disabled")
-        running["flag"] = True
+        stop_btn.configure(state="normal")
+        state["running"] = True
+        cancel = threading.Event()
+        state["cancel"] = cancel
 
-        # Run the loop in a background thread. Events are pushed to the
-        # GUI thread via `win.after(0, …)` because Tk widgets must only be
-        # touched from the main thread.
         def on_event(kind, text_="", **extra):
             if kind == "tool":
                 name = extra.get("name") or "tool"
@@ -289,15 +254,13 @@ def _open_single_prompt(cfg, parent):
                 win.after(0, append_out, f"\n{text_}\n")
             elif kind == "error":
                 win.after(0, append_out, f"\n[error] {text_}\n")
-            # tool_stream is intentionally dropped: the shell tool can emit
-            # thousands of lines and we don't want to freeze the GUI.
 
         def work():
             from . import loop as _loop, llm as _llm
             try:
                 hist = _loop.new_history(cfg)
                 final = _loop.run(cfg, hist, text,
-                                  on_event=on_event, cancel=None)
+                                  on_event=on_event, cancel=cancel)
                 win.after(0, append_out, f"\n[done]\n{final}\n")
             except _llm.LLMError as e:
                 win.after(0, append_out, f"\n[gateway error] {e}\n")
@@ -305,12 +268,15 @@ def _open_single_prompt(cfg, parent):
                 win.after(0, append_out, f"\n[unexpected] {type(e).__name__}: {e}\n")
             finally:
                 def done():
-                    running["flag"] = False
+                    state["running"] = False
+                    state["cancel"] = None
                     run_btn.configure(state="normal")
+                    stop_btn.configure(state="disabled")
                 win.after(0, done)
 
-        threading.Thread(target=work, daemon=True,
-                         name="omni-single-prompt").start()
+        t = threading.Thread(target=work, daemon=True, name="omni-single-prompt")
+        state["thread"] = t
+        t.start()
 
     run_btn.configure(command=do_run)
     prompt.focus_set()
@@ -318,7 +284,6 @@ def _open_single_prompt(cfg, parent):
 
 
 def _run_in_process(cfg, argv):
-    """Fallback: run the CLI in this process (used only if we can't spawn a terminal)."""
     from .__main__ import main as cli_main
     old = sys.argv
     try:
@@ -329,7 +294,6 @@ def _run_in_process(cfg, argv):
 
 
 def _cwd() -> Path:
-    # When frozen, run from the exe's folder so data/ and .env sit next to it.
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path.cwd()
@@ -352,7 +316,6 @@ def _shell_quote(s: str) -> str:
 def run_launcher(cfg) -> int:
     """Show the launcher. Returns an exit code (0 = user closed the window)."""
     if os.environ.get("OMNI_NO_GUI") == "1":
-        # user asked for the terminal; behave as if 'omni chat' was run
         from .__main__ import chat_repl
         chat_repl(cfg)
         return 0
@@ -368,7 +331,6 @@ def run_launcher(cfg) -> int:
     except Exception:
         pass
 
-    # ---- style: use the native theme, keep it minimal
     try:
         style = ttk.Style()
         if "vista" in style.theme_names():
@@ -387,7 +349,6 @@ def run_launcher(cfg) -> int:
     ttk.Label(frm, text="Choose how to start",
               foreground="#666").grid(row=1, column=0, columnspan=2, pady=(0, 16))
 
-    # ---- status label (updated when the web UI starts)
     status = tk.StringVar(value="")
     status_lbl = ttk.Label(frm, textvariable=status, foreground="#666",
                            wraplength=380, justify="left")
@@ -401,8 +362,6 @@ def run_launcher(cfg) -> int:
             status.set("Opened a terminal window. This launcher can stay open "
                        "for another launch, or you can close it.")
         else:
-            # _open_terminal_chat ran the CLI inline; the launcher is
-            # about to be replaced by the REPL. Nothing else to do.
             pass
 
     def on_web():
@@ -410,7 +369,6 @@ def run_launcher(cfg) -> int:
         root.update_idletasks()
         try:
             def _ready(url):
-                # called from the server thread; hop back to the GUI thread
                 try:
                     root.after(0, lambda: status.set(
                         f"Web UI running at {url}  —  close this launcher to stop it."))
@@ -432,7 +390,6 @@ def run_launcher(cfg) -> int:
     ttk.Button(frm, text="Web UI", command=on_web, **big
                ).grid(row=2, column=1, padx=(8, 0), sticky="ew")
 
-    # Third button on its own row, full-width, so the window stays balanced.
     ttk.Button(frm, text="Single prompt (auto everything)",
                command=on_single_prompt, width=48, padding=(8, 12)
                ).grid(row=3, column=0, columnspan=2, pady=(8, 0), sticky="ew")
@@ -442,13 +399,11 @@ def run_launcher(cfg) -> int:
     ttk.Button(frm, text="Quit", command=on_quit).grid(row=6, column=0, columnspan=2,
                                                        pady=(12, 0))
 
-    # ---- workspace line (read-only, just so the user knows where files go)
     ws_text = f"Workspace: {cfg.workspace}"
     ttk.Label(frm, text=ws_text, foreground="#888",
               wraplength=380, justify="left").grid(row=7, column=0, columnspan=2,
                                                    pady=(10, 0))
 
-    # center on screen
     root.update_idletasks()
     w, h = root.winfo_width(), root.winfo_height()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()

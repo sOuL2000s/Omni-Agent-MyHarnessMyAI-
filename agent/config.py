@@ -54,7 +54,7 @@ class Config:
     workspace: Path
     allow_outside: bool
     auto_approve: bool
-    max_turns: int
+    max_turns: int          # 0 = unlimited
     temperature: float
     timeout: int
     data_dir: Path
@@ -64,10 +64,10 @@ class Config:
     mcp: object = None
     # Runtime mode flags (see §6.2 / §7.3 in the README).
     shell_bg: bool = False
-    # Hard cap on total tool calls per task.
-    max_total_tool_calls: int = 200
+    # Hard cap on total tool calls per task. 0 = unlimited.
+    max_total_tool_calls: int = 0
     # Model selection mode: "manual" (pool default + explicit fallbacks)
-    # or "auto" (rank the discovered model list per request and walk it).
+    # or "auto" (probe the discovered model list and pick a working pair).
     # Opt-in via AGENT_MODEL_MODE=auto.
     model_mode: str = "manual"
     # Optional ordered preference list for auto mode (comma-separated).
@@ -90,6 +90,18 @@ def _is_fs_root(p: Path) -> bool:
     return rp == rp.parent
 
 
+def _int_env(name: str, default: int) -> int:
+    """Read an int env var. Empty -> default. Negative/0 means 'use default'
+    for caps (we treat <=0 as unlimited in the consumers)."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 def load() -> Config:
     _load_env()
     g = os.environ.get
@@ -109,6 +121,12 @@ def load() -> Config:
     if mode not in ("manual", "auto"):
         mode = "manual"
 
+    # Unlimited-by-default caps. AGENT_MAX_TURNS=0 (or empty / negative) means
+    # unlimited; same for AGENT_MAX_TOOL_CALLS. The old defaults (60 / 200)
+    # made long agentic workflows die half-way through.
+    max_turns = _int_env("AGENT_MAX_TURNS", 0)
+    max_calls = _int_env("AGENT_MAX_TOOL_CALLS", 0)
+
     cfg = Config(
         base_url=g("AGENT_BASE_URL", "http://localhost:20128/v1").rstrip("/"),
         api_key=g("AGENT_API_KEY", ""),
@@ -116,14 +134,14 @@ def load() -> Config:
         workspace=ws,
         allow_outside=g("AGENT_ALLOW_OUTSIDE", "1") == "1",
         auto_approve=_env_bool("AGENT_AUTO_APPROVE", default=False),
-        max_turns=int(g("AGENT_MAX_TURNS", "60")),
+        max_turns=max_turns,
         temperature=float(g("AGENT_TEMPERATURE", "0.2")),
         timeout=int(g("AGENT_TIMEOUT", "180")),
         data_dir=data,
         strict=g("AGENT_STRICT", "1") == "1",
         home=Path.home().resolve(),
         shell_bg=_env_bool("AGENT_SHELL_BG", default=False),
-        max_total_tool_calls=int(g("AGENT_MAX_TOOL_CALLS", "200")),
+        max_total_tool_calls=max_calls,
         model_mode=mode,
         model_preference=preference,
     )

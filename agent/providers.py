@@ -13,14 +13,9 @@ Design notes:
 Auto model mode
 ---------------
 When `settings["model_mode"] == "auto"`, `model_chain(pool)` returns a
-ranked list built from the discovered model list instead of the static
-[default, *fallbacks]. Ranking order:
-  1. models listed in `settings["model_preference"]` (in that order),
-  2. PREFERRED_MODEL_HINTS for the pool,
-  3. the pool's current default model,
-  4. remaining discovered models, filtered to skip embedding/image/etc.
-The chain is capped at AUTO_CHAIN_MAX entries so a huge list doesn't
-turn every request into a long walk.
+ranked list built from the discovered model list. `pick_auto_models()`
+additionally *probes* the top candidates with a tiny real call so the
+pair we return (main + fallback) is guaranteed to answer.
 """
 import json
 import os
@@ -365,8 +360,8 @@ class Manager:
         self.save_settings()
         return cleaned
 
-    def _auto_chain(self, pool):
-        """Ranked model list for auto mode."""
+    def _candidate_models(self, pool):
+        """Discovered (chat) models for a pool, in a sensible order."""
         default = self.model_of(pool)
         discovered = []
         for p in self.providers_in(pool):
@@ -374,7 +369,7 @@ class Manager:
                 if not _NON_CHAT.search(m) and m not in discovered:
                     discovered.append(m)
         if not discovered:
-            return ([default] + self.fallbacks(pool)) if default else self.fallbacks(pool)
+            return ([default] if default else []) + self.fallbacks(pool)
 
         ordered = []
         def push(m):
@@ -383,7 +378,6 @@ class Manager:
 
         # 1. explicit user preference
         for m in self.settings.get("model_preference") or []:
-            # allow a bare name to match a discovered full id
             if m in discovered:
                 push(m)
             else:
@@ -409,7 +403,11 @@ class Manager:
         # 5. static fallbacks as a last resort
         for m in self.fallbacks(pool):
             push(m)
-        return ordered[:AUTO_CHAIN_MAX]
+        return ordered
+
+    def _auto_chain(self, pool):
+        """Ranked model list for auto mode (no probing)."""
+        return self._candidate_models(pool)[:AUTO_CHAIN_MAX]
 
     def model_chain(self, pool):
         if self.model_mode == "auto":
@@ -417,6 +415,56 @@ class Manager:
             if chain:
                 return chain
         return [self.model_of(pool)] + self.fallbacks(pool)
+
+    def pick_auto_models(self, pool, cfg=None, max_probe=6):
+        """Return (main, fallback) that *actually answer* for `pool`.
+
+        Probes candidates with a tiny real call. `fallback` is a different
+        model than `main`, also probed OK. Returns (None, None) if nothing
+        answers. When cfg is None we can't probe; we fall back to the
+        ranking-only chain (still returning two unique names if possible).
+        """
+        pool = self.resolve_pool(pool)
+        chain = self._candidate_models(pool)
+        if not chain:
+            return None, None
+        if cfg is None:
+            main = chain[0]
+            fb = next((m for m in chain[1:] if m != main), None)
+            return main, fb
+
+        from . import llm
+        # Rank providers for probing (respect health).
+        ps = self.providers_in(pool)
+        now = time.time()
+        stats = self.health.snapshot()
+        ps.sort(key=lambda p: self._score(p, now, stats), reverse=True)
+        tested = []
+        main = None
+        fallback = None
+        for model in chain[:max_probe]:
+            for p in ps:
+                st = self.health.state(p, model)
+                if st:
+                    continue
+                try:
+                    llm.probe_model(cfg, p, model)
+                except Exception:
+                    continue
+                tested.append(model)
+                self.health.ok(p)
+                self.note_used(pool, p.name)
+                break
+            if tested and main is None:
+                main = tested[-1]
+            elif tested and main is not None and model != main:
+                fallback = model
+                break
+        if main is None:
+            return None, None
+        if fallback is None:
+            fallback = next((m for m in chain if m != main), None)
+        return main, fallback
 
     # ---- strategy
     @property

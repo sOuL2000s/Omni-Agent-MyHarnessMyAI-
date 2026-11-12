@@ -1,3 +1,4 @@
+# agent/__main__.py
 import argparse
 import os
 import sys
@@ -9,18 +10,7 @@ from . import config, loop, llm, commands
 
 # ---------------------------------------------------------------- terminal
 def _enable_windows_vt() -> bool:
-    """Turn on ANSI/VT escape processing for the current console.
-
-    Returns True if ANSI sequences will be interpreted (so color is safe
-    to emit), False if this is a legacy console that can't do it (so the
-    caller must fall back to plain text).
-
-    - Windows: call SetConsoleMode with ENABLE_VIRTUAL_TERMINAL_PROCESSING
-      on both stdout and stderr. Classic cmd.exe does NOT enable this by
-      default, which is why escape codes were showing up literally
-      (`←[1m←[38;5;208m`) instead of coloring the text.
-    - POSIX: True when stdout is a tty (the shell already understands ANSI).
-    """
+    """Turn on ANSI/VT escape processing for the current console."""
     if os.name != "nt":
         return sys.stdout.isatty()
     try:
@@ -28,7 +18,6 @@ def _enable_windows_vt() -> bool:
         from ctypes import wintypes
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        # Constants from the Windows console API.
         ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
         STD_OUTPUT_HANDLE = -11
         STD_ERROR_HANDLE = -12
@@ -37,8 +26,6 @@ def _enable_windows_vt() -> bool:
         for std_handle in (STD_OUTPUT_HANDLE, STD_ERROR_HANDLE):
             handle = kernel32.GetStdHandle(std_handle)
             if handle in (0, -1):
-                # No console attached (e.g. output piped to a file). Don't
-                # try to enable VT — treat it as "no color".
                 ok = False
                 continue
             mode = wintypes.DWORD()
@@ -53,16 +40,8 @@ def _enable_windows_vt() -> bool:
         return False
 
 
-# Resolve once, before any colored output is emitted. `_VT_OK` is also
-# imported by loop.py so the non-interactive modes (`omni run`) agree
-# with the REPL about whether color is safe.
 _VT_OK = _enable_windows_vt()
-
-# Color is on only when the terminal will interpret the codes AND the
-# user hasn't opted out with NO_COLOR (https://no-color.org).
 _NO_COLOR = (not _VT_OK) or bool(os.environ.get("NO_COLOR"))
-# Tell loop.py's cli_event the same thing (it computes its own flag at
-# import time; we overwrite it here so `omni run` matches the REPL).
 try:
     loop._NO_COLOR = _NO_COLOR
 except Exception:
@@ -75,7 +54,7 @@ class C:
     BOLD = "" if _NO_COLOR else "\033[1m"
     DIM = "" if _NO_COLOR else "\033[2m"
     ITALIC = "" if _NO_COLOR else "\033[3m"
-    ORANGE = "" if _NO_COLOR else "\033[38;5;208m"   # matches the web accent
+    ORANGE = "" if _NO_COLOR else "\033[38;5;208m"
     AMBER = "" if _NO_COLOR else "\033[38;5;214m"
     GREEN = "" if _NO_COLOR else "\033[38;5;42m"
     RED = "" if _NO_COLOR else "\033[38;5;203m"
@@ -86,20 +65,12 @@ class C:
 
 
 def _w(text, color="", bold=False):
-    """Wrap `text` in a color (and optional bold). No-op when color is off."""
     if _NO_COLOR or not (color or bold):
         return str(text)
     return f"{C.BOLD if bold else ''}{color}{text}{C.RESET}"
 
 
 def _ljust_visible(text, width):
-    """Left-justify `text` to `width` *visible* chars.
-
-    ANSI escape sequences have zero visible width, so we strip them for
-    the length calculation but keep them in the output. Without this,
-    a colored string inside a box shifts the right border by the length
-    of the escape codes.
-    """
     import re
     visible = re.sub(r"\033\[[0-9;]*m", "", text)
     pad = max(0, width - len(visible))
@@ -107,11 +78,6 @@ def _ljust_visible(text, width):
 
 
 def _box(title, body, color=C.ORANGE):
-    """Draw a rounded box around `body` with `title` on the top edge.
-
-    Lines are wrapped at 78 columns so the box never gets absurdly wide.
-    Empty bodies render a single blank line so the box isn't a sliver.
-    """
     import textwrap
     inner_w = 76
     top_title = f" {title} " if title else ""
@@ -132,7 +98,6 @@ def _box(title, body, color=C.ORANGE):
 
 
 def _rule(label="", width=78, color=C.GRAY):
-    """A horizontal rule with an optional centered label."""
     if not label:
         return _w("─" * width, color)
     label = f" {label} "
@@ -159,12 +124,6 @@ BANNER = r"""
 
 
 def _print_banner(pm, pools):
-    """Print the ASCII banner + a boxed welcome panel.
-
-    The banner is plain ASCII (not ANSI) so it renders the same on every
-    terminal. Only the welcome panel uses color, and `_w` no-ops when
-    color was disabled (legacy console / NO_COLOR).
-    """
     print(_w(BANNER, C.ORANGE, bold=True))
     primary = pools[0] if pools else "none"
     lines = [
@@ -181,7 +140,6 @@ def _print_banner(pm, pools):
 
 
 def cfg_workspace_short(max_len=52):
-    """Workspace path, shortened with an ellipsis so the box stays tidy."""
     ws = str(config.ROOT)
     try:
         from . import config as _cfg
@@ -233,9 +191,9 @@ def _setup_completion():
     commands_list = [
         "/help", "/providers", "/keys", "/add", "/addkeys", "/key", "/model",
         "/models", "/fallback", "/strategy", "/modelmode", "/preference",
-        "/use", "/order", "/remove", "/removepool", "/test", "/revive",
-        "/refresh", "/keymodel", "/autodetect", "/workspace", "/bgauto",
-        "/bg", "/jobs", "/kill", "/killall", "/auto", "/config",
+        "/automodel", "/use", "/order", "/remove", "/removepool", "/test",
+        "/revive", "/refresh", "/keymodel", "/autodetect", "/workspace",
+        "/bgauto", "/bg", "/jobs", "/kill", "/killall", "/auto", "/config",
         "/memory", "/files", "/skills", "/mcp", "/reset", "/exit",
     ]
     def completer(text, state):
@@ -257,6 +215,35 @@ def _version() -> str:
 
 
 # ---------------------------------------------------------------- REPL
+def _ask_interactive(question, options, default=None):
+    """Ask a simple multiple-choice question in the terminal. Returns the
+    chosen option string, or None if the terminal is non-interactive."""
+    if not sys.stdin.isatty():
+        return None
+    labels = []
+    for i, opt in enumerate(options, 1):
+        mark = " (current)" if default and opt == default else ""
+        labels.append(f"  {i}) {opt}{mark}")
+    prompt = (f"\n  {question}\n" + "\n".join(labels)
+              + f"\n  Enter a number"
+              + (f" or press Enter to keep '{default}'" if default else "")
+              + ": ")
+    try:
+        raw = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not raw:
+        return default if default else options[0] if options else None
+    if raw.isdigit():
+        i = int(raw) - 1
+        if 0 <= i < len(options):
+            return options[i]
+    for opt in options:
+        if opt.lower() == raw:
+            return opt
+    return None
+
+
 def chat_repl(cfg):
     global _current_cfg
     _current_cfg = cfg
@@ -269,9 +256,6 @@ def chat_repl(cfg):
     if pm.load_error:
         print(_box("Warning", pm.load_error, color=C.AMBER) + "\n")
     if _NO_COLOR:
-        # One-line hint so the user knows why there is no color. Only on
-        # Windows (where this is actionable); on POSIX it just means the
-        # output was piped, and a hint would be noise.
         if os.name == "nt":
             print(_w("  (colors disabled — this console cannot handle ANSI escapes; "
                      "use Windows Terminal or PowerShell for the full look)", C.GRAY))
@@ -316,8 +300,6 @@ def chat_repl(cfg):
             pass
 
     spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    # On a no-color console the braille spinners look like tofu; use a
-    # plain rotating ASCII spinner instead so the status line is legible.
     if _NO_COLOR:
         spinner_frames = ["|", "/", "-", "\\"]
     spin = {"i": 0, "line": ""}
@@ -454,7 +436,7 @@ def chat_repl(cfg):
             continue
 
         if q.startswith("/"):
-            out = commands.handle(cfg, q)
+            out = commands.handle(cfg, q, interactive=_ask_interactive)
             if out:
                 title = q.split()[0].lstrip("/").capitalize() or "Command"
                 print(_box(title, out, color=C.BLUE))
@@ -537,13 +519,13 @@ def main():
             sys.exit(1)
         return
     if a.cmd == "models":
-        out = commands.handle(cfg, "/models " + " ".join(a.rest))
+        out = commands.handle(cfg, "/models " + " ".join(a.rest), interactive=None)
         print(_box("Models", out, color=C.BLUE))
         return
     if a.cmd == "provider":
         import shlex
         r = a.rest or ["list"]
-        out = commands.handle(cfg, "/" + " ".join(shlex.quote(x) for x in r))
+        out = commands.handle(cfg, "/" + " ".join(shlex.quote(x) for x in r), interactive=None)
         print(_box("Providers", out, color=C.BLUE))
         return
     if a.cmd == "run":

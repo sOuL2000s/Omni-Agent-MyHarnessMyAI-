@@ -7,6 +7,13 @@ contains durable-preference language ("remember", "always", "from now on",
 entry after the answer succeeds. This is a heuristic, not an LLM call, so
 it costs no extra tokens. Near-identical entries are deduped locally by
 memory_save().
+
+Unlimited by default
+--------------------
+`cfg.max_turns` and `cfg.max_total_tool_calls` are 0 by default, which
+means "no limit". When they're positive they still act as a soft budget
+with a warning event, not a hard stop. The only hard stop is the user
+pressing Stop (the cancel event).
 """
 import json
 import os
@@ -151,13 +158,7 @@ _NO_COLOR = (not sys.stdout.isatty()) or bool(os.environ.get("NO_COLOR"))
 
 
 def set_color(enabled: bool) -> None:
-    """Allow the parent module to override the color decision.
-
-    `agent.__main__` calls `set_color(True)` after successfully enabling
-    Windows VT processing, and `set_color(False)` if that failed. This
-    keeps `omni run` / `omni schedule` consistent with the interactive
-    REPL even though they may run in a separate process.
-    """
+    """Allow the parent module to override the color decision."""
     global _NO_COLOR
     _NO_COLOR = not enabled
 
@@ -237,6 +238,7 @@ PARALLEL_OK = {
     "skill_list", "skill_read",
 }
 MAX_TOOL_RETRIES = 3
+SOFT_CALL_WARNING_EVERY = 500
 
 # Heuristic for "the user asked us to remember something". Deliberately
 # conservative: a false positive only costs one memory entry, but it
@@ -249,11 +251,7 @@ _SAVE_RX = re.compile(
 
 
 def _maybe_autosave(cfg, user_text, final_answer):
-    """Save a short memory entry if the user turn looks durable.
-
-    No LLM call: we truncate the user's own words. Runs after the answer
-    succeeds so a failed turn doesn't pollute memory.
-    """
+    """Save a short memory entry if the user turn looks durable."""
     if not user_text or not final_answer:
         return
     if len(user_text) > 400:
@@ -299,11 +297,17 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
     last_route = None
     failures = {}
     tool_call_count = 0
-    max_calls = getattr(cfg, "max_total_tool_calls", 200) or 200
+    max_calls = getattr(cfg, "max_total_tool_calls", 0) or 0
+    max_turns = getattr(cfg, "max_turns", 0) or 0
+    warned_budget = False
 
-    for turn in range(cfg.max_turns):
+    turn = 0
+    while True:   # unlimited turns unless cancel or a *positive* cap says stop
         if cancel is not None and cancel.is_set():
             return "(stopped by you)"
+        if max_turns and turn >= max_turns:
+            return f"(stopped: reached your configured max_turns of {max_turns}. Say 'continue' to go on.)"
+        turn += 1
         _trim(history, protect_from=turn_start)
 
         on_event("progress", "thinking…", title="Sending to model",
@@ -360,14 +364,18 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
         if entry["content"].strip():
             on_event("assistant", entry["content"])
 
-        if tool_call_count + len(calls) > max_calls:
+        # Soft budget: warn once at the threshold, never stop.
+        if max_calls and tool_call_count + len(calls) > max_calls and not warned_budget:
+            warned_budget = True
             on_event(
-                "error",
-                f"Reached the tool-call budget ({max_calls}). "
-                f"Returning what I have; ask 'continue' to resume.",
+                "notice",
+                f"Reached your configured tool-call budget ({max_calls}). "
+                f"Continuing anyway (unlimited by default). Set "
+                f"AGENT_MAX_TOOL_CALLS=0 to silence this warning.",
             )
-            return f"(stopped: exceeded tool-call budget of {max_calls})"
         tool_call_count += len(calls)
+        if max_calls and tool_call_count % SOFT_CALL_WARNING_EVERY == 0:
+            on_event("notice", f"…{tool_call_count} tool calls so far, still going.")
 
         results = {}
 
@@ -471,5 +479,3 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                     on_event("tool_result", "ERROR: cancelled",
                              name=c["function"]["name"], id=c["id"], ok=False)
             return "(stopped by you)"
-
-    return "(stopped: reached max turns. Say 'continue' to go on.)"

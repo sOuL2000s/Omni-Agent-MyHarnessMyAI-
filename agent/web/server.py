@@ -22,13 +22,9 @@ MCP endpoints (all under /api/mcp):
   POST   /api/mcp/stop      -> stop but keep config
   POST   /api/mcp/restart   -> stop + start
 
-Additional endpoints added for the 2.2 UX pass:
-  GET    /api/state?lite=1     -> pools + keys without per-key model lists
-  GET    /api/sessions?q=...   -> server-side search across all session files
-  GET    /api/tool_result?session=&id= -> full tool output from history
-  POST   /api/workspace/mkdir  -> create a folder, returns its path
-  GET    /api/file?path=&inline=1 -> inline (preview) instead of attachment
-  GET    /api/browse?path=&search=&timeout= -> deep search with wall-clock cap
+Auto model endpoint (new in 2.3):
+  POST   /api/pool/auto     -> probe candidates and set main+fallback
+                               that actually answer (mirrors /automodel)
 """
 import fnmatch
 import hmac
@@ -71,22 +67,12 @@ SID_RE = re.compile(r"^[a-f0-9]{8,32}$")
 MAX_JSON = 5 * 1024 * 1024
 MAX_UPLOAD = 50 * 1024 * 1024
 
-# Don't accumulate thousands of streaming chunks per session.
-# With a monotonic _seq counter, events can be evicted from the front of the
-# deque safely (the client's cursor is a sequence number, not an array index).
 MAX_EVENTS = 2000
 MAX_POLL_EVENTS = 200
 STREAM_COALESCE_SECONDS = 0.1
 
-# Cap how much text a single message can render into the browser.
 MAX_RENDER_CHARS = 20000
-
-# How long a single approval dialog may block the agent.
 APPROVAL_TIMEOUT = 120
-
-# Wall-clock cap for /api/browse?search= deep scans. After this many
-# seconds the walk returns whatever it found so far. Prevents a `C:\`
-# search from blocking the whole HTTP handler thread.
 DEEP_SEARCH_TIMEOUT = 5.0
 
 
@@ -105,9 +91,6 @@ class Session:
     def __init__(self, cfg, sid, history=None):
         self.cfg, self.id = cfg, sid
         self.history = history or loop.new_history(cfg)
-        # Ring buffer + monotonic sequence. `after` from the client is a
-        # sequence number, not an array index, so eviction from the front of
-        # the deque never causes silent event skips.
         self.events = deque(maxlen=MAX_EVENTS)
         self._seq = 0
         self.cond = threading.Condition()
@@ -161,10 +144,6 @@ class Session:
             if kind == "tool_stream":
                 sid = extra.get("id")
                 if sid is not None:
-                    # Merge in place if the previous event is a stream for
-                    # the same id and arrived <STREAM_COALESCE_SECONDS ago.
-                    # That keeps bursts cheap for the browser, while the
-                    # FIRST chunk of a burst still goes out instantly.
                     if self.events:
                         last = self.events[-1]
                         if (last.get("type") == "tool_stream"
@@ -176,8 +155,6 @@ class Session:
                             return
                     extra["_t"] = time.time()
 
-            # Flush any pending stream buffer when the tool finishes so the
-            # last <100ms of a shell command isn't lost from the live view.
             if kind == "tool_result":
                 sid = extra.get("id")
                 if sid in self._stream_buf and self._stream_buf[sid]:
@@ -194,27 +171,13 @@ class Session:
             self.events.append(payload)
             self.cond.notify_all()
 
-    def _cap_events(self):
-        # Ring buffer via deque(maxlen=...) handles eviction; nothing to do.
-        # Kept as a no-op so any external callers don't break.
-        pass
-
     def poll(self, after, wait):
-        """Return events with _seq > after.
-
-        `after` is a monotonic sequence number from the client. Events can be
-        evicted from the front of the deque without invalidating the cursor.
-        """
         with self.cond:
             if self._seq <= after and wait > 0:
                 self.cond.wait(wait)
             if after < 0:
                 after = 0
             chunk = [e for e in self.events if e["_seq"] > after][:MAX_POLL_EVENTS]
-            # If the client fell behind the ring buffer (its cursor is older
-            # than the oldest retained event), tell it to reload history by
-            # returning an empty chunk with next == self._seq. The JS side
-            # treats that as "resync" and calls /api/history.
             if chunk and chunk[-1]["_seq"] < self._seq:
                 chunk = [e for e in chunk if e.get("type") != "tool_stream"]
             nxt = chunk[-1]["_seq"] if chunk else after
@@ -258,12 +221,6 @@ class Session:
         return out
 
     def full_tool_result(self, call_id: str):
-        """Return the full tool output for `call_id` from history, uncut.
-
-        Returns None if the id isn't found. Used by /api/tool_result so
-        the browser can download the untruncated version of a tool output
-        that was clipped to 1500 chars in the live view.
-        """
         for m in self.history:
             if m.get("role") == "tool" and m.get("tool_call_id") == call_id:
                 return str(m.get("content", ""))
@@ -295,11 +252,7 @@ class App:
         self.cfg, self.token, self.hosts = cfg, token, hosts
         self.sessions = {}
         self.lock = threading.Lock()
-        # MCP: single source of truth for the on-disk config file. Guarded
-        # by self.mcp_lock so concurrent add/update/delete calls can't
-        # clobber each other.
         self.mcp_lock = threading.RLock()
-        # STT: single-session lock. Only one live capture at a time.
         self.stt_lock = threading.Lock()
         self.stt_session = None
 
@@ -384,8 +337,6 @@ class App:
                     except Exception:
                         pass
             finally:
-                # Always clear the per-thread approver so a crashed run
-                # doesn't leave a stale approver referencing a dead session.
                 try:
                     safety.set_approver(None)
                 except Exception:
@@ -421,17 +372,13 @@ class App:
         p = self._mcp_config_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
-        # ensure_ascii=False so env values that contain non-ASCII survive
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, p)
 
     def mcp_state(self) -> list:
-        """One row per server, for the UI. Includes editable config."""
         mcp = getattr(self.cfg, "mcp", None)
         rows = []
         cfg_servers = self._mcp_read_config().get("servers", {})
-        # Live servers first (in registry order), then config-only entries
-        # that failed to start (so the user can edit/delete them).
         seen = set()
         if mcp:
             for name, srv in mcp.servers.items():
@@ -511,13 +458,6 @@ class App:
         )
 
     def state(self, lite=False):
-        """Return the UI state.
-
-        `lite=True` skips the per-key `models` lists (which can be 100+
-        model ids × 30 keys = tens of KB of JSON on every poll). The UI
-        uses `lite` for background refreshes and the full state only on
-        initial load / explicit "Refresh all".
-        """
         pm = self.cfg.providers
         pools = pm.summary()
         if lite:
@@ -537,25 +477,17 @@ class App:
             "auto_approve_env": self.cfg.auto_approve,
             "strict": self.cfg.strict,
             "shell_bg_default": _shell.default_background(),
+            "model_mode": pm.model_mode,
             "mcp": self.mcp_state(),
             "mcp_load_errors": list(getattr(self.cfg.mcp, "load_errors", [])) if self.cfg.mcp else [],
         }
 
     def search_sessions(self, query: str, limit: int = 40) -> list:
-        """Server-side search across every session file.
-
-        The old UI filtered the 40 newest sessions client-side, which
-        meant anything older than the 40th was invisible. This walks
-        every `sessions/*.json`, reads the title (from the meta file if
-        present, else the first user message), and returns the matching
-        rows sorted by mtime descending.
-        """
         d = self.cfg.data_dir / "sessions"
         out = []
         if not d.exists():
             return out
         q = (query or "").strip().lower()
-        # Gather candidate files first so we only sort what we'll keep.
         cands = []
         for f in d.glob("*.json"):
             if f.name.endswith(".meta.json"):
@@ -573,7 +505,6 @@ class App:
                 title = s.title()
                 busy = s.busy
             else:
-                # Try the meta file first (cheap), then the session body.
                 title = ""
                 meta = f.with_suffix(".meta.json")
                 if meta.exists():
@@ -635,7 +566,6 @@ class App:
         if not self.stt_session:
             return {"events": [], "next": after, "active": False}
         events = self.stt_session.drain()
-        # Filter by `after` timestamp so a slow client doesn't re-see events.
         out = [e for e in events if e["t"] > after]
         return {
             "events": out,
@@ -654,7 +584,7 @@ class App:
 
 def make_handler(app):
     class H(BaseHTTPRequestHandler):
-        server_version = "OmniUI/2.2"
+        server_version = "OmniUI/2.3"
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *a):
@@ -781,12 +711,6 @@ def make_handler(app):
         api_history.method = "GET"
 
         def api_tool_result(self, q):
-            """Return the FULL (uncut) output of a tool call from history.
-
-            The live view clips tool results to 1500 chars to keep the
-            UI responsive. This endpoint lets the browser download the
-            full output for a specific call id.
-            """
             s = app.session(q.get("session", ""))
             cid = q.get("id", "")
             if not cid:
@@ -798,12 +722,6 @@ def make_handler(app):
         api_tool_result.method = "GET"
 
         def api_sessions(self, q):
-            """List sessions, optionally filtered by `q` server-side.
-
-            The old handler returned the 40 newest with no query support.
-            The new one delegates to App.search_sessions() when `q` is
-            present, so old chats are findable.
-            """
             query = q.get("q", "")
             if query:
                 out = app.search_sessions(query, limit=200)
@@ -955,14 +873,6 @@ def make_handler(app):
             self._send(200, {"ok": True, "title": s.title()})
 
         def api_memory_delete(self, q):
-            """Delete memory rows matching `query`, or a fact by `key`.
-
-            The UI's Memories card sends {query: <full content>}; the
-            Known-facts card sends {query: <fact key>, kind: "fact"}.
-            Tries fact-delete first when kind=="fact", otherwise memory
-            (exact content, then LIKE). Falls through to the other store
-            so a plain {query} works from either card.
-            """
             b = self._json_body()
             qs = (b.get("query") or "").strip()
             if not qs:
@@ -980,7 +890,6 @@ def make_handler(app):
             self._send(200, {"ok": True, "result": result})
 
         def api_memory_list(self, q):
-            """List memories + facts for the UI's delete panel."""
             from ..tools.memory import _get_db
             with _get_db(app.cfg) as conn:
                 mems = conn.execute(
@@ -996,17 +905,13 @@ def make_handler(app):
         api_memory_list.method = "GET"
 
         def api_memory_clear(self, q):
-            # This is a dangerous operation, so we'll require a confirmation
-            # from the client side.
             b = self._json_body()
             if not b.get("confirm"):
                 raise ValueError("confirmation required to clear all memory")
-
-            # Call the memory_clear_all tool
             memory_clear_all(app.cfg)
             self._send(200, {"ok": True, "message": "All memories and facts have been wiped."})
 
-        # ---- skills (CRUD on data/skills/*.md) ----
+        # ---- skills
         def api_skills(self, q):
             from ..tools import skills as _sk
             self._send(200, {"skills": _sk._list_files(app.cfg)})
@@ -1072,9 +977,6 @@ def make_handler(app):
             role = s.history[idx].get("role")
             if role not in ("user", "assistant"):
                 return self._err(400, "can only delete user/assistant messages")
-            # If we're deleting an assistant message with tool_calls, also
-            # drop the contiguous `tool` messages that follow it, so we
-            # don't leave orphan tool_call_ids that strict providers reject.
             drop_to = idx + 1
             if role == "assistant" and s.history[idx].get("tool_calls"):
                 while drop_to < len(s.history) and s.history[drop_to].get("role") == "tool":
@@ -1106,12 +1008,6 @@ def make_handler(app):
             self._send(200, {"ok": True, "result": _sh.kill_detached(b.get("job_id", ""))})
 
         def api_shell_jobs_kill_all(self, q):
-            """Stop every currently-running detached shell job.
-
-            Returns the count actually stopped so the UI can confirm.
-            Exited jobs are left in place (they'll be pruned by
-            list_detached() after 10 minutes).
-            """
             from ..tools import shell as _sh
             stopped = 0
             for rec in _sh.list_detached():
@@ -1121,12 +1017,6 @@ def make_handler(app):
             self._send(200, {"ok": True, "stopped": stopped})
 
         def api_shell_jobs_log(self, q):
-            """Serve a background job's log file as text/plain.
-
-            Path-traversal safe: the job id is looked up in the live
-            _DETACHED table, and only the registered log_path is read —
-            the client's `job_id` never becomes a filesystem path directly.
-            """
             from ..tools import shell as _sh
             job_id = q.get("job_id", "")
             if not job_id:
@@ -1135,7 +1025,6 @@ def make_handler(app):
             with _sh._ACTIVE_LOCK:
                 rec = _sh._DETACHED.get(job_id)
                 if not rec:
-                    # Allow a prefix match, same as tail_background.
                     for jid, r in _sh._DETACHED.items():
                         if jid.startswith(job_id):
                             rec, job_id = r, jid
@@ -1159,6 +1048,37 @@ def make_handler(app):
             pool = pm.set_model(b["pool"], b["model"])
             self._send(200, {"ok": True, "listed": llm.model_listed(app.cfg, pool, b["model"])})
 
+        def api_pool_auto(self, q):
+            """Probe candidates and pick a working main+fallback for the pool.
+
+            Returns {pool, main, fallback, saved}. Mirrors /automodel in the
+            terminal. Both models are guaranteed to answer a tiny real call
+            (or None is returned in the corresponding field).
+            """
+            b = self._json_body()
+            pool = (b.get("pool") or "").strip()
+            pm = app.cfg.providers
+            if not pool:
+                names = pm.pool_names()
+                if not names:
+                    return self._err(400, "no pools configured")
+                pool = names[0]
+            pool = pm.resolve_pool(pool)
+            try:
+                main, fb = pm.pick_auto_models(pool, cfg=app.cfg)
+            except Exception as e:
+                return self._err(500, f"probe failed: {e}")
+            if not main:
+                return self._send(200, {"pool": pool, "main": None, "fallback": None,
+                                        "saved": False,
+                                        "note": "no model answered; check keys/models"})
+            pm.set_model(pool, main)
+            if fb:
+                pm.set_fallbacks(pool, [fb])
+            else:
+                pm.set_fallbacks(pool, [])
+            self._send(200, {"pool": pool, "main": main, "fallback": fb, "saved": True})
+
         def api_pool_fallbacks(self, q):
             b = self._json_body()
             models = b.get("models", [])
@@ -1178,6 +1098,13 @@ def make_handler(app):
         def api_strategy(self, q):
             app.cfg.providers.set_strategy(self._json_body()["strategy"])
             self._send(200, {"ok": True})
+
+        def api_modelmode(self, q):
+            b = self._json_body()
+            mode = (b.get("mode") or "").strip().lower()
+            app.cfg.providers.set_model_mode(mode)
+            app.cfg.model_mode = app.cfg.providers.model_mode
+            self._send(200, {"ok": True, "model_mode": app.cfg.providers.model_mode})
 
         def api_keys_add(self, q):
             b = self._json_body()
@@ -1275,13 +1202,6 @@ def make_handler(app):
             self._send(200, app.stt_stop())
 
         def api_browse(self, q):
-            """List a directory, or deep-search a tree with a wall-clock cap.
-
-            The old handler walked the whole tree with no time limit,
-            which blocked the HTTP thread for minutes on `C:\\`. The new
-            one checks elapsed time every directory and returns partial
-            results once `DEEP_SEARCH_TIMEOUT` is exceeded.
-            """
             path = q.get("path") or str(app.cfg.workspace)
             search = q.get("search", "").strip()
             p = Path(path).expanduser()
@@ -1364,13 +1284,6 @@ def make_handler(app):
             self._send(200, {"workspace": str(new_ws)})
 
         def api_workspace_mkdir(self, q):
-            """Create a folder (inside the current workspace or any writable dir).
-
-            Body: {"parent": "/path/to/dir", "name": "new-folder"}.
-            `parent` defaults to the current workspace. Returns the full
-            path. Refuses `..` and absolute `name` values so the caller
-            can't escape `parent`.
-            """
             b = self._json_body()
             parent = Path(b.get("parent") or str(app.cfg.workspace)).expanduser().resolve()
             name = (b.get("name") or "").strip()
@@ -1388,18 +1301,6 @@ def make_handler(app):
             self._send(200, {"path": str(target)})
 
         def api_workspace_pick(self, q):
-            """Open the OS folder picker on the *server* machine.
-
-            Tk is single-threaded, but the HTTP handler runs on a worker
-            thread. The safe pattern is to spawn a *dedicated* thread that
-            creates its own Tk root, runs the dialog, destroys the root,
-            and hands the result back via a queue. This is exactly what
-            Tk wants: one thread, one root, no cross-thread Tk calls.
-
-            On genuinely headless setups (no DISPLAY on Linux, or Tk
-            missing) we return 501 with a clear message so the UI can
-            fall back to "type the path".
-            """
             import queue as _queue
             import threading as _threading
 
@@ -1418,18 +1319,84 @@ def make_handler(app):
                     except Exception as e:
                         result_q.put(("error", f"no display available on the server: {e}"))
                         return
-                    root.withdraw()
+                    # Withdraw the empty root so only the dialog is visible.
+                    try:
+                        root.withdraw()
+                        root.update_idletasks()
+                    except Exception:
+                        pass
+
+                    # --- bring the dialog to the FRONT, without the taskbar
+                    # blink the old `-topmost`-for-the-whole-lifetime caused.
+                    #
+                    # Windows' foreground-lock rules will refuse to front a
+                    # window belonging to a background process unless one of
+                    # these is true:
+                    #   * it's -topmost  (causes the blink; we do it briefly)
+                    #   * SetForegroundWindow(hwnd) is called from the thread
+                    #     that owns the window
+                    #   * it has an owner that is the active window
+                    #
+                    # The reliable recipe:
+                    #   1. flip -topmost ON right before showing
+                    #   2. after the dialog is mapped, call SetForegroundWindow
+                    #   3. flip -topmost OFF ~250 ms later
+                    #
+                    # This satisfies Windows' rules for a fraction of a
+                    # second, the dialog gets real foreground focus, then it
+                    # behaves like any normal window (no blink, no pinning).
                     try:
                         root.attributes("-topmost", True)
                     except Exception:
                         pass
+
+                    def _front(hwnd_root):
+                        try:
+                            import ctypes
+                            from ctypes import wintypes
+                            user32 = ctypes.WinDLL("user32", use_last_error=True)
+                            hwnd = wintypes.HWND(hwnd_root)
+                            # ShowWindow(SW_RESTORE=9) then
+                            # SetForegroundWindow so it doesn't open minimized
+                            # or behind the browser.
+                            user32.ShowWindow(hwnd, 9)
+                            # WS_EX_TOOLWINDOW (0x80) keeps the dialog out of
+                            # the taskbar and out of Alt-Tab. Use the extended
+                            # style via GetWindowLongPtrW/SetWindowLongPtrW.
+                            GWL_EXSTYLE = -20
+                            WS_EX_TOOLWINDOW = 0x00000080
+                            get_long = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
+                            set_long = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+                            try:
+                                ex = get_long(hwnd, GWL_EXSTYLE)
+                                set_long(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW)
+                            except Exception:
+                                pass
+                            user32.SetForegroundWindow(hwnd)
+                        except Exception:
+                            pass
+
+                    def _unpin():
+                        try:
+                            root.attributes("-topmost", False)
+                        except Exception:
+                            pass
+
                     try:
+                        # Schedule the foreground grab + unpin on the Tk loop,
+                        # so we don't block the filedialog call below.
+                        root.after(120, lambda: _front(root.winfo_id()))
+                        root.after(380, _unpin)
                         chosen = filedialog.askdirectory(
+                            parent=root,
                             initialdir=str(app.cfg.workspace),
                             title="Choose the Omni workspace folder",
                             mustexist=True,
                         )
                     finally:
+                        # On macOS/Linux, tkinter's focus_force is enough to
+                        # front the dialog. On Windows we already fronted it
+                        # via SetForegroundWindow above.
                         try:
                             root.destroy()
                         except Exception:
@@ -1441,7 +1408,6 @@ def make_handler(app):
             t = _threading.Thread(target=_worker, daemon=True,
                                   name="omni-folder-picker")
             t.start()
-            # Wait up to 5 minutes for the user to pick (or cancel).
             try:
                 status, value = result_q.get(timeout=300)
             except _queue.Empty:
@@ -1511,7 +1477,6 @@ def make_handler(app):
                                            limit=limit, installed=installed)
                 self._send(200, {"servers": rows, "cached": cache.exists()})
             except Exception as e:
-                # Never a 500 for a flaky third party.
                 self._send(200, {"servers": [], "error": str(e)})
         api_mcp_registry.method = "GET"
 
@@ -1519,8 +1484,6 @@ def make_handler(app):
 
 
 def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
-    # If the default port is used, try to make it "sticky" to the workspace
-    # so different Omni installations don't clash by default.
     if port == 8765:
         try:
             path_hash = int(hashlib.md5(str(cfg.data_dir).encode()).hexdigest(), 16)
@@ -1534,7 +1497,6 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
     app = App(cfg, token, hosts)
     srv = None
 
-    # Try up to 100 ports starting from the preferred one
     for p in range(port, port + 100):
         try:
             srv = ThreadingHTTPServer((host, p), make_handler(app))
@@ -1568,7 +1530,6 @@ def serve(cfg, host="127.0.0.1", port=8765, open_browser=True, on_url=None):
         print("\nbye")
     finally:
         srv.server_close()
-        # Flush pending health state (debounced save) before exit.
         try:
             if getattr(app, "stt_session", None):
                 app.stt_session.stop()

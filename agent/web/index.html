@@ -7,43 +7,53 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23c2410c'/%3E%3Cstop offset='1' stop-color='%23ea580c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
 <style>
 :root{
-  --bg:#f7f8fa; --bg-2:#eef0f4; --panel:#ffffff; --panel-2:#fbfcfe;
-  --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --muted-2:#94a3b8;
-  --line:#e2e8f0; --line-2:#cbd5e1;
-  --accent:#4f46e5; --accent-2:#6366f1; --accent-ink:#ffffff;
-  --accent-soft:#eef2ff; --accent-soft-2:#e0e7ff;
-  --user:#eef2ff; --ok:#059669; --warn:#b45309; --bad:#dc2626;
-  --tool:#f1f5f9; --code:#0b1220; --code-ink:#e2e8f0;
-  --shadow-sm:0 1px 2px rgba(15,23,42,.06);
-  --shadow:0 4px 16px -4px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06);
-  --shadow-lg:0 20px 40px -12px rgba(15,23,42,.25), 0 4px 12px rgba(15,23,42,.08);
-  --radius-sm:6px; --radius:10px; --radius-lg:14px; --radius-xl:18px;
+  --bg:#faf9f6; --bg-2:#f2f0eb;
+  --panel:#ffffff; --panel-2:#fcfbf8;
+  --ink:#1a1815; --ink-2:#45403a;
+  --muted:#7a7268; --muted-2:#a8a094;
+  --line:#e8e4dc; --line-2:#d6d0c4;
+  --accent:#c2410c; --accent-2:#ea580c;
+  --accent-ink:#ffffff;
+  --accent-soft:#fef3ec; --accent-soft-2:#fed7c3;
+  --ok:#0d9488; --warn:#b45309; --bad:#b91c1c;
+  --user:#eef0ff; --user-line:#d8dcff;
+  --tool:#f1f5f9; --code:#1c1917; --code-ink:#e7e5e4;
   --warn-bg:color-mix(in srgb,#b45309 12%,transparent);
   --bad-bg:color-mix(in srgb,#dc2626 10%,transparent);
   --ok-bg:color-mix(in srgb,#059669 10%,transparent);
+  --accent-bg:color-mix(in srgb,var(--accent) 12%,transparent);
+  --e1:0 1px 2px rgba(26,24,21,.04), 0 1px 1px rgba(26,24,21,.03);
+  --e2:0 2px 4px rgba(26,24,21,.05), 0 4px 12px -2px rgba(26,24,21,.06);
+  --e3:0 4px 8px rgba(26,24,21,.06), 0 12px 32px -8px rgba(26,24,21,.10);
+  --e4:0 8px 16px rgba(26,24,21,.08), 0 32px 64px -16px rgba(26,24,21,.20);
+  --radius-sm:6px; --radius:10px; --radius-lg:14px; --radius-xl:18px;
+  --font-sans:system-ui,-apple-system,"Segoe UI Variable","Segoe UI",Roboto,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono","Cascadia Code",ui-monospace,Menlo,monospace;
   --sb-thumb:#cbd5e1; --sb-thumb-hover:#94a3b8; --sb-track:transparent;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#0b0f17; --bg-2:#111827; --panel:#131a26; --panel-2:#0f1621;
-  --ink:#e6e9ef; --ink-2:#c7cdd6; --muted:#94a3b8; --muted-2:#64748b;
-  --line:#1f2937; --line-2:#334155;
-  --accent:#818cf8; --accent-2:#6366f1; --accent-ink:#0b0f17;
-  --accent-soft:#1e1b4b; --accent-soft-2:#312e81;
-  --user:#1e2340; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
-  --tool:#0f1621; --code:#050912; --code-ink:#dbe3ef;
-  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
-  --shadow:0 4px 16px -4px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.4);
-  --shadow-lg:0 24px 48px -12px rgba(0,0,0,.7), 0 4px 12px rgba(0,0,0,.5);
+  --bg:#14110e; --bg-2:#1c1815;
+  --panel:#1f1b17; --panel-2:#252019;
+  --line:#2e2823; --line-2:#3f372f;
+  --ink:#f5f1ea; --ink-2:#d6cec3;
+  --muted:#9a8f82; --muted-2:#6b6055;
+  --accent:#fb923c; --accent-2:#fdba74;
+  --accent-ink:#14110e;
+  --accent-soft:#2a1f14; --accent-soft-2:#3f2e1c;
+  --ok:#2dd4bf; --warn:#fbbf24; --bad:#f87171;
+  --user:#1e1b2e; --user-line:#2e2950;
+  --tool:#0f1621; --code:#0f0d0b; --code-ink:#e7e5e4;
   --warn-bg:color-mix(in srgb,#fbbf24 14%,transparent);
   --bad-bg:color-mix(in srgb,#f87171 14%,transparent);
   --ok-bg:color-mix(in srgb,#34d399 14%,transparent);
+  --accent-bg:color-mix(in srgb,var(--accent) 18%,transparent);
   --sb-thumb:#334155; --sb-thumb-hover:#475569;
 }}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{
   background:var(--bg);color:var(--ink);
-  font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  font:14.5px/1.65 var(--font-sans);letter-spacing:-.005em;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 *{scrollbar-width:thin;scrollbar-color:var(--sb-thumb) var(--sb-track)}
@@ -57,20 +67,29 @@ button,input,select,textarea{font:inherit;color:inherit}
 button{
   cursor:pointer;border:1px solid var(--line);background:var(--panel);
   border-radius:var(--radius-sm);padding:6px 12px;font-weight:500;
-  transition:border-color .15s,background .15s,opacity .15s,transform .05s;
+  transition:border-color .15s,box-shadow .15s,transform .1s,background .15s,color .15s;
   display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  white-space:nowrap;
+  white-space:nowrap;box-shadow:var(--e1);
 }
-button:hover:not(:disabled){border-color:var(--line-2);background:var(--panel-2)}
-button:active:not(:disabled){transform:translateY(.5px)}
+button:hover:not(:disabled){border-color:var(--line-2);background:var(--panel-2);box-shadow:var(--e2);transform:translateY(-1px)}
+button:active:not(:disabled){transform:translateY(0)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.primary{
+  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600;
+  box-shadow:0 1px 2px rgba(194,65,12,.2),inset 0 1px 0 rgba(255,255,255,.15);
+}
 button.primary:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent-2)}
 button.danger{color:var(--bad)}
 button.danger:hover:not(:disabled){background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
-button.ghost{border-color:transparent;background:transparent}
-button.ghost:hover:not(:disabled){background:var(--bg-2)}
+button.ghost{border-color:transparent;background:transparent;box-shadow:none}
+button.ghost:hover:not(:disabled){background:var(--bg-2);box-shadow:none;transform:none}
+button.auto-btn{
+  border-color:color-mix(in srgb,var(--accent) 40%,var(--line));
+  background:var(--accent-bg);color:var(--accent);font-weight:600;
+}
+button.auto-btn:hover:not(:disabled){border-color:var(--accent)}
+button.auto-btn.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 
 input,select,textarea{
   background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-sm);
@@ -80,26 +99,28 @@ input:hover,select:hover,textarea:hover{border-color:var(--line-2)}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent)}
 input[type="checkbox"]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 
-#app{display:grid;grid-template-columns:260px minmax(0,1fr) 0;height:100%;transition:grid-template-columns .25s ease}
+#app{display:grid;grid-template-columns:260px minmax(0,1fr) 0;height:100vh;height:100dvh;transition:grid-template-columns .25s ease}
 #app.leftcollapsed{grid-template-columns:0 minmax(0,1fr) 0}
 #app.leftcollapsed.rightopen{grid-template-columns:0 minmax(0,1fr) 440px}
 #app.rightopen{grid-template-columns:260px minmax(0,1fr) 440px}
 
-/* ----------------------------------------------------------------
-   Left sidebar — the whole column is a flex parent, and the two
-   scrollable sections (#shelljobs + #sessions) each get their own
-   min-height:0 + overflow:auto so one growing never hides the other.
-   ---------------------------------------------------------------- */
 aside{
   background:var(--panel);border-right:1px solid var(--line);
   display:flex;flex-direction:column;min-height:0;overflow:hidden;
   position:relative;z-index:6;
 }
 #right{border-right:0;border-left:1px solid var(--line)}
-#left-toggle{position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;background:none;opacity:.4;cursor:pointer;transition:opacity .15s}
+#left-toggle{position:absolute;top:14px;right:10px;z-index:5;padding:4px;border:0;background:none;opacity:.4;cursor:pointer;transition:opacity .15s;box-shadow:none}
 #left-toggle:hover{opacity:1}
+/* The "expand sidebar" ☰ button. Visible ONLY while #app has .leftcollapsed
+   and the viewport is not the mobile-drawer breakpoint (where the sidebar
+   is already a drawer and #left-toggle is reachable). */
 #expand-left{position:fixed;top:14px;left:10px;z-index:5;display:none}
 #app.leftcollapsed #expand-left{display:block}
+@media (max-width:767px){
+  /* On phones the collapsed state is not used; hide it to avoid two ☰. */
+  #app.leftcollapsed #expand-left{display:none}
+}
 #app.leftcollapsed header{padding-left:56px}
 #expand-left:hover{background:var(--bg-2)}
 
@@ -112,16 +133,13 @@ aside{
 #newChat::before{content:"+";font-size:16px;line-height:1;margin-right:2px}
 #sessSearch{width:100%;font-size:12.5px;padding:6px 9px;background:var(--bg)}
 
-/* Sections that scroll independently */
 .side-label{
   font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;
   font-weight:600;padding:10px 12px 4px;flex:none;
 }
 .scroll-sec{
   min-height:40px;overflow-y:auto;overflow-x:hidden;
-  padding:0 6px 8px;
-  /* keep the scrollbar thin inside narrow sidebar */
-  scrollbar-gutter:stable;
+  padding:0 6px 8px;scrollbar-gutter:stable;
 }
 .scroll-sec.shells{flex:0 1 auto;max-height:28%}
 .scroll-sec.sessions{flex:1 1 auto;min-height:0}
@@ -136,7 +154,7 @@ aside{
 .sess.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
 .sess .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sess .t{font-size:11px;color:var(--muted-2);margin-left:auto;font-variant-numeric:tabular-nums}
-.sess button{opacity:0;padding:2px 5px;border:0;background:none;color:var(--muted);border-radius:4px;transition:opacity .15s,background .15s}
+.sess button{opacity:0;padding:2px 5px;border:0;background:none;color:var(--muted);border-radius:4px;transition:opacity .15s,background .15s;box-shadow:none}
 .sess:hover button,.sess:focus-within button{opacity:1}
 .sess button:hover{background:var(--bad-bg);color:var(--bad)}
 .sess button[aria-label="Rename chat"]:hover{background:var(--accent-soft);color:var(--accent)}
@@ -188,15 +206,19 @@ label.tog input{display:none}
 .msg.user{justify-content:flex-end;flex-direction:column;align-items:flex-end}
 .msg.asst{flex-direction:column;align-items:flex-start}
 
-.bubble{padding:10px 14px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word;line-height:1.6}
+.bubble{padding:10px 14px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word;line-height:1.65}
 .user .bubble{background:var(--user);border-bottom-right-radius:4px;border:1px solid var(--user-line)}
-.asst .bubble{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;white-space:normal;max-width:100%;box-shadow:var(--shadow-sm)}
+.asst .bubble{
+  background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;
+  white-space:normal;max-width:100%;box-shadow:var(--e1);border-radius:16px;
+}
+.asst .bubble:hover{box-shadow:var(--e2);border-color:var(--line-2)}
 .asst.mid .bubble{box-shadow:none;color:var(--muted);background:transparent;border-style:dashed}
 .bubble p{margin:.5em 0} .bubble p:first-child{margin-top:0} .bubble p:last-child{margin-bottom:0}
 .bubble ul,.bubble ol{margin:.5em 0;padding-left:1.5em}
 .bubble li{margin:.2em 0}
 .bubble h1,.bubble h2,.bubble h3{margin:.7em 0 .3em;font-size:1.05em;letter-spacing:-.01em}
-.bubble code{background:var(--tool);padding:1px 6px;border-radius:5px;font:12.5px ui-monospace,Menlo,Consolas,monospace}
+.bubble code{background:var(--tool);padding:1px 6px;border-radius:5px;font:12.5px var(--font-mono)}
 .bubble pre{background:var(--code);color:var(--code-ink);padding:12px 14px;border-radius:var(--radius);overflow:auto;margin:.6em 0;font-size:12.5px;line-height:1.55;max-width:100%;min-width:0}
 .bubble pre code{background:none;padding:0;color:inherit;font-size:inherit}
 
@@ -204,35 +226,46 @@ label.tog input{display:none}
 .tool[data-status="ok"]{border-left-color:var(--ok)}
 .tool[data-status="bad"]{border-left-color:var(--bad)}
 .tool[data-status="run"]{border-left-color:var(--warn)}
-.tool summary{padding:8px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;list-style:none;border-radius:var(--radius)}
+.tool summary{padding:10px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;list-style:none;border-radius:var(--radius);flex-wrap:wrap}
 .tool summary:hover{background:color-mix(in srgb,var(--line) 40%,transparent)}
 .tool summary::-webkit-details-marker{display:none}
 .tool summary .n{font-weight:600;color:var(--ink)}
-.tool summary .a{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.tool summary .a{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-family:var(--font-mono);font-size:12px}
 .tool summary .d{font-size:11px;color:var(--muted-2);font-variant-numeric:tabular-nums;padding:1px 6px;border-radius:4px;background:var(--panel);border:1px solid var(--line)}
 .tool .st{width:8px;height:8px;border-radius:50%;background:var(--muted-2);flex:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--muted-2) 20%,transparent)}
 .tool .st.ok{background:var(--ok);box-shadow:0 0 0 2px color-mix(in srgb,var(--ok) 20%,transparent)}
 .tool .st.bad{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 20%,transparent)}
-.tool pre{margin:0;padding:10px 14px;border-top:1px solid var(--line);overflow:auto;max-height:280px;white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,Consolas,monospace;line-height:1.5}
+.tool[data-status="run"] .st{animation:pulse 1.2s infinite;background:var(--warn)}
+.tool pre{
+  margin:0;padding:12px 14px;border-top:1px solid var(--line);overflow:auto;
+  max-height:280px;white-space:pre-wrap;word-break:break-word;
+  font:12.5px/1.55 var(--font-mono);background:var(--code);color:var(--code-ink);
+  border-radius:0 0 12px 12px;
+}
 
 .note{margin:8px 0;font-size:12.5px;color:var(--warn);padding-left:6px}
 .note.err{color:var(--bad);background:var(--bad-bg);border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap}
 .note.verify{color:var(--warn);background:var(--warn-bg);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);padding:10px 14px;border-radius:var(--radius);white-space:pre-wrap;margin:8px 0}
 
-.empty{max-width:680px;margin:10vh auto 0;text-align:center;color:var(--muted)}
-.empty h2{color:var(--ink);margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-.02em}
+.empty{max-width:760px;margin:6vh auto 0;text-align:center;color:var(--muted);padding:0 16px}
+.empty h2{color:var(--ink);margin:0 0 12px;font-size:clamp(20px,3vw,32px);font-weight:700;letter-spacing:-.03em}
 .empty h2::before{content:"✨  ";font-weight:400}
-.empty .ex{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:24px;text-align:left}
-.empty .ex button{padding:14px 16px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);color:var(--ink);display:flex;flex-direction:column;align-items:flex-start;gap:2px;white-space:normal}
-.empty .ex button:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow);background:var(--panel)}
+.empty .ex{display:grid;grid-template-columns:1fr;gap:12px;margin-top:24px;text-align:left}
+@media (min-width:600px){.empty .ex{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}}
+.empty .ex button{
+  padding:18px 20px;text-align:left;background:var(--panel);border:1px solid var(--line);
+  border-radius:16px;color:var(--ink);display:flex;flex-direction:column;align-items:flex-start;
+  gap:2px;white-space:normal;box-shadow:var(--e1);word-break:break-word;
+}
+.empty .ex button:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 8px 24px -8px color-mix(in srgb, var(--accent) 40%, transparent);background:var(--panel)}
 .empty .ex .t{font-weight:600;font-size:13.5px;color:var(--ink)}
 .empty .ex .s{font-size:12px;color:var(--muted);line-height:1.5}
 
 #composer{padding:12px 0 20px;background:var(--bg);border-top:1px solid var(--line);position:relative}
 #composer .col{position:relative}
-.box{display:flex;gap:10px;align-items:flex-end;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px;box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s}
-.box:focus-within{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent), var(--shadow-sm)}
-.box textarea{flex:1;border:0;resize:none;max-height:220px;padding:8px 4px;background:transparent;line-height:1.55}
+.box{display:flex;gap:10px;align-items:flex-end;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px;box-shadow:var(--e1);transition:border-color .15s,box-shadow .15s}
+.box:focus-within{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent), var(--e1)}
+.box textarea{flex:1;min-width:0;border:0;resize:none;max-height:220px;padding:8px 4px;background:transparent;line-height:1.55;font-size:16px}
 .box textarea:focus{outline:none;box-shadow:none;border-color:transparent}
 #attach{padding:8px 10px;border-radius:var(--radius-sm);font-size:16px;background:transparent;border:0}
 #attach:hover{background:var(--bg-2)}
@@ -241,10 +274,9 @@ label.tog input{display:none}
 #micBtn{padding:8px 10px;border-radius:var(--radius-sm);font-size:16px;background:transparent;border:0}
 #micBtn:hover{background:var(--bg-2)}
 #micBtn.rec{background:var(--bad-bg);color:var(--bad);animation:pulse 1.2s infinite}
-#sttStatus{font-size:11px;color:var(--muted);padding:0 4px}
 
 .status{margin:0 0 8px}
-.status-card{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow-sm)}
+.status-card{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--e1)}
 .status-card .title{display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:4px}
 .status-card .title .spin{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite;flex:none}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
@@ -252,25 +284,38 @@ label.tog input{display:none}
 .status-card ul{margin:8px 0 0;padding-left:1.2em;color:var(--muted);font-size:12px;max-height:120px;overflow:auto}
 .status-card .foot{display:flex;justify-content:flex-end;margin-top:8px}
 
+.typing .bubble{display:flex;gap:4px;padding:14px 18px}
+.typing .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:typing 1.4s infinite ease-in-out}
+.typing .dot:nth-child(2){animation-delay:.15s}
+.typing .dot:nth-child(3){animation-delay:.3s}
+@keyframes typing{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+
 .msg-actions{display:flex;gap:6px;margin-top:6px;opacity:0;pointer-events:none;transition:opacity .2s}
 .msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;pointer-events:auto}
 @media (hover:none){.msg-actions{opacity:1}}
-.msg-actions button{padding:3px 9px;font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);transition:all .2s;font-weight:500}
+.msg-actions button{padding:3px 9px;font-size:11px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);transition:all .2s;font-weight:500;box-shadow:none}
 .msg-actions button:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.copy-code{position:absolute;top:10px;right:10px;padding:3px 8px;font-size:11px;opacity:0;transition:opacity .2s;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:var(--radius-sm);color:var(--code-ink);font-weight:500}
+.copy-code{position:absolute;top:10px;right:10px;padding:3px 8px;font-size:11px;opacity:0;transition:opacity .2s;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:var(--radius-sm);color:var(--code-ink);font-weight:500;box-shadow:none}
 div:hover>.copy-code{opacity:1}
 .copy-code:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 
 .tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel-2)}
-.tabs button{flex:1;border:0;border-radius:0;background:none;padding:12px 8px;color:var(--muted);border-bottom:2px solid transparent;font-weight:500;transition:color .15s,border-color .15s,background .15s}
+.tabs button{flex:1;border:0;border-radius:0;background:none;padding:12px 8px;color:var(--muted);border-bottom:2px solid transparent;font-weight:500;transition:color .15s,border-color .15s,background .15s;box-shadow:none}
 .tabs button:hover{color:var(--ink-2);background:var(--bg-2)}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
 
 .pane{overflow:auto;padding:14px;flex:1;display:none;background:var(--bg)}
 .pane.on{display:block}
 
-.card{border:1px solid var(--line);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:14px;background:var(--panel);box-shadow:var(--shadow-sm)}
-.card h3{margin:0 0 10px;font-size:13.5px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink)}
+.card{border:1px solid var(--line);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:14px;background:var(--panel);box-shadow:var(--e1)}
+.card h3{margin:0 0 10px;font-size:16px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink)}
+.card-hero{
+  background:linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 6%, var(--panel)),
+    var(--panel) 80%);
+  border:1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius:16px;padding:20px;box-shadow:var(--e2);
+}
 
 .row{display:flex;gap:8px;margin:8px 0;align-items:center;flex-wrap:wrap}
 .row>input{flex:1;min-width:0}
@@ -282,7 +327,7 @@ div:hover>.copy-code{opacity:1}
 .badge.g{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:var(--ok-bg)}
 .badge.w{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:var(--warn-bg)}
 .badge.r{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);background:var(--bad-bg)}
-.badge.i{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft)}
+.badge.i{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-bg)}
 
 .keys{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;max-height:320px;overflow:auto}
 .k{display:flex;gap:8px;align-items:center;padding:6px 4px;font-size:12.5px;border-radius:var(--radius-sm);transition:background .12s}
@@ -291,13 +336,13 @@ div:hover>.copy-code{opacity:1}
 .k .dot.rate,.k .dot.server,.k .dot.network{background:var(--warn);box-shadow:0 0 0 2px color-mix(in srgb,var(--warn) 20%,transparent)}
 .k .dot.quota{background:#ea580c;box-shadow:0 0 0 2px rgba(234,88,12,.2)}
 .k .dot.auth,.k .dot.billing{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 20%,transparent)}
-.k .nm{width:100px;font-weight:600;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
-.k .mk{width:100px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--line)}
+.k .nm{width:100px;font-weight:600;font-family:var(--font-mono);font-size:12px}
+.k .mk{width:100px;color:var(--muted);font-family:var(--font-mono);font-size:11.5px;padding:1px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--line)}
 .k .info{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .k button{padding:2px 8px;font-size:11.5px;min-height:24px}
-.k input{padding:3px 8px;font-size:12px;max-width:200px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.k input{padding:3px 8px;font-size:12px;max-width:200px;font-family:var(--font-mono)}
 
-textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,monospace;line-height:1.5;resize:vertical}
+textarea.keysbox{width:100%;height:76px;font:12px var(--font-mono);line-height:1.5;resize:vertical}
 
 .files .f{display:flex;gap:10px;padding:8px 6px;border-bottom:1px solid var(--line);font-size:13px;align-items:center;border-radius:var(--radius-sm);transition:background .12s}
 .files .f:hover{background:var(--bg)}
@@ -305,8 +350,7 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
 .files a{color:var(--accent);text-decoration:none;font-weight:500}
 .files a:hover{text-decoration:underline}
 
-/* MCP panel */
-.mcp-card{border:1px solid var(--line);border-radius:var(--radius-lg);padding:12px 14px;margin-bottom:12px;background:var(--panel);box-shadow:var(--shadow-sm)}
+.mcp-card{border:1px solid var(--line);border-radius:var(--radius-lg);padding:12px 14px;margin-bottom:12px;background:var(--panel);box-shadow:var(--e1)}
 .mcp-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mcp-hd .nm{font-weight:600;font-size:13.5px}
 .mcp-hd .tools{color:var(--muted);font-size:12px}
@@ -314,7 +358,7 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
 .mcp-form{display:grid;grid-template-columns:1fr;gap:6px;margin-top:10px}
 .mcp-form label{font-size:11.5px;color:var(--muted);font-weight:500}
 .mcp-form input,.mcp-form textarea{width:100%}
-.mcp-form textarea{font:12px ui-monospace,Menlo,Consolas,monospace;min-height:64px;resize:vertical}
+.mcp-form textarea{font:12px var(--font-mono);min-height:64px;resize:vertical}
 .mcp-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap}
 .mcp-reg{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-2);margin-top:8px}
 .mcp-row{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
@@ -326,26 +370,26 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
 .mcp-row .d{font-size:12px;color:var(--muted);margin-top:2px;word-break:break-word}
 .mcp-row .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
 
-#modal,#confirm{position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+#modal,#confirm{position:fixed;inset:0;background:rgba(20,17,14,.55);backdrop-filter:blur(8px) saturate(120%);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;animation:fadeIn .15s ease}
 #modal.on,#confirm.on{display:flex}
-#modal .dlg,#confirm .dlg{background:var(--panel);border-radius:var(--radius-xl);width:100%;padding:22px;box-shadow:var(--shadow-lg);border:1px solid var(--line);animation:pop .15s ease;display:flex;flex-direction:column}
+#modal .dlg,#confirm .dlg{background:var(--panel);border-radius:var(--radius-xl);width:100%;padding:22px;box-shadow:var(--e4);border:1px solid var(--line);animation:pop .2s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column}
 #modal .dlg{max-width:640px}
 #confirm .dlg{max-width:460px}
 @keyframes pop{from{opacity:0;transform:scale(.97) translateY(4px)}to{opacity:1;transform:none}}
 #modal h3,#confirm h3{margin:0 0 12px !important;font-size:16px;letter-spacing:-.01em;color:var(--ink)}
-#modal pre{background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;font:12.5px ui-monospace,Menlo,Consolas,monospace;line-height:1.55;min-width:0;min-height:0}
+#modal pre{background:var(--code);color:var(--code-ink);padding:14px;border-radius:var(--radius);overflow:auto;max-height:44vh;white-space:pre-wrap;word-break:break-word;font:12.5px var(--font-mono);line-height:1.55;min-width:0;min-height:0}
 #confirm .msg{color:var(--ink-2);margin:0 0 20px;white-space:pre-wrap;line-height:1.6;font-size:13.5px}
 #confirm .actions{display:flex;justify-content:flex-end;gap:8px}
 
 #toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:60;max-width:90vw;align-items:center}
-.toast{background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--radius);opacity:0;transition:opacity .2s,transform .2s;max-width:90vw;font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);transform:translateY(4px)}
+.toast{background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--radius);opacity:0;transition:opacity .2s,transform .2s;max-width:90vw;font-size:13px;font-weight:500;box-shadow:var(--e4);transform:translateY(4px)}
 .toast.on{opacity:1;transform:none}
 
-#scrollDown{position:fixed;right:24px;bottom:130px;z-index:15;border-radius:999px;padding:8px 16px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);display:none;font-size:12px;font-weight:500}
+#scrollDown{position:fixed;right:24px;bottom:130px;z-index:15;border-radius:999px;padding:8px 16px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--e3);display:none;font-size:12px;font-weight:500}
 #scrollDown.on{display:inline-flex}
 #scrollDown:hover{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 
-#browse .dlg{background:var(--panel);border-radius:var(--radius-xl);border:1px solid var(--line);padding:22px;width:100%;max-width:840px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column}
+#browse .dlg{background:var(--panel);border-radius:var(--radius-xl);border:1px solid var(--line);padding:22px;width:100%;max-width:840px;box-shadow:var(--e4);display:flex;flex-direction:column;animation:pop .2s cubic-bezier(.2,.8,.2,1)}
 .crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 0;font-size:12.5px;min-width:0}
 .crumbs .crumb{padding:2px 8px;border-radius:var(--radius-sm);font-size:12.5px}
 .crumbs .crumb.cur{color:var(--ink);font-weight:600;background:var(--accent-soft)}
@@ -359,168 +403,6 @@ textarea.keysbox{width:100%;height:76px;font:12px ui-monospace,Menlo,Consolas,mo
 #browse .listing .f:focus{outline:2px solid var(--accent);outline-offset:-2px}
 #browse .listing .f .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-@media (max-width:900px){
-  #app,#app.rightopen{grid-template-columns:0 minmax(0,1fr) 0}
-  #left{position:fixed;inset:0 auto 0 0;width:280px;max-width:82vw;z-index:10;transform:translateX(-100%);transition:transform .2s}
-  #app.leftopen #left{transform:none;box-shadow:var(--shadow-lg)}
-  #right{position:fixed;inset:0;z-index:12;display:none;width:100%}
-  #app.rightopen #right{display:flex}
-  .col{padding:0 16px}
-  header{padding:10px 14px 10px 52px}
-  .scroll-sec.shells{max-height:24%}
-}
-@media (min-width:901px){.only-small{display:none}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}}
-
-/* ============================================================
-   POLISH — overrides, appended so they win by cascade order.
-   Delete this whole block down to the end of the <style> element
-   to revert to the original palette; everything below is layout-neutral.
-   ============================================================ */
-
-/* Warm neutrals + sharper accent (light). Cold slate -> warm paper. */
-:root{
-  --bg:#faf9f6; --bg-2:#f2f0eb;
-  --panel:#ffffff; --panel-2:#fcfbf8;
-  --line:#e8e4dc; --line-2:#d6d0c4;
-  --ink:#1a1815; --ink-2:#45403a;
-  --muted:#7a7268; --muted-2:#a8a094;
-  --accent:#c2410c; --accent-2:#ea580c;
-  --accent-ink:#ffffff;
-  --accent-soft:#fef3ec; --accent-soft-2:#fed7c3;
-  --ok:#0d9488; --warn:#b45309; --bad:#b91c1c;
-  --user:#eef0ff; --user-line:#d8dcff;
-  --code:#1c1917; --code-ink:#e7e5e4;
-  /* Four-step elevation scale (e0 = none). Each child sits at least
-     one level above its parent. */
-  --e1:0 1px 2px rgba(26,24,21,.04), 0 1px 1px rgba(26,24,21,.03);
-  --e2:0 2px 4px rgba(26,24,21,.05), 0 4px 12px -2px rgba(26,24,21,.06);
-  --e3:0 4px 8px rgba(26,24,21,.06), 0 12px 32px -8px rgba(26,24,21,.10);
-  --e4:0 8px 16px rgba(26,24,21,.08), 0 32px 64px -16px rgba(26,24,21,.20);
-  --font-sans:system-ui,-apple-system,"Segoe UI Variable","Segoe UI",Roboto,sans-serif;
-  --font-mono:"JetBrains Mono","SF Mono","Cascadia Code",ui-monospace,Menlo,monospace;
-}
-@media (prefers-color-scheme:dark){:root{
-  --bg:#14110e; --bg-2:#1c1815;
-  --panel:#1f1b17; --panel-2:#252019;
-  --line:#2e2823; --line-2:#3f372f;
-  --ink:#f5f1ea; --ink-2:#d6cec3;
-  --muted:#9a8f82; --muted-2:#6b6055;
-  --accent:#fb923c; --accent-2:#fdba74;
-  --accent-ink:#14110e;
-  --accent-soft:#2a1f14; --accent-soft-2:#3f2e1c;
-  --ok:#2dd4bf; --warn:#fbbf24; --bad:#f87171;
-  --user:#1e1b2e; --user-line:#2e2950;
-  --code:#0f0d0b; --code-ink:#e7e5e4;
-}}
-
-/* Type scale: 14.5px base (Slack/Discord/Linear range), 1.65 line-height */
-body{font:14.5px/1.65 var(--font-sans);letter-spacing:-.005em}
-.bubble{line-height:1.65}
-.bubble pre,.tool pre{font-family:var(--font-mono)}
-.card h3{font-size:16px;font-weight:600;letter-spacing:-.01em}
-
-/* Chat bubbles get real depth + a speech-bubble tail */
-.asst .bubble{
-  background:var(--panel);border:1px solid var(--line);
-  border-radius:16px;border-bottom-left-radius:4px;
-  box-shadow:var(--e1);
-}
-.asst .bubble:hover{box-shadow:var(--e2);border-color:var(--line-2)}
-.user .bubble{
-  background:var(--user);
-  border:1px solid var(--user-line);border-bottom-right-radius:4px;
-}
-
-/* Buttons: three levels (primary, secondary default, ghost inline) */
-button{
-  box-shadow:var(--e1);
-  transition:border-color .15s,box-shadow .15s,transform .1s,background .15s,color .15s;
-}
-button:hover:not(:disabled){
-  border-color:var(--line-2);box-shadow:var(--e2);transform:translateY(-1px);
-}
-button.primary{
-  background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
-  box-shadow:0 1px 2px rgba(194,65,12,.2),inset 0 1px 0 rgba(255,255,255,.15);
-}
-button.primary:hover:not(:disabled){
-  background:var(--accent-2);border-color:var(--accent-2);
-  box-shadow:0 2px 6px rgba(194,65,12,.25),inset 0 1px 0 rgba(255,255,255,.15);
-}
-button.ghost{background:transparent;border-color:transparent;box-shadow:none}
-button.ghost:hover:not(:disabled){background:var(--bg-2);box-shadow:none;transform:none}
-
-/* Hero card for "Add a service" — the single most important card on first run */
-.card-hero{
-  background:linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 6%, var(--panel)),
-    var(--panel) 80%);
-  border:1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
-  border-radius:16px;padding:20px;box-shadow:var(--e2);
-}
-
-/* Empty state with a hero moment + glow on the brand mark */
-.empty{max-width:760px;margin:6vh auto 0;padding:0 16px}
-.empty h2{font-size:clamp(20px,3vw,32px);font-weight:700;letter-spacing:-.03em;margin:0 0 12px}
-.empty .ex{grid-template-columns:1fr;gap:12px;margin-top:28px}
-@media (min-width:600px){.empty .ex{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}}
-.empty .ex button{
-  background:var(--panel);border:1px solid var(--line);border-radius:16px;
-  padding:18px 20px;box-shadow:var(--e1);
-  transition:border-color .15s,box-shadow .15s,transform .15s;
-  word-break:break-word;
-}
-.empty .ex button:hover{
-  border-color:var(--accent);
-  box-shadow:0 8px 24px -8px color-mix(in srgb, var(--accent) 40%, transparent);
-  transform:translateY(-2px);
-}
-
-/* Tool card: primary arg on the summary line, dark pre with hanging radius */
-.tool summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px}
-.tool summary .a{flex:1 1 100%;order:3;font-size:12px;color:var(--muted)}
-@media (min-width:600px){
-  .tool summary{flex-wrap:nowrap}
-  .tool summary .a{flex:1 1 auto;order:0}
-}
-.tool pre{
-  background:var(--code);color:var(--code-ink);
-  border-radius:0 0 12px 12px;padding:12px 14px;
-  font:12.5px/1.55 var(--font-mono);
-  max-height:280px;overflow:auto;
-}
-@media (max-width:767px){.tool pre{max-height:200px}}
-
-/* Typing dots — shown while the model is generating, before the first token */
-.typing .bubble{display:flex;gap:4px;padding:14px 18px}
-.typing .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);
-  animation:typing 1.4s infinite ease-in-out}
-.typing .dot:nth-child(2){animation-delay:.15s}
-.typing .dot:nth-child(3){animation-delay:.3s}
-@keyframes typing{
-  0%,60%,100%{opacity:.3;transform:translateY(0)}
-  30%{opacity:1;transform:translateY(-3px)}
-}
-
-/* Amber pulsing status dot while a tool is running */
-.tool[data-status="run"] .st{
-  animation:pulse 1.2s infinite;
-  background:var(--warn);
-}
-
-/* Modals: spring pop + stronger glass effect */
-#modal,#confirm,#browse{
-  background:rgba(20,17,14,.55);
-  backdrop-filter:blur(8px) saturate(120%);
-  animation:fadeIn .15s ease;
-}
-#modal .dlg,#confirm .dlg,#browse .dlg{
-  animation:pop .2s cubic-bezier(.2,.8,.2,1);
-}
-
-/* Responsive: 4 tiers. Below 1023px, BOTH panels are drawers. */
-#app{height:100vh;height:100dvh}
 @media (max-width:1023px){
   #app,#app.rightopen{grid-template-columns:240px minmax(0,1fr) 0}
   #right{
@@ -533,6 +415,8 @@ button.ghost:hover:not(:disabled){background:var(--bg-2);box-shadow:none;transfo
 }
 @media (max-width:767px){
   #app,#app.rightopen,#app.leftcollapsed{grid-template-columns:minmax(0,1fr) 0}
+  /* On phones the collapsed state is unused; make sure the ☰ is not shown. */
+  #app.leftcollapsed #expand-left{display:none !important}
   #left{
     position:fixed;top:0;left:0;bottom:0;width:min(300px,88vw);max-width:100%;
     transform:translateX(-100%);
@@ -546,15 +430,7 @@ button.ghost:hover:not(:disabled){background:var(--bg-2);box-shadow:none;transfo
   .bubble{max-width:92%}
   #scrollDown{bottom:100px;right:12px}
 }
-/* Composer: min-width:0 on the textarea so flexbox can shrink it;
-   16px font prevents iOS zoom-on-focus. */
-.box textarea{flex:1;min-width:0;font-size:16px}
-main{min-width:0}
-/* On touch devices, don't hide per-message actions behind :hover */
-@media (hover:none){
-  .sess button{opacity:1}
-  .msg-actions{opacity:1}
-}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}}
 </style>
 </head>
 <body>
@@ -578,8 +454,7 @@ main{min-width:0}
   <main>
     <button id="expand-left" class="ghost" title="Expand sidebar" aria-label="Expand sidebar">☰</button>
     <header>
-      <button class="ghost only-small" id="menuBtn" title="Chats" aria-label="Chats">☰</button>
-      <button class="chip" id="wsChip" title="Click to change the agent's workspace (browse your entire PC)"></button>
+        <button class="chip" id="wsChip" title="Click to change the agent's workspace (browse your entire PC)"></button>
       <button class="chip" id="routeChip" title="Click for the full route (pool, model, key)">no request yet</button>
       <span class="sp"></span>
       <div class="toggle-group">
@@ -684,19 +559,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
 };
 
-/* ----------------------------------------------------------------
-   Focus preservation.
-
-   Every panel re-render (renderKeys, renderMcp, loadFiles, …) rebuilds
-   its DOM, which destroys whatever element had focus. Without help, the
-   browser drops focus to <body> and the user's next keystroke is lost.
-
-   Two mechanisms fix this:
-     * withFocus(fn) snapshots document.activeElement by a stable id /
-       data-persist key, runs fn(), then restores focus to the same key.
-     * a "typing lock": while the user has text in #inp and is not in a
-       modal, an accidental blur back to <body> is refocused to #inp.
-   ---------------------------------------------------------------- */
+/* Focus preservation */
 function _focusKey(el) {
   if (!el || el === document.body || el === document.documentElement) return null;
   if (el.id) return { kind: "id", key: el.id };
@@ -714,7 +577,7 @@ function _findByFocusKey(fk) {
   }
   return null;
 }
-let _focusRestore = null;    // pending restore, set by withFocus
+let _focusRestore = null;
 function withFocus(fn) {
   const el = document.activeElement;
   const fk = _focusKey(el);
@@ -723,7 +586,6 @@ function withFocus(fn) {
   try { return fn(); }
   finally {
     _focusRestore = { fk, selStart, selEnd };
-    // Restore on the next frame so the DOM is fully rebuilt first.
     requestAnimationFrame(() => {
       const r = _focusRestore;
       _focusRestore = null;
@@ -809,13 +671,9 @@ function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.client
 function scrollToBottom() {
   logEl.scrollTop = logEl.scrollHeight;
   $("#scrollDown").classList.remove("on");
-  // Return focus to the composer so the user can keep typing immediately.
   const inp = $("#inp");
   if (inp) { try { inp.focus({ preventScroll: true }); } catch (_) {} }
 }
-// Show the "new messages" pill whenever the user is scrolled away from the
-// bottom, regardless of whether the agent is busy. The old version only
-// showed it while `busy`, so scrolling up to read history hid the way back.
 function maybeShowScrollDown() { $("#scrollDown").classList.toggle("on", !atBottom()); }
 logEl.addEventListener("scroll", maybeShowScrollDown);
 $("#scrollDown").onclick = scrollToBottom;
@@ -825,7 +683,7 @@ function add(el) {
   clearEmpty();
   msgs.append(el);
   if (stick) scrollToBottom();
-  else maybeShowScrollDown();   // surface the pill as soon as new content lands
+  else maybeShowScrollDown();
   return el;
 }
 function clearEmpty() { const e = $("#emptyState"); if (e) e.remove(); }
@@ -893,10 +751,6 @@ function setBusy(b, reset = true) {
   if (reset) statusState = {};
   renderStatus();
   maybeShowScrollDown();
-  // Hiding the focused button drops focus to <body>. Put the user back in
-  // the composer instead so they can keep typing the next message. We do
-  // this for BOTH transitions (busy -> idle and idle -> busy) because the
-  // Send/Stop buttons swap visibility each time.
   if (hadFocus) {
     requestAnimationFrame(() => {
       if (document.activeElement === document.body && $("#inp")) {
@@ -904,7 +758,6 @@ function setBusy(b, reset = true) {
       }
     });
   }
-  // When the run finishes, jump to the bottom so the final answer is visible.
   if (!b) {
     requestAnimationFrame(() => { scrollToBottom(); });
   }
@@ -957,8 +810,6 @@ function render(ev) {
       if (dt && dt.dataset.t0) { const s = ((performance.now() - Number(dt.dataset.t0)) / 1000).toFixed(1); dt.textContent = s + "s"; }
       if (!d.querySelector("pre.stream")) d.append(h("pre", { text: ev.text }));
       else if (!ev.ok) d.append(h("pre", { text: "ERROR (see stream above):\n" + ev.text }));
-      // If the displayed output looks clipped (>= 1500 chars), offer a
-      // link to the full result from history.
       if ((ev.text || "").length >= 1500 && ev.id) {
         const a = h("a", {
           href: `/api/tool_result?session=${encodeURIComponent(sid)}&id=${encodeURIComponent(ev.id)}`,
@@ -982,8 +833,6 @@ function render(ev) {
       pre.firstChild.appendData(ev.text);
       const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
       if (nearBottom) pre.scrollTop = pre.scrollHeight;
-      // Only auto-scroll the main log if the user is already at the bottom.
-      // If they scrolled up to read, leave them there and show the pill.
       if (atBottom()) scrollToBottom(); else maybeShowScrollDown();
       return;
     }
@@ -999,8 +848,6 @@ function render(ev) {
       return;
     }
     case "error": {
-      // Errors end the run; put focus back in the composer so the user can
-      // retype immediately instead of clicking into the box.
       const el = add(h("div", { class: "note err" },
         h("div", { text: ev.text }),
         h("div", { style: "margin-top:6px" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
@@ -1029,14 +876,9 @@ async function poll() {
       for (const ev of d.events) { if (ev.type === "user") continue; if (ev.type === "done") done = true; else render(ev); }
       if (done || (!d.busy && !d.events.length)) {
         setBusy(false);
-        // Refresh panels without interrupting the composer. refreshKeys()
-        // already skips when its pane has focus; the others are guarded
-        // by withFocus internally.
         refreshKeys();
         loadSessions();
         loadShellJobs();
-        // Guarantee the final answer is on screen even if the user never
-        // scrolled during the run.
         requestAnimationFrame(() => { scrollToBottom(); });
         break;
       }
@@ -1049,8 +891,6 @@ async function send() {
   const t = inp.value.trim(); if (!t || busy) return;
   const restore = inp.value;
   inp.value = ""; autoGrow();
-  // Keep the composer focused after sending; the user almost certainly
-  // wants to keep typing, and Clear-empty-then-blur feels broken.
   try { inp.focus({ preventScroll: true }); } catch (_) {}
   store.set("omni_draft_" + sid, "");
   try {
@@ -1075,7 +915,7 @@ async function doStop() {
 }
 function autoGrow() { const i = $("#inp"); i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight, 200) + "px"; }
 
-/* ---------------- STT (speech-to-text) ---------------- */
+/* ---------------- STT ---------------- */
 let sttActive = false, sttCursor = 0, sttPollTimer = null;
 
 async function sttRefreshStatus() {
@@ -1107,53 +947,30 @@ async function sttStart() {
   $("#micBtn").classList.add("rec");
   $("#micBtn").textContent = "⏹";
   toast("Listening… speak now (click the mic again to stop)", 4000);
-  // Poll for transcripts every 200ms.
   const pollOnce = async () => {
     if (!sttActive) return;
     try {
       const d = await api(`/api/stt/poll?after=${sttCursor}`);
-      if (!d.active) {
-        sttStop(true);
-        return;
-      }
-      if (d.error) {
-        toast("STT error: " + d.error, 6000);
-        sttStop(true);
-        return;
-      }
+      if (!d.active) { sttStop(true); return; }
+      if (d.error) { toast("STT error: " + d.error, 6000); sttStop(true); return; }
       for (const ev of d.events) {
         sttCursor = Math.max(sttCursor, ev.t);
-        if (ev.type === "partial") {
-          // Show the partial in the textarea, replacing the previous
-          // partial tail. We keep a marker of where the partial started
-          // so the user's existing text isn't clobbered.
-          sttRenderPartial(inp, startVal + sep, ev.text);
-        } else if (ev.type === "final") {
-          // Commit the final text and reset the partial region.
+        if (ev.type === "partial") sttRenderPartial(inp, startVal + sep, ev.text);
+        else if (ev.type === "final") {
           sttRenderPartial(inp, startVal + sep, "");
           inp.value = (startVal + sep + ev.text + " ").replace(/\s+$/, " ") + (startVal ? "" : "");
           autoGrow();
         }
       }
-    } catch (e) {
-      // Ignore transient poll failures; the next tick will retry.
-    }
+    } catch (e) {}
     if (sttActive) sttPollTimer = setTimeout(pollOnce, 200);
   };
   sttPollTimer = setTimeout(pollOnce, 200);
 }
 
 function sttRenderPartial(inp, prefix, partial) {
-  // The textarea content is "prefix" + (current partial). We can't know
-  // where the partial began unless we track it, so we rebuild from the
-  // prefix on every call. If the user has edited the textarea while
-  // dictating, this will clobber their edit — acceptable trade-off for
-  // the simplicity.
-  if (partial) {
-    inp.value = prefix + partial;
-  } else {
-    inp.value = prefix;
-  }
+  if (partial) inp.value = prefix + partial;
+  else inp.value = prefix;
   autoGrow();
 }
 
@@ -1166,10 +983,7 @@ async function sttStop(silent) {
   if (!silent) toast("Stopped listening");
 }
 
-$("#micBtn").onclick = () => {
-  if (sttActive) sttStop(false);
-  else sttStart();
-};
+$("#micBtn").onclick = () => { if (sttActive) sttStop(false); else sttStart(); };
 sttRefreshStatus();
 setInterval(sttRefreshStatus, 30000);
 
@@ -1199,11 +1013,8 @@ let _sessSearchTimer = null;
 async function loadSessions() {
   const q = ($("#sessSearch").value || "").trim();
   try {
-    // Server-side search when the user is typing; otherwise the 40 newest.
     const url = q ? `/api/sessions?q=${encodeURIComponent(q)}` : "/api/sessions";
     sessionsCache = await api(url);
-    // Snapshot focus *inside* the sidebar before we rebuild #sessions. If
-    // the user is typing in #sessSearch, renderSessions must not blur it.
     const focused = document.activeElement;
     const wasSearch = focused === $("#sessSearch");
     const searchSel = wasSearch ? [focused.selectionStart, focused.selectionEnd] : null;
@@ -1221,7 +1032,6 @@ async function loadSessions() {
 
 async function loadShellJobs() {
   const box = $("#shelljobs"); if (!box) return;
-  // Never touch focus: this runs every 5s and must not interrupt typing.
   try {
     const d = await api("/api/shell_jobs");
     window.__shellJobs = d.jobs || [];
@@ -1235,12 +1045,8 @@ async function loadShellJobs() {
       h("span", { class: "nm", text: j.cmd.slice(0, 26) }),
       j.alive ? h("span", { title: "Running", text: "●", style: "color:var(--ok);font-size:10px" })
               : h("span", { title: "Exited", text: "○", style: "color:var(--muted);font-size:10px" }),
-      // Copy the job id so the user can reference it in a prompt or terminal.
       h("button", { text: "⧉", title: "Copy job id (" + j.id + ")", "aria-label": "Copy job id",
         onclick: (e) => { e.stopPropagation(); copyText(j.id); } }),
-      // Open the live log in a new tab. The endpoint streams the file as
-      // text/plain; for a running server this is the equivalent of `tail -f`
-      // on refresh.
       h("button", { text: "log", title: "Open this job's log", "aria-label": "Open log",
         onclick: (e) => {
           e.stopPropagation();
@@ -1248,7 +1054,6 @@ async function loadShellJobs() {
           window.open("/api/shell_jobs/log?job_id=" + encodeURIComponent(j.id),
                       "_blank", "noopener,noreferrer");
         } }),
-      // Kill with a confirmation so a stray click can't take down a dev server.
       h("button", { class: "danger", text: "stop", title: "Kill this shell", disabled: !j.alive,
         onclick: async (e) => {
           e.stopPropagation();
@@ -1259,7 +1064,6 @@ async function loadShellJobs() {
         } })
     )));
   } catch (e) { box.textContent = ""; }
-  // No focus restore — this pane is never the focus target.
 }
 
 function renderSessions() {
@@ -1290,7 +1094,6 @@ function renderSessions() {
   }
 }
 $("#sessSearch").addEventListener("input", () => {
-  // Debounce the server-side search: only fire when the user pauses typing.
   clearTimeout(_sessSearchTimer);
   _sessSearchTimer = setTimeout(loadSessions, 200);
 });
@@ -1336,17 +1139,10 @@ function promptDlg(title, msg, initial = "") {
   $("#confirmYes").textContent = "Save";
   $("#confirm").classList.add("on");
   setTimeout(() => { box.focus(); box.select(); }, 0);
-  // Enter inside the input submits; Escape cancels — without relying on the
-  // global handler (which the browser may deliver to the input first).
   box.onkeydown = (e) => {
     if (e.isComposing) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      closePrompt(box.value ?? "");
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      closePrompt(null);
-    }
+    if (e.key === "Enter") { e.preventDefault(); closePrompt(box.value ?? ""); }
+    else if (e.key === "Escape") { e.preventDefault(); closePrompt(null); }
   };
   return new Promise(resolve => { _promptResolve = resolve; });
 }
@@ -1370,14 +1166,11 @@ function askApproval(ev) {
   $("#modalAction").textContent = ev.text;
   $("#modalRemember").checked = false;
   $("#modalRemember").parentElement.style.display = ev.tool ? "" : "none";
-  // Show the tool name in the header, with a color-coded icon.
   const hdr = $("#modalTitle");
   const t = ev.tool || "action";
   hdr.textContent = `Omni wants to ${t === "run_shell" ? "run a shell command" : (ev.tool ? `use ${t}` : "act")}`;
   hdr.title = `Chat: ${sid} · Tool: ${t}`;
   $("#modal").classList.add("on");
-  // Focus the Allow button so a bare Enter approves; the user can Tab to
-  // Deny or to the "don't ask again" checkbox.
   setTimeout(() => { try { $("#allow").focus(); } catch (_) {} }, 0);
 }
 function closeModal() { pendingApproval = null; $("#modal").classList.remove("on"); }
@@ -1390,18 +1183,9 @@ async function answer(allow) {
 }
 document.addEventListener("keydown", e => {
   if (e.isComposing) return;
-
-  // ---- approval modal (#modal): Escape = Deny, Enter = click the focused
-  // button (or Allow when focus is elsewhere, e.g. the checkbox/label).
   if ($("#modal").classList.contains("on")) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      answer(false);
-      return;
-    }
+    if (e.key === "Escape") { e.preventDefault(); answer(false); return; }
     if (e.key === "Enter") {
-      // If the user explicitly focused Deny, honor that. Otherwise default
-      // to Allow — matching the visual "primary" button.
       const focused = document.activeElement;
       e.preventDefault();
       if (focused && focused.id === "deny") answer(false);
@@ -1410,8 +1194,6 @@ document.addEventListener("keydown", e => {
     }
     return;
   }
-
-  // ---- confirm / prompt dialog (#confirm)
   if ($("#confirm").classList.contains("on")) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -1422,14 +1204,9 @@ document.addEventListener("keydown", e => {
       const focused = document.activeElement;
       e.preventDefault();
       if (_promptResolve) {
-        // Prompt: Enter submits the text, unless focus is on Cancel.
         if (focused && focused.id === "confirmNo") closePrompt(null);
-        else {
-          const el = $("#confirmInput");
-          closePrompt(el ? (el.value ?? "") : null);
-        }
+        else { const el = $("#confirmInput"); closePrompt(el ? (el.value ?? "") : null); }
       } else {
-        // Confirm: Enter = OK, unless focus is on Cancel.
         if (focused && focused.id === "confirmNo") closeConfirm(false);
         else closeConfirm(true);
       }
@@ -1437,11 +1214,7 @@ document.addEventListener("keydown", e => {
     }
     return;
   }
-
-  // ---- workspace browser (#browse)
-  if ($("#browse") && e.key === "Escape") {
-    $("#browse").remove();
-  }
+  if ($("#browse") && e.key === "Escape") $("#browse").remove();
 });
 
 function entrable(input, action) {
@@ -1475,8 +1248,6 @@ function restoreInputs(snap) {
 async function refreshKeys(force, keepFocus = true, lite = true) {
   const pane = $("#pane-keys");
   if (!force && keepFocus && pane.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
-  // Background refreshes use lite=1 (no per-key model lists) to keep the
-  // payload small. The initial load and "Refresh all" use the full state.
   const url = lite ? "/api/state?lite=1" : "/api/state";
   try { S = await api(url); } catch (e) { return; }
   for (const p of S.pools || []) {
@@ -1514,7 +1285,15 @@ function _renderKeysInner() {
       h("select", { onchange: e => act(() => api("/api/strategy", { strategy: e.target.value }), "Strategy saved") },
         ...S.strategies.map(s => h("option", { value: s, selected: s === S.strategy,
           text: s === "round_robin" ? "round robin — spread calls over all keys" : "failover — use keys in order" })))),
-    h("div", { class: "small", text: "Keys are scored by health, so a flaky key is deprioritized automatically. Rate limits cool the key; model-not-found cools the whole pool; daily quotas cool until midnight Pacific. Short limits are waited out (up to " + S.max_wait + "s)." })));
+    h("div", { class: "small", text: "Keys are scored by health, so a flaky key is deprioritized automatically. Rate limits cool the key; model-not-found cools the whole pool; daily quotas cool until midnight Pacific. The agent retries indefinitely (press Stop to cancel)." })));
+
+  pane.append(h("div", { class: "card" },
+    h("h3", { text: "Model selection" }),
+    h("div", { class: "row" },
+      h("select", { onchange: e => act(() => api("/api/modelmode", { mode: e.target.value }), "Model mode saved") },
+        h("option", { value: "manual", selected: (S.model_mode || "manual") === "manual", text: "manual — pool default + explicit fallbacks" }),
+        h("option", { value: "auto", selected: (S.model_mode || "manual") === "auto", text: "auto — rank discovered models per request" }))),
+    h("div", { class: "small", text: "auto mode ranks the models the provider advertises and walks the list until one answers. Per-pool, the Auto button below probes candidates with a tiny real call and picks a working main + fallback." })));
 
   pane.append(h("div", { class: "card" },
     h("h3", { text: "Models" }),
@@ -1549,7 +1328,7 @@ function fmtTime(s) { return s >= 3600 ? Math.round(s / 3600) + "h" : s >= 60 ? 
 function poolCard(p, idx, open) {
   const dl = h("datalist", { id: "dl-" + p.pool });
   (modelCache[p.pool] || []).forEach(m => dl.append(h("option", { value: m })));
-  const mIn = h("input", { value: p.model, list: "dl-" + p.pool, placeholder: "model id", spellcheck: false });
+  const mIn = h("input", { value: p.model, list: "dl-" + p.pool, placeholder: "model id", spellcheck: false, "data-persist": "model-" + p.pool });
   const note = h("span", { class: "small" });
   const loadModels = async refresh => {
     note.textContent = "loading model list…";
@@ -1568,7 +1347,23 @@ function poolCard(p, idx, open) {
     r => r.listed === false ? "Saved — but this model is not in the service's list, it may fail" : "Model set for all " + p.keys.length + " keys");
   entrable(mIn, applyModel);
 
-  const fbIn = h("input", { value: p.fallbacks.join(", "), placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash", spellcheck: false, list: "dl-" + p.pool });
+  const autoBtn = h("button", { class: "auto-btn", title: "Probe candidates with a tiny real call and pick a working main + fallback for this pool", text: "Auto",
+    onclick: async e => {
+      const t = e.target; t.textContent = "probing…"; t.disabled = true;
+      try {
+        const r = await api("/api/pool/auto", { pool: p.pool });
+        if (!r.saved) { toast(r.note || "No model answered — check keys/models", 6000); }
+        else {
+          toast(`${p.pool}: main=${r.main}` + (r.fallback ? `, fallback=${r.fallback}` : " (no distinct fallback)"), 6000);
+          mIn.value = r.main;
+          if (r.fallback) fbIn.value = r.fallback;
+          await refreshKeys(true, true, false);
+        }
+      } catch (err) { toast(err.message, 6000); }
+      finally { t.textContent = "Auto"; t.disabled = false; }
+    } });
+
+  const fbIn = h("input", { value: p.fallbacks.join(", "), placeholder: "optional, e.g. gemini-2.5-flash-lite, gemini-2.0-flash", spellcheck: false, list: "dl-" + p.pool, "data-persist": "fb-" + p.pool });
   const saveFb = () => act(async () => {
     const r = await api("/api/pool/fallbacks", { pool: p.pool, models: fbIn.value });
     if (r.dropped && r.dropped.length)
@@ -1624,7 +1419,7 @@ function poolCard(p, idx, open) {
         onclick: () => act(() => { const n = S.pools.map(x => x.pool); [n[idx + 1], n[idx]] = [n[idx], n[idx + 1]]; return api("/api/pool/order", { names: n }); }, null) })),
     h("div", { class: "small", text: p.base_url }),
     h("div", { class: "row" },
-      h("b", { text: "Model", style: "width:70px" }), mIn,
+      h("b", { text: "Model", style: "width:70px" }), mIn, autoBtn,
       h("button", { class: "primary", text: "Apply", onclick: applyModel }),
       h("button", { text: "List…", title: "Load the models this service offers", onclick: () => loadModels(true) })),
     dl, h("div", { class: "row" }, note),
@@ -1671,9 +1466,7 @@ function addServiceCard() {
     h("div", { class: "small", text: "Keys stay on this computer in data/providers.json and are never sent back to the browser." }));
 }
 
-/* ----------------------------------------------------------------
-   MCP panel
-   ---------------------------------------------------------------- */
+/* MCP */
 function parseEnvLines(text) {
   const out = {};
   for (const raw of (text || "").split(/\r?\n/)) {
@@ -1756,19 +1549,15 @@ function mcpEditor(m) {
   const cmd = h("input", { value: m.command || "", placeholder: "command (e.g. npx) — leave blank for remote", spellcheck: false });
   const args = h("input", { value: (m.args || []).join(" "), placeholder: "args, space-separated", spellcheck: false });
   const url = h("input", { value: m.url || "", placeholder: "remote URL (leave blank for local)", spellcheck: false });
-  // Prefill env from the existing names. Secret-looking values are shown as
-  // "***"; sending "***" back tells the server "keep the existing value".
   const prefilledEnv = (m.env_keys || []).map(k => `${k}=${looksSecret(k) ? "***" : ""}`).join("\n");
   const envIn = h("textarea", {
-    class: "keysbox",
-    spellcheck: false,
+    class: "keysbox", spellcheck: false,
     placeholder: "ENV vars, one KEY=VALUE per line. Use *** to keep an existing secret.",
   });
   envIn.value = prefilledEnv;
   const prefilledHeaders = (m.header_keys || []).map(k => `${k}: ***`).join("\n");
   const headersIn = h("textarea", {
-    class: "keysbox",
-    spellcheck: false,
+    class: "keysbox", spellcheck: false,
     placeholder: "HTTP headers (remote only), one Header: value per line. Use *** to keep an existing secret.",
   });
   headersIn.value = prefilledHeaders;
@@ -1946,7 +1735,6 @@ async function loadFiles() {
         h("button", { text: "Upload…", onclick: () => $("#fileIn").click() }),
         h("span", { class: "small", text: list.length + " file(s) in the workspace" })),
       h("div", { class: "files" }, ...list.map(f => {
-        // Inline for text/image; attachment for the rest.
         const path = f.path.toLowerCase();
         const inline = /\.(md|txt|json|xml|html|htm|css|js|ts|py|rs|go|c|cpp|h|java|sh|bash|zsh|yml|yaml|toml|ini|cfg|log|svg|png|jpg|jpeg|gif|webp|bmp|pdf)$/.test(path);
         const href = "/api/file?path=" + encodeURIComponent(f.path) + (inline ? "&inline=1" : "");
@@ -2030,7 +1818,6 @@ async function _loadSkillsInner() {
   try { d = await api("/api/skills"); }
   catch (e) { pane.textContent = e.message; return; }
 
-  // --- new-skill form ---
   const nameIn = h("input", { placeholder: "skill_name (letters, digits, _, ., -)", spellcheck: false });
   const titleIn = h("input", { placeholder: "Title (optional, defaults to name)", spellcheck: false });
   const bodyIn = h("textarea", { class: "keysbox", spellcheck: false,
@@ -2051,7 +1838,6 @@ async function _loadSkillsInner() {
     bodyIn,
     h("div", { class: "row" }, createBtn));
 
-  // --- existing skills ---
   const listCard = h("div", { class: "card" },
     h("h3", { text: "Skills (" + d.skills.length + ")" }),
     d.skills.length
@@ -2155,7 +1941,7 @@ function openBrowser(startPath, cb) {
   let allEntries = [], curPath = "", selIndex = -1;
   const history = [];
 
-  const pathIn = h("input", { spellcheck: false, style: "flex:2;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px", "aria-label": "Current path" });
+  const pathIn = h("input", { spellcheck: false, style: "flex:2;font-family:var(--font-mono);font-size:12.5px", "aria-label": "Current path" });
   pathIn.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(pathIn.value.trim() || curPath); } });
 
   function renderEntries() {
@@ -2233,9 +2019,9 @@ function openBrowser(startPath, cb) {
   const upBtn = h("button", { text: "⬆ Up", title: "Parent folder",
     onclick: () => { const p = (curPath || "").replace(/[\\/]+$/, ""); const isWin = /^[A-Za-z]:$/.test(p);
       const up = isWin ? p + "\\" : (p.replace(/[\\/][^\\/]*$/, "") || (osWinPath() ? "C:\\" : "/")); go(up); } });
-  const browseBtn = h("button", { text: "📂 Browse…", title: "Open the OS folder picker on this machine",
+  const browseBtn = h("button", { text: "📂 Browse…", title: "Open the OS folder picker on the server's machine (the browser can't return a path string itself)",
     onclick: async () => {
-      toast("Opening the folder picker on the Omni machine…");
+      toast("Opening the folder picker on the server's desktop…", 4000);
       try {
         const r = await api("/api/workspace/pick", {});
         if (r.cancelled) return;
@@ -2321,13 +2107,17 @@ $("#send").onclick = send;
 $("#stop").onclick = doStop;
 $("#inp").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 $("#inp").addEventListener("input", autoGrow);
-// Typing in the composer means the user is engaging again; hide the
-// "new messages" pill so it doesn't sit on top of their text.
 $("#inp").addEventListener("focus", () => $("#scrollDown").classList.remove("on"));
 $("#newChat").onclick = newChat;
-$("#menuBtn").onclick = () => $("#app").classList.toggle("leftopen");
-$("#left-toggle").onclick = () => $("#app").classList.add("leftcollapsed");
-$("#expand-left").onclick = () => $("#app").classList.remove("leftcollapsed");
+/* #menuBtn removed — #expand-left already toggles the collapsed sidebar. */
+$("#left-toggle").onclick = () => {
+  $("#app").classList.add("leftcollapsed");
+  try { store.set("omni_leftcollapsed", "1"); } catch (_) {}
+};
+$("#expand-left").onclick = () => {
+  $("#app").classList.remove("leftcollapsed");
+  try { store.set("omni_leftcollapsed", "0"); } catch (_) {}
+};
 $("#allow").onclick = () => answer(true);
 $("#deny").onclick = () => answer(false);
 $("#autoBox").onchange = async e => {
@@ -2366,7 +2156,6 @@ $("#fileIn").onchange = e => { upload([...e.target.files]); e.target.value = "";
 logEl.addEventListener("dragover", e => e.preventDefault());
 logEl.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); });
 
-// Keyboard shortcuts
 document.addEventListener("keydown", e => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === "k") {
@@ -2383,11 +2172,6 @@ document.addEventListener("keydown", e => {
   }
 });
 
-// ---- Focus watchdog --------------------------------------------------
-// Panels rebuild their DOM on a timer; if the element that had focus was
-// inside them, the browser drops focus to <body>. If the user was mid-
-// message in the composer, put the caret back. Overlays and busy state
-// suppress the guard so we never fight the user.
 let _refocusTimer = null;
 function _watchdogRefocus() {
   if (_refocusTimer) clearTimeout(_refocusTimer);
@@ -2401,9 +2185,7 @@ function _watchdogRefocus() {
     try { inp.focus({ preventScroll: true }); } catch (_) {}
   }, 120);
 }
-// Fire on any focus change (including blur -> body).
 document.addEventListener("focusout", _watchdogRefocus, true);
-// Also fire after programmatic refreshes that don't go through withFocus.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") _watchdogRefocus();
 });
@@ -2438,7 +2220,13 @@ $("#wsChip").addEventListener("click", () => {
 });
 
 (async function init() {
-  await refreshKeys(true, true, false);  // full state on first load
+  // Restore the collapsed-sidebar preference (only ever set by clicking ◀).
+  try {
+    if (store.get("omni_leftcollapsed") === "1") {
+      $("#app").classList.add("leftcollapsed");
+    }
+  } catch (_) {}
+  await refreshKeys(true, true, false);
   await loadChat();
   loadSessions();
   loadShellJobs();
