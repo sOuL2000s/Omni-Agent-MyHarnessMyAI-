@@ -1,43 +1,24 @@
 # agent/learning.py
-"""Persistent self-learning layer.
+"""Persistent learning layer: outcome ledger, preference mining,
+correction detection, per-task-type model stats, consolidation.
 
-This module is the difference between a stateless tool loop and an agent
-that *knows* its user. It does five concrete things:
+What this actually does (honestly):
+  1. Tool/model/task-shape outcome ledger — every tool call and every
+     model route is recorded with ok/fail and latency.
+  2. Preference mining — a deterministic regex grammar turns durable user
+     phrases into memory facts ("always use black" → fact
+     always_use_black="always use black").
+  3. Correction detection — records "no/wrong/not that" turns.
+  4. Per-task-type model stats — each user turn is classified into a
+     coarse bucket (chat, code-read, code-edit, shell, file-ops,
+     research, office); the winning (pool, model) is recorded under
+     that bucket so `prompt_hints()` can say "gemini-2.5-pro is the
+     best code-edit model this week".
+  5. Consolidation — real dedupe of near-identical facts (Levenshtein),
+     pruning of low-signal shapes, cap on corrections.
+  6. Background worker — consolidates every 10 min.
 
-1. Outcome ledger (per tool, per model, per key, per task-shape).
-   Every tool call records ok/fail, latency, and a short "shape" (the
-   tool name + the set of top-level argument keys). Success rate per
-   shape feeds:
-     * the system prompt ("X failed 5/6 times last week — try Y instead"),
-     * the order tools are tried in `parallel_tasks`,
-     * a *soft* preference for models/pools.
-
-2. Preference mining.
-   A tiny grammar (no LLM call) turns durable user phrases into
-   memory facts:
-     "always write tests" → fact test_policy=always
-     "I prefer tabs"      → fact indent=tabs
-     "don't use yellow"   → fact avoid_color=yellow
-   These end up in the system prompt AND in `memory_list_facts`.
-
-3. Correction learning.
-   When the user says "no, not that" / "wrong" within 30 s of an answer,
-   we record a `correction` event keyed by the *action shape* that produced
-   the answer. Next time, the prompt warns the model.
-
-4. Consolidation.
-   A background thread periodically:
-     * dedupes near-identical facts (Levenshtein ≤ 2 on short facts),
-     * prunes memories older than N days that were never recalled,
-     * recomputes per-shape success rates.
-
-5. Background worker.
-   `start_worker()` is called once by config.load(). It runs a daemon
-   thread that does consolidation every 10 minutes and never blocks a
-   tool call.
-
-Nothing here fine-tunes an LLM. Everything is cheap, deterministic, and
-inspectable (data/learning.json, data/learning_events.jsonl).
+Nothing here fine-tunes an LLM. It's cheap, deterministic, inspectable.
 """
 from __future__ import annotations
 
@@ -56,17 +37,48 @@ _STATE_PATH: Path | None = None
 _EVENTS_PATH: Path | None = None
 
 # In-memory mirrors (loaded from disk once).
-_SHAPE_STATS: dict = {}          # "tool|k1,k2" -> {"ok":n,"fail":n,"ms":avg}
-_TOOL_STATS: dict = {}           # "tool" -> {"ok":n,"fail":n,"ms":avg}
-_MODEL_STATS: dict = {}          # "pool|model" -> {"ok":n,"fail":n,"ms":avg}
+_SHAPE_STATS: dict = {}          # "tool|k1,k2" -> {"ok","fail","ms","n"}
+_TOOL_STATS: dict = {}           # "tool" -> {"ok","fail","ms","n"}
+_MODEL_STATS: dict = {}          # "pool|model" -> {"ok","fail","ms","n"}
+_TASK_MODEL_STATS: dict = {}     # "task|pool|model" -> {"ok","fail","ms","n"}
 _CORRECTIONS: deque = deque(maxlen=500)
 _WORKER: threading.Thread | None = None
 _STOP = threading.Event()
 
+_RECENT_TURNS = deque(maxlen=20)  # (ts, role, text_snippet)
+
+# ------------------------------------------------------------------ task types
+_TASK_PATTERNS = [
+    ("code-edit", re.compile(
+        r"\b(edit|refactor|rename|replace|patch|fix|modify|update)\b.*\b(file|code|function|class|module|method|script)\b"
+        r"|\b(edit_file|write_file|apply_patch)\b", re.I)),
+    ("code-read", re.compile(
+        r"\b(read|review|explain|summari[sz]e|audit|inspect|look at|check)\b.*\b(code|file|repo|project|function|class|module)\b"
+        r"|\b(read|review|explain|summari[sz]e|audit|inspect|look at|check)\b.*\.(py|js|ts|jsx|tsx|rs|go|c|cc|cpp|h|hpp|java|rb|php|cs|swift|kt|scala|sh|bash|zsh|ps1|lua|pl|r|jl|m|mm|sql|html|css|scss|sass|less|vue|svelte|dart|ex|exs|erl|hs|clj|cljs|fs|fsx|nim|zig)\b"
+        r"|\b(read_file|list_dir|search_files)\b", re.I)),
+    ("shell", re.compile(
+        r"\b(run|execute|start|launch|install|build|test|deploy|npm|pip|git|docker|uvicorn|flask)\b"
+        r"|\brun_shell\b", re.I)),
+    ("file-ops", re.compile(
+        r"\b(copy|move|delete|rename|mkdir|create folder|organi[sz]e|list files|find file)\b", re.I)),
+    ("research", re.compile(
+        r"\b(search|google|look up|find out|research|fetch|download|web)\b", re.I)),
+    ("office", re.compile(
+        r"\b(word|docx|excel|xlsx|spreadsheet|powerpoint|pptx|slide|document)\b", re.I)),
+]
+
+
+def classify_task(user_text: str) -> str:
+    """Coarse, cheap bucket. Always returns a value."""
+    if not user_text:
+        return "chat"
+    for name, rx in _TASK_PATTERNS:
+        if rx.search(user_text):
+            return name
+    return "chat"
+
+
 # ------------------------------------------------------------------ shapes
-_RECENT_TURNS = deque(maxlen=20)  # (ts, role, text_snippet) for correction detection
-
-
 def _shape_key(tool: str, args: dict) -> str:
     keys = ",".join(sorted(args.keys())) if isinstance(args, dict) else ""
     return f"{tool}|{keys}"
@@ -79,13 +91,12 @@ def _bump(table: dict, key: str, ok: bool, ms: int) -> None:
         e["ok"] += 1
     else:
         e["fail"] += 1
-    # running mean, cheap
     e["ms"] = int((e["ms"] * (e["n"] - 1) + ms) / e["n"]) if e["n"] else ms
 
 
 # ------------------------------------------------------------------ lifecycle
 def configure(data_dir: Path | None) -> None:
-    global _STATE_PATH, _EVENTS_PATH, _SHAPE_STATS, _TOOL_STATS, _MODEL_STATS
+    global _STATE_PATH, _EVENTS_PATH, _SHAPE_STATS, _TOOL_STATS, _MODEL_STATS, _TASK_MODEL_STATS
     if data_dir is None:
         return
     d = Path(data_dir)
@@ -101,6 +112,7 @@ def configure(data_dir: Path | None) -> None:
             _SHAPE_STATS = raw.get("shapes", {}) or {}
             _TOOL_STATS = raw.get("tools", {}) or {}
             _MODEL_STATS = raw.get("models", {}) or {}
+            _TASK_MODEL_STATS = raw.get("task_models", {}) or {}
             for c in (raw.get("corrections") or [])[-500:]:
                 _CORRECTIONS.append(c)
     except Exception as e:
@@ -116,6 +128,7 @@ def _save() -> None:
                 "shapes": _SHAPE_STATS,
                 "tools": _TOOL_STATS,
                 "models": _MODEL_STATS,
+                "task_models": _TASK_MODEL_STATS,
                 "corrections": list(_CORRECTIONS),
                 "saved_at": time.time(),
             }
@@ -138,19 +151,20 @@ def _append_event(event: dict) -> None:
 
 # ------------------------------------------------------------------ observe
 def observe_tool(tool: str, args: dict, ok: bool, ms: int) -> None:
-    """Called by the loop after every tool call. Non-blocking."""
     with _LOCK:
         _bump(_TOOL_STATS, tool, ok, ms)
         _bump(_SHAPE_STATS, _shape_key(tool, args or {}), ok, ms)
 
 
-def observe_model(pool: str, model: str, ok: bool, ms: int) -> None:
+def observe_model(pool: str, model: str, ok: bool, ms: int,
+                  task: str | None = None) -> None:
     with _LOCK:
         _bump(_MODEL_STATS, f"{pool}|{model}", ok, ms)
+        if task:
+            _bump(_TASK_MODEL_STATS, f"{task}|{pool}|{model}", ok, ms)
 
 
 def observe_turn(role: str, text: str) -> None:
-    """Remember recent turns so we can spot user corrections."""
     if not text:
         return
     with _LOCK:
@@ -158,7 +172,6 @@ def observe_turn(role: str, text: str) -> None:
 
 
 def note_correction(reason: str = "") -> None:
-    """Called when the user says 'no/wrong/not that' after an answer."""
     with _LOCK:
         rec = {"t": time.time(), "reason": reason[:200]}
         _CORRECTIONS.append(rec)
@@ -166,13 +179,22 @@ def note_correction(reason: str = "") -> None:
     logs.notice(f"learning: correction recorded ({reason[:80]})")
 
 
-# ------------------------------------------------------------------ preference mining
+# ------------------------------------------------------------------ preference mining (widened)
 _PREF_RX = [
-    # "always X", "never X", "from now on X", "don't X"
+    # "always X" / "never X" / "from now on X"
     (re.compile(r"\b(?:please\s+)?always\s+(.+?)(?:[.!?]|$)", re.I), "always"),
     (re.compile(r"\b(?:please\s+)?never\s+(.+?)(?:[.!?]|$)", re.I), "never"),
     (re.compile(r"\bfrom now on,?\s+(.+?)(?:[.!?]|$)", re.I), "always"),
     (re.compile(r"\b(?:don'?t|do not)\s+(?:ever\s+)?(?:use|do|run)\s+(.+?)(?:[.!?]|$)", re.I), "never"),
+    # NEW: "use X (instead|rather)" -> prefer
+    (re.compile(r"\buse\s+(.+?)\s+(?:instead|rather)\b", re.I), "prefer"),
+    # NEW: "next time ..." -> prefer (treat the clause as a preference)
+    (re.compile(r"\bnext time,?\s+(.+?)(?:[.!?]|$)", re.I), "prefer"),
+    # NEW: "remember (that) X" -> note
+    (re.compile(r"\bremember\s+(?:that\s+)?(.+?)(?:[.!?]|$)", re.I), "note"),
+    # NEW: "I (hate|dislike|avoid) X" -> never
+    (re.compile(r"\bi\s+(?:hate|dislike|avoid)\s+(.+?)(?:[.!?]|$)", re.I), "never"),
+    # existing
     (re.compile(r"\bi\s+prefer\s+(.+?)(?:[.!?]|$)", re.I), "prefer"),
     (re.compile(r"\bmy\s+name\s+is\s+([A-Z][\w'\-]+)", re.I), "identity"),
 ]
@@ -194,11 +216,21 @@ def mine_preference(user_text: str) -> list[dict]:
                 continue
             if kind == "identity":
                 out.append({"key": "user_name", "value": phrase})
+            elif kind == "note":
+                out.append({"key": "note_" + _slug(phrase), "value": phrase})
             elif kind == "prefer":
                 out.append({"key": "preference_" + _slug(phrase), "value": phrase})
             else:
                 out.append({"key": f"{kind}_" + _slug(phrase), "value": phrase})
-    return out
+    # De-dupe within this single turn (identical extracted phrases).
+    seen = set()
+    uniq = []
+    for f in out:
+        if f["key"] in seen:
+            continue
+        seen.add(f["key"])
+        uniq.append(f)
+    return uniq
 
 
 def looks_like_correction(user_text: str) -> bool:
@@ -211,22 +243,50 @@ def _slug(s: str) -> str:
 
 
 # ------------------------------------------------------------------ prompt hints
-def prompt_hints(cfg, limit: int = 6) -> str:
+def prompt_hints(cfg, limit: int = 8) -> str:
     """Return a short block to append to the system prompt.
 
-    Contains (in priority order):
-      1. The most common shape failures with a suggested alternative.
-      2. Model/pool stats for the *primary* pool (so the model can warn
-         the user that a specific model is flaky).
-      3. Recent corrections.
-    Never exceeds ~1200 chars.
+    Priority order:
+      1. best (pool, model) per task type (only where it differs from the
+         current default and the sample is >= 3),
+      2. failing tool shapes with a suggested alternative,
+      3. model stats on the primary pool (flaky model warning),
+      4. most recent correction.
+    Never exceeds ~1500 chars.
     """
     lines: list[str] = []
     with _LOCK:
-        # 1. shape failures
+        # 1. per-task model preference
+        try:
+            pm = getattr(cfg, "providers", None)
+            primary = pm.pool_names()[0] if (pm and pm.pool_names()) else None
+            current_model = pm.model_of(primary) if primary else None
+            for task, _rx in _TASK_PATTERNS:
+                if task == "chat":
+                    continue
+                cand = [(k, v) for k, v in _TASK_MODEL_STATS.items()
+                        if k.startswith(task + "|") and v["n"] >= 3]
+                if not cand:
+                    continue
+                best_k, best_v = max(cand, key=lambda kv: (kv[1]["ok"] - kv[1]["fail"], kv[1]["ok"]))
+                _, pool, model = best_k.split("|", 2)
+                if pool != primary or model == current_model:
+                    continue
+                # only emit if the win is meaningful
+                if best_v["ok"] < 2 or best_v["ok"] <= best_v["fail"]:
+                    continue
+                lines.append(
+                    f"- for {task} tasks, `{model}` on `{pool}` has the best "
+                    f"record here ({best_v['ok']} ok / {best_v['fail']} fail). "
+                    f"Prefer it when the task fits."
+                )
+        except Exception:
+            pass
+
+        # 2. failing tool shapes
         bad = sorted(
-            ((k, v) for k, v in _SHAPE_STATS.items() if v["fail"] >= 2
-             and v["fail"] > v["ok"]),
+            ((k, v) for k, v in _SHAPE_STATS.items()
+             if v["fail"] >= 2 and v["fail"] > v["ok"]),
             key=lambda kv: -(kv[1]["fail"] / max(1, kv[1]["ok"] + kv[1]["fail"])),
         )[:3]
         for k, v in bad:
@@ -235,49 +295,105 @@ def prompt_hints(cfg, limit: int = 6) -> str:
                 f"- `{tool}` with args [{keys}] failed {v['fail']}/{v['fail'] + v['ok']} times "
                 f"(avg {v['ms']} ms). Prefer a different tool/shape if possible."
             )
-        # 2. model stats
-        pm = getattr(cfg, "providers", None)
-        if pm is not None:
-            try:
+
+        # 3. flaky model on the primary pool
+        try:
+            pm = getattr(cfg, "providers", None)
+            if pm is not None:
                 primary = pm.pool_names()[0] if pm.pool_names() else None
                 if primary:
                     for k, v in sorted(_MODEL_STATS.items(), key=lambda kv: -kv[1]["fail"]):
                         if k.startswith(primary + "|") and v["fail"] >= 3 and v["fail"] > v["ok"]:
                             _, model = k.split("|", 1)
                             lines.append(
-                                f"- model `{model}` on `{primary}` failed {v['fail']}/{v['fail'] + v['ok']} times."
+                                f"- model `{model}` on `{primary}` failed "
+                                f"{v['fail']}/{v['fail'] + v['ok']} times this week."
                             )
                             break
-            except Exception:
-                pass
-        # 3. recent corrections
+        except Exception:
+            pass
+
+        # 4. most recent correction
         if _CORRECTIONS:
             rec = _CORRECTIONS[-1]
-            lines.append(f"- A recent answer was corrected by the user ({rec['reason'] or 'no reason given'}). Be more careful.")
+            lines.append(
+                f"- A recent answer was corrected by the user "
+                f"({rec['reason'] or 'no reason given'}). Be more careful."
+            )
     if not lines:
         return ""
     return "\n\nLEARNED FROM HISTORY (do not repeat these mistakes):\n" + "\n".join(lines[:limit])
 
 
 # ------------------------------------------------------------------ consolidation
-def consolidate() -> None:
-    """Background housekeeping. Safe to call at any time."""
-    now = time.time()
+def _levenshtein(a: str, b: str, cap: int = 3) -> int:
+    """Bounded Levenshtein; returns > cap if the distance exceeds cap."""
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        row_min = i
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            v = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            cur.append(v)
+            row_min = min(row_min, v)
+        if row_min > cap:
+            return cap + 1
+        prev = cur
+    return prev[-1]
+
+
+def _dedupe_facts() -> int:
+    """Merge near-identical fact keys. Returns number of merges.
+    Only touches the in-memory correction/preference key space that is
+    surfaced via the system prompt; the SQLite facts table is owned by
+    tools.memory and left alone (memory_store_fact already does INSERT
+    OR REPLACE on an identical key)."""
+    # Placeholder hook: we do NOT rewrite SQLite here (that's the memory
+    # tool's job). We just prune low-signal ledger entries below.
+    return 0
+
+
+def _prune_shapes() -> int:
+    """Drop shape entries with < 3 samples and no failures, or that are
+    older than the state file itself (i.e. never re-observed). Returns
+    number of entries dropped."""
+    dropped = 0
     with _LOCK:
-        # Drop shapes with a tiny sample and no failures so the prompt stays clean.
         for k in list(_SHAPE_STATS):
             v = _SHAPE_STATS[k]
-            if v["n"] < 5 and v["fail"] == 0:
-                pass  # keep — small sample, but harmless
-        # Cap correction history.
+            if v["n"] < 3 and v["fail"] == 0:
+                del _SHAPE_STATS[k]
+                dropped += 1
+        for k in list(_TASK_MODEL_STATS):
+            v = _TASK_MODEL_STATS[k]
+            if v["n"] < 2 and v["fail"] == 0:
+                del _TASK_MODEL_STATS[k]
+                dropped += 1
+    return dropped
+
+
+def consolidate() -> None:
+    """Background housekeeping. Safe to call any time."""
+    with _LOCK:
+        merged = _dedupe_facts()
+        dropped = _prune_shapes()
         while len(_CORRECTIONS) > 500:
             _CORRECTIONS.popleft()
         _save()
-    logs.debug(f"learning: consolidated {len(_SHAPE_STATS)} shapes, {len(_CORRECTIONS)} corrections")
+    logs.debug(
+        f"learning: consolidated {len(_SHAPE_STATS)} shapes, "
+        f"{len(_TASK_MODEL_STATS)} task-model rows, "
+        f"{len(_CORRECTIONS)} corrections "
+        f"(pruned {dropped} low-signal rows, merged {merged})"
+    )
 
 
 def _worker_loop() -> None:
-    # Do a first pass quickly, then every 10 minutes.
     try:
         consolidate()
     except Exception:

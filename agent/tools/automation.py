@@ -6,6 +6,19 @@ from ..safety import confirm
 
 
 @tool(
+    "classify_task",
+    "Classify a user request into a coarse task bucket (chat, code-edit, "
+    "code-read, shell, file-ops, research, office). Useful when the user "
+    "asks 'which model are you using for this?' or when you want to explain "
+    "your own routing. Read-only.",
+    {"text": {"type": "string"}},
+    ["text"],
+)
+def classify_task(cfg, text):
+    return learning.classify_task(text or "")
+
+
+@tool(
     "schedule_task",
     "Schedule a natural-language prompt to run repeatedly (e.g. daily). "
     "The job survives restarts. Use this when the user says 'every day', "

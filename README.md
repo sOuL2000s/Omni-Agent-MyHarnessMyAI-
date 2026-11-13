@@ -89,6 +89,10 @@ tools without you writing a line of code.
 | **Background shells** | A header toggle (or `/bgauto on`) makes every `run_shell` call detach by default — dev servers survive Stop. |
 | **Web fetch** | Reads any URL, strips HTML, returns plain text. Fast (`urllib`) by default. Set `AGENT_BROWSER=selenium` to render JavaScript pages with a headless Chrome (source installs only — see §9.3). |
 | **Long-term memory** | Save facts, preferences, notes; they come back in every future session. |
+| **Preference mining** | "always", "never", "from now on", "I prefer", "remember that…", "use X instead" are auto-extracted into facts and injected into every prompt. Deterministic, no extra LLM call. |
+| **Task-aware model routing** | Each turn is classified (code-edit, code-read, shell, file-ops, research, office, chat). The per-task win/loss ledger then pre-routes to the model with the best record for that task. This is *statistical routing*, not machine learning. |
+| **Correction learning** | "no / wrong / not that" turns are recorded; the next prompt warns the model. |
+| **Skill auto-offer** | After a clean turn with ≥3 successful tools, the agent suggests saving the workflow as a skill. It never writes the skill silently. |
 | **Chat history** | Every session is persisted in `data/sessions/`; the sidebar switches between them. |
 | **MCP servers** | Connect any Model Context Protocol server (filesystem, github, sqlite, youtube, browser automation, …) — add, edit, and delete them from the web UI, or pick one from the live registry. |
 | **Strict mode** | After a tool-using answer, a second model call verifies factual claims and flags unverified ones. |
@@ -469,6 +473,15 @@ a first-time user lands directly on it.
 - **Pasting or dropping more than ~20 KB of text** is intercepted and uploaded
   as a file (`pasted-<timestamp>.txt`) so the chat box stays responsive and
   the model doesn't choke on a 500 KB prompt.
+- **Referencing a local file by path** — paste an absolute path
+  (`C:\Users\me\Documents\report.docx`, `/Users/me/Desktop/screenshot.png`,
+  or a `file:///…` URL copied from Finder) and it is inserted into the message
+  as `[local file: <path>]`. The file is **not uploaded**. The model reads it
+  directly with `read_file` / `docx_read` / `xlsx_read` / `pptx_read`, and the
+  usual approval prompt fires if the path is outside the workspace.
+- **Dropping a file from the OS** into the composer is treated the same way:
+  the browser hides the real path, so you get a one-time hint to paste the
+  path instead. Click **📎** to upload a file into the workspace explicitly.
 
 ### 6.6 The workspace picker
 

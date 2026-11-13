@@ -482,7 +482,7 @@ textarea.keysbox{width:100%;height:76px;font:12px var(--font-mono);line-height:1
         </div>
       <div class="box">
         <button class="ghost" id="micBtn" title="Dictate (local STT — requires sherpa-onnx + a microphone)" aria-label="Dictate">🎤</button>
-        <button class="ghost" id="attach" title="Upload a file into the workspace" aria-label="Upload a file">📎</button>
+        <button class="ghost" id="attach" title="Upload a file into the workspace (paste a file path to reference it without uploading)" aria-label="Upload a file">📎</button>
         <input type="file" id="fileIn" hidden multiple>
         <textarea id="inp" rows="1" placeholder="Ask Omni to read, edit, run, research…  (Enter = send, Shift+Enter = new line)"></textarea>
         <button class="primary" id="send">Send</button>
@@ -617,14 +617,25 @@ const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)),
 
 function inline(text) {
   const frag = document.createDocumentFragment();
-  const re = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  // Order matters: `[local file: …]` must be matched before the generic
+  // `[label](url)` link pattern, or the path's punctuation confuses the
+  // link regex.
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|\[local file: [^\]]+\]|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
   let last = 0, m;
   while ((m = re.exec(text))) {
     if (m.index > last) frag.append(text.slice(last, m.index));
     const t = m[0];
     if (t[0] === "`") frag.append(h("code", { text: t.slice(1, -1) }));
     else if (t.startsWith("**")) frag.append(h("b", { text: t.slice(2, -2) }));
-    else {
+    else if (t.startsWith("[local file:")) {
+      // Render the marker as a subtle pill so it's visible but not
+      // noisy. The text inside is still exactly what the model sees.
+      frag.append(h("code", {
+        text: t,
+        style: "background:var(--accent-soft);color:var(--accent);" +
+               "padding:1px 6px;border-radius:5px;font-size:11.5px"
+      }));
+    } else {
       const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(t);
       const url = /^https?:\/\//i.test(mm[2]) ? mm[2] : "#";
       frag.append(h("a", { href: url, target: "_blank", rel: "noopener noreferrer", text: mm[1] }));
@@ -1942,10 +1953,159 @@ async function upload(files) {
   loadFiles();
 }
 
+/* ---------------------------------------------------------------
+   Local-file paste / drop: EXTRACT THE PATH, DO NOT UPLOAD.
+
+   Why this is implemented the way it is:
+   * Browsers cannot read the real on-disk path from a <input type=file>
+     or from a drag-and-drop File object (security sandbox). The `.value`
+     is a fake "C:\\fakepath\\name.ext".
+   * A paste of a *file* (rather than its text) can arrive three ways:
+       (a) as `text/uri-list` with one or more `file:///…` URLs
+           (macOS Finder "Copy", some Linux file managers),
+       (b) as `text/plain` containing an absolute path
+           (a path the user typed / copied from a terminal),
+       (c) as a real File object (Windows Explorer "Copy", any browser
+           that supports `ClipboardEvent.clipboardData.files`).
+     For (c) we deliberately DO NOT upload. We surface the filename and
+     tell the user to paste the path (or drag-and-drop the file onto the
+     workspace picker). This keeps the feature honest and matches the
+     user's request: "its path will be extracted into the chat".
+   * A drop of real files (not a path string, not a file:// URL) is
+     handled the same way: we do not upload either. The previous
+     upload-on-drop behaviour was moved behind the 📎 button so that
+     "drop" and "upload" are distinct, intentional actions.
+   --------------------------------------------------------------- */
+
 const LARGE_PASTE_CHARS = 20000;
+
+/* Regex for a bare absolute filesystem path, both OS families.
+   Matches the string if it is *only* a path (surrounded by whitespace,
+   quotes, or string boundaries). */
+const _ABS_PATH_RX = new RegExp(
+  "^(?:" +
+    "file://(?:/[A-Za-z]:)?/[^\\s\"'<>]+" +          // file:///Users/… or file:///C:/…
+    "|[A-Za-z]:\\\\[^\\s\"'<>]+" +                     // C:\Users\…
+    "|/[^\\s\"'<>]+" +                                 // /Users/… or /home/…
+  ")$"
+);
+
+function _looksLikeAbsPath(s) {
+  if (!s) return false;
+  const t = s.trim().replace(/^["']|["']$/g, "");
+  if (t.length < 3 || t.length > 4096) return false;
+  return _ABS_PATH_RX.test(t);
+}
+
+/* Decode a file:// URL to a native path. Returns null on non-file URLs. */
+function _fileUrlToPath(u) {
+  try {
+    const url = new URL(u);
+    if (url.protocol !== "file:") return null;
+    let p = decodeURIComponent(url.pathname);
+    // Windows file URLs look like /C:/Users/… — strip the leading slash.
+    if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+    // macOS / Linux: /Users/… is already correct.
+    return p;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* Normalize a user-pasted path so the model sees a stable form. */
+function _normalizePath(raw) {
+  let p = raw.trim().replace(/^["']|["']$/g, "");
+  if (p.startsWith("file://")) {
+    const dec = _fileUrlToPath(p);
+    if (dec) p = dec;
+  }
+  // Collapse trailing separators except for a bare drive root.
+  if (!/^[A-Za-z]:\\$/.test(p) && p.length > 1 && /[\\/]$/.test(p)) {
+    p = p.replace(/[\\/]+$/, "");
+  }
+  return p;
+}
+
+/* Insert text at the caret, keeping undo-friendly behavior. */
+function _insertAtCaret(inp, text) {
+  const start = inp.selectionStart ?? inp.value.length;
+  const end = inp.selectionEnd ?? inp.value.length;
+  const before = inp.value.slice(0, start);
+  const after = inp.value.slice(end);
+  const sep = before && !/\s$/.test(before) ? " " : "";
+  inp.value = before + sep + text + after;
+  const newPos = (before + sep + text).length;
+  inp.setSelectionRange(newPos, newPos);
+  autoGrow();
+}
+
+/* Append one or more "local file" references to the composer. */
+function _insertLocalFiles(paths) {
+  const inp = $("#inp");
+  if (!inp) return;
+  const tokens = paths
+    .map(_normalizePath)
+    .filter(Boolean)
+    .map(p => `[local file: ${p}]`);
+  if (!tokens.length) return;
+  _insertAtCaret(inp, tokens.join(" ") + " ");
+  inp.focus({ preventScroll: true });
+  toast(
+    tokens.length === 1
+      ? `Added local file reference: ${paths[0]}`
+      : `Added ${tokens.length} local file references`,
+    3500
+  );
+}
+
+/* Tell the user (once) that the browser can't see the real path. */
+let _warnedBrowserPath = false;
+function _warnBrowserHidesPath(name) {
+  if (_warnedBrowserPath) return;
+  _warnedBrowserPath = true;
+  toast(
+    `The browser hides the real path for "${name}". ` +
+    `Paste the path (C:\\… or /Users/…) instead, or use the workspace picker.`,
+    8000
+  );
+}
+
+/* ---- PASTE ---- */
 $("#inp").addEventListener("paste", async e => {
   const cd = e.clipboardData || window.clipboardData;
-  const txt = cd ? cd.getData("text") : "";
+  if (!cd) return;
+
+  // 1. macOS / Linux "Copy file" → file:// URLs in text/uri-list.
+  const uriList = cd.getData("text/uri-list") || "";
+  const fileUrls = uriList
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(s => /^file:\/\//i.test(s));
+  if (fileUrls.length) {
+    e.preventDefault();
+    const paths = fileUrls.map(_fileUrlToPath).filter(Boolean);
+    if (paths.length) return _insertLocalFiles(paths);
+  }
+
+  // 2. `text/plain` that is exactly an absolute path (one line).
+  const plain = cd.getData("text/plain") || "";
+  if (plain && !/\n/.test(plain.trim()) && _looksLikeAbsPath(plain)) {
+    e.preventDefault();
+    return _insertLocalFiles([plain]);
+  }
+
+  // 3. A real File object on the clipboard (Windows Explorer "Copy").
+  //    We deliberately do NOT upload. We surface the filename and let
+  //    the user decide: paste the path, or click 📎 to upload.
+  const files = cd.files ? Array.from(cd.files) : [];
+  if (files.length) {
+    e.preventDefault();
+    _warnBrowserHidesPath(files[0].name);
+    return;
+  }
+
+  // 4. Existing behaviour: a *large text* paste is offered as an upload.
+  const txt = plain;
   if (!txt || txt.length < LARGE_PASTE_CHARS) return;
   e.preventDefault();
   const name = `pasted-${Date.now()}.txt`;
@@ -1958,10 +2118,41 @@ $("#inp").addEventListener("paste", async e => {
     inp.focus(); autoGrow(); toast(`Attached ${d.path} (${Math.round(d.size / 1024)} KB)`); loadFiles();
   } catch (err) { toast("Attach failed: " + err.message, 5000); }
 });
+
+/* ---- DRAG-AND-DROP ---- */
 $("#inp").addEventListener("dragover", e => e.preventDefault());
 $("#inp").addEventListener("drop", async e => {
-  if (e.dataTransfer.files.length) { e.preventDefault(); upload([...e.dataTransfer.files]); return; }
-  const txt = e.dataTransfer.getData("text") || "";
+  const dt = e.dataTransfer;
+  if (!dt) return;
+
+  // 1. file:// URLs in the drop payload → insert paths.
+  const uriList = dt.getData("text/uri-list") || "";
+  const fileUrls = uriList
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(s => /^file:\/\//i.test(s));
+  if (fileUrls.length) {
+    e.preventDefault();
+    const paths = fileUrls.map(_fileUrlToPath).filter(Boolean);
+    if (paths.length) return _insertLocalFiles(paths);
+  }
+
+  // 2. A bare absolute path in text/plain.
+  const txt = dt.getData("text") || "";
+  if (txt && !/\n/.test(txt.trim()) && _looksLikeAbsPath(txt)) {
+    e.preventDefault();
+    return _insertLocalFiles([txt]);
+  }
+
+  // 3. Real files dropped from the OS. Browsers don't expose the
+  //    absolute path. Tell the user; do not silently upload.
+  if (dt.files && dt.files.length) {
+    e.preventDefault();
+    _warnBrowserHidesPath(dt.files[0].name);
+    return;
+  }
+
+  // 4. Existing behaviour: a large plain-text drop becomes an upload.
   if (txt.length >= LARGE_PASTE_CHARS) {
     e.preventDefault();
     const name = `dropped-${Date.now()}.txt`;

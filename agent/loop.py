@@ -30,6 +30,17 @@ You have full read/write access to the user's filesystem (subject to approval). 
 files, code editing, shell, web, Word/Excel/PowerPoint editing, long-term memory, scheduling,
 parallel task execution, and (when configured) MCP servers whose tools appear as mcp__<server>__<tool>.
 
+LOCAL FILE REFERENCES
+- The user's message may contain a token of the form `[local file: <absolute path>]`.
+  That is a path on the user's machine, NOT an uploaded file and NOT a workspace path.
+- When you need to use such a file, call the file tool (`read_file`, `docx_read`,
+  `xlsx_read`, `pptx_read`, `list_dir`, `search_files`) with that absolute path
+  as the `path` argument. Do NOT prepend the workspace, do NOT rewrite it to a
+  relative path, and do NOT ask the user to re-upload it.
+- If a tool reports "outside workspace" for such a path, the approval prompt is
+  expected: ask the user to Allow, or pass the path through `resolve` (which the
+  tool already does) — the guard exists so you never touch files silently.
+
 CORE RULES - do not break these:
 - NEVER invent file contents, command output, URLs, API responses, or facts. If you need to know
   something about the user's machine, you MUST call a tool to find out. If you cannot verify it,
@@ -259,6 +270,45 @@ def _maybe_autosave(cfg, user_text, final_answer):
         pass
 
 
+_SKILL_OFFER_RX = re.compile(
+    r"\b(again|every time|whenever|next time|from now on|same as|repeat)\b",
+    re.I,
+)
+
+
+def _maybe_offer_skill_save(cfg, user_text, final_answer, tool_names, on_event=None):
+    """Ask the model ONCE whether this clean multi-tool turn is worth
+    saving as a reusable skill. Cheap: skipped unless the user's phrasing
+    hints at recurrence OR the workflow used >= 4 distinct tools.
+
+    We deliberately do NOT auto-save. We emit a `notice` with the tool
+    list and a one-line hint; the model (or the user via /skills) can
+    then call skill_save with real content. This keeps the harness
+    honest: it nudges, it does not silently write recipes.
+    """
+    if not user_text or not final_answer:
+        return
+    distinct = sorted(set(tool_names))
+    if len(distinct) < 3:
+        return
+    # Strong signal: user asked for a repeatable workflow.
+    strong = bool(_SKILL_OFFER_RX.search(user_text)) or len(distinct) >= 4
+    if not strong:
+        return
+    if on_event is None:
+        return
+    try:
+        on_event(
+            "notice",
+            "this run used " + ", ".join(distinct[:6])
+            + ("…" if len(distinct) > 6 else "")
+            + " and finished cleanly. If it is likely to repeat, save it: "
+              "skill_save(name, body) — or say 'save this as a skill'.",
+        )
+    except Exception:
+        pass
+
+
 class _ProgressClock:
     """Emits a 'progress' event every 1 s while the model is thinking."""
     def __init__(self, on_event, stage="Thinking"):
@@ -329,6 +379,11 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
     history.append({"role": "user", "content": user_text})
     last_route = None
     failures = {}
+    # Track per-turn tool outcomes so the skill auto-save hook can
+    # decide whether this was a clean, multi-step, reusable run.
+    _turn_tool_ok = 0
+    _turn_tool_fail = 0
+    _turn_tool_names = []
     tool_call_count = 0
     max_calls = getattr(cfg, "max_total_tool_calls", 0) or 0
     max_turns = getattr(cfg, "max_turns", 0) or 0
@@ -376,11 +431,17 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                         recent=payload.get("recent"),
                         route=payload.get("route"),
                         elapsed=clock.elapsed()),
+                    task=learning.classify_task(user_text),
                 )
                 try:
-                    learning.observe_model(route.get("pool", "?"),
-                                           route.get("model", "?"),
-                                           True, int((time.time() - t_llm) * 1000))
+                    _task = learning.classify_task(user_text)
+                    learning.observe_model(
+                        route.get("pool", "?"),
+                        route.get("model", "?"),
+                        True,
+                        int((time.time() - t_llm) * 1000),
+                        task=_task,
+                    )
                 except Exception:
                     pass
             except llm.LLMError as e:
@@ -424,6 +485,17 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                     except Exception:
                         pass
                 _maybe_autosave(cfg, user_text, final)
+                # Skill auto-save hook: if this turn did >=3 successful
+                # tools and nothing failed, offer to save the workflow.
+                try:
+                    if _turn_tool_ok >= 3 and _turn_tool_fail == 0:
+                        _maybe_offer_skill_save(
+                            cfg, user_text, final,
+                            _turn_tool_names,
+                            on_event=on_event,
+                        )
+                except Exception:
+                    pass
                 return final
 
             if entry["content"].strip():
@@ -444,13 +516,15 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
             results = {}
 
             def run_one(c):
+                nonlocal _turn_tool_ok, _turn_tool_fail
                 _set_tool_cancel(cancel)
                 _shell.set_emitter(lambda kind, text, **kw: _emit(kind, text, **kw))
                 fn = c["function"]
                 name = fn["name"]
                 on_event("tool", fn.get("arguments") or "", name=name, id=c["id"])
                 if cancel is not None and cancel.is_set():
-                    res = "ERROR: stopped by user"
+                    res = "ERROR: stopped by user (cancelled)"
+                    _turn_tool_fail += 1
                     on_event("tool_result", res, name=name, id=c["id"], ok=False)
                     return c["id"], name, res
 
@@ -484,6 +558,16 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                 t0 = time.time()
                 try:
                     res = call(cfg, name, fn.get("arguments"))
+                except BaseException:
+                    # A cancelled tool may raise mid-flight. We still owe the
+                    # UI a tool_result so the amber card flips. Synthesize
+                    # one, mark it failed, then re-raise so the outer loop
+                    # still sees the cancel.
+                    if cancel is not None and cancel.is_set():
+                        res = "ERROR: stopped by user (cancelled)"
+                        _turn_tool_fail += 1
+                        on_event("tool_result", res, name=name, id=c["id"], ok=False)
+                    raise
                 finally:
                     done.set()
                 ms = int((time.time() - t0) * 1000)
@@ -492,8 +576,14 @@ def _run_inner(cfg, history, user_text, on_event, cancel):
                                           not str(res).startswith("ERROR"), ms)
                 except Exception:
                     pass
+                _ok = not res.startswith("ERROR")
+                if _ok:
+                    _turn_tool_ok += 1
+                    _turn_tool_names.append(name)
+                else:
+                    _turn_tool_fail += 1
                 on_event("tool_result", res[:1500], name=name, id=c["id"],
-                         ok=not res.startswith("ERROR"))
+                         ok=_ok)
                 return c["id"], name, res
 
             all_parallel = len(calls) > 1 and all(c["function"]["name"] in PARALLEL_OK for c in calls)

@@ -193,13 +193,39 @@ def memory_search(cfg, query=""):
 @tool("memory_store_fact", "Store a structured fact or preference (e.g. 'user_name', 'theme').",
       {"key": {"type": "string"}, "value": {"type": "string"}}, ["key", "value"])
 def memory_store_fact(cfg, key, value):
+    key = (key or "").strip()
+    value = (value or "").strip()
+    if not key:
+        return "ERROR: key is required"
     with _get_db(cfg) as conn:
+        # 1. Exact-key replace (idempotent).
         with conn:
             conn.execute(
-                "INSERT OR REPLACE INTO facts (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))",
-                (key, value)
+                "INSERT OR REPLACE INTO facts (key, value, updated_at) "
+                "VALUES (?, ?, datetime('now', 'localtime'))",
+                (key, value),
             )
-    return f"Fact '{key}' stored."
+        # 2. Near-identical merge: same family prefix (always_/never_/
+        #    prefer_/preference_) with an identical normalised value.
+        #    Keep the first-seen key, delete the duplicates. This is
+        #    what stops always_use_black / prefer_use_black from both
+        #    piling into the system prompt.
+        family = key.split("_", 1)[0]
+        if family in ("always", "never", "prefer", "preference", "note"):
+            rows = conn.execute(
+                "SELECT key, value FROM facts WHERE key LIKE ?",
+                (family + "\\_%",),
+            ).fetchall()
+            norm = _normalise(value)
+            dupes = [r["key"] for r in rows
+                     if r["key"] != key and _normalise(r["value"]) == norm]
+            if dupes:
+                with conn:
+                    conn.executemany(
+                        "DELETE FROM facts WHERE key = ?",
+                        [(k,) for k in dupes],
+                    )
+    return f"Fact '{key}' stored." + (f" (merged {len(dupes)})" if dupes else "")
 
 
 @tool("memory_get_fact", "Retrieve a specific structured fact by its key.",

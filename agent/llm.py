@@ -530,8 +530,13 @@ def _progress_payload(pool, model, key_name, kind, remaining, log):
             "route": f"{pool} · {model}"}
 
 
-def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
+def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None,
+            task: str | None = None):
     """Returns (assistant_message, route).
+
+    `task` is a coarse bucket (chat, code-edit, code-read, shell, file-ops,
+    research, office). When given, pick_order uses it to pre-route to the
+    model with the best learning record for that task.
 
     Retries forever (with capped backoff) on transient failures (rate
     limits, quotas, network errors) until either the request succeeds or
@@ -577,7 +582,7 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
             for mi, model in enumerate(chain):
                 if broke_out:
                     break
-                for p in pm.pick_order(pool, model):
+                for p in pm.pick_order(pool, model, task=task):
                     if broke_out:
                         break
                     if cancel is not None and cancel.is_set():
@@ -776,6 +781,15 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
     # broken out. This is the ONLY place chat_ex raises for a structural
     # failure, so the loop (which calls chat_ex) sees it as a normal error.
     if structural_error is not None:
+        try:
+            from . import learning
+            if task:
+                for e in (log or [])[-1:]:
+                    learning.observe_model(
+                        e[0], e[1], False, 0, task=task
+                    )
+        except Exception:
+            pass
         raise LLMError(structural_error)
 
 

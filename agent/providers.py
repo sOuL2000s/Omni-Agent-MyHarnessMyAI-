@@ -25,6 +25,8 @@ import threading
 import time
 from dataclasses import dataclass, asdict, field
 
+from . import learning  # task-aware model routing
+
 PRESETS = {
     "openrouter": ("https://openrouter.ai/api/v1", "anthropic/claude-sonnet-4.5"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
@@ -496,7 +498,14 @@ class Manager:
         fail_pen = min(0.3, 0.02 * fail)
         return rate - 0.25 * recent_fail - fail_pen
 
-    def pick_order(self, pool, model):
+    def pick_order(self, pool, model, task: str | None = None):
+        """Return providers in try order.
+
+        When `task` is given and the learning ledger has a per-task
+        winner for (pool, model), that winner is tried first regardless
+        of health score — but only if the sample is meaningful (>= 3
+        wins and more wins than losses). Health still breaks ties.
+        """
         with self.lock:
             ps = list(self.providers_in(pool))
             if not ps:
@@ -504,6 +513,38 @@ class Manager:
             now = time.time()
             stats = self.health.snapshot()
             ps.sort(key=lambda p: self._score(p, now, stats), reverse=True)
+
+            # ---- task-aware pre-routing ------------------------------
+            if task:
+                try:
+                    winner = learning._TASK_MODEL_STATS.get(
+                        f"{task}|{pool}|{model}"
+                    )
+                    # Also consider other models seen for this task;
+                    # if a *different* model has a strong record we
+                    # cannot reorder the provider list (that would
+                    # change the model), but we can at least prefer
+                    # keys whose per-key model == that winner.
+                    best_key = None
+                    best = None
+                    for k, v in learning._TASK_MODEL_STATS.items():
+                        if not k.startswith(task + "|"):
+                            continue
+                        if v["n"] < 3 or v["ok"] <= v["fail"]:
+                            continue
+                        if best is None or (v["ok"] - v["fail"]) > (best["ok"] - best["fail"]):
+                            best_key, best = k, v
+                    if best_key:
+                        _, _wpool, wmodel = best_key.split("|", 2)
+                        if wmodel == model or not model:
+                            # Move providers already configured for the
+                            # winning model to the front.
+                            def _key(p):
+                                return 0 if (p.model == wmodel) else 1
+                            ps.sort(key=_key)
+                except Exception:
+                    pass
+
             if self.strategy == "round_robin" and len(ps) > 1:
                 top, rest = ps[:3], ps[3:]
                 names = [p.name for p in top]
