@@ -212,7 +212,7 @@ def memory_get_fact(cfg, key):
     return "Fact not found."
 
 
-@tool("memory_list_facts", "List all stored structured facts.", {})
+@tool("memory_list_facts", "List all stored structured facts.", {}, [])
 def memory_list_facts(cfg):
     with _get_db(cfg) as conn:
         rows = conn.execute("SELECT key, value FROM facts ORDER BY key ASC").fetchall()
@@ -282,7 +282,7 @@ def memory_delete_fact(cfg, key):
     return f"Fact '{key}' not found."
 
 
-@tool("memory_clear_all", "WIPE ALL MEMORY (both facts and events). Use with extreme caution.", {})
+@tool("memory_clear_all", "WIPE ALL MEMORY (both facts and events). Use with extreme caution.", {}, [])
 def memory_clear_all(cfg):
     with _get_db(cfg) as conn:
         with conn:

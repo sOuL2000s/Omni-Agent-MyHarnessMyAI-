@@ -128,6 +128,7 @@ def admin_set_pool_model(cfg, pool, model):
     "admin_list_providers",
     "List every configured pool, its keys, and their health. Read-only.",
     {},
+    [],
 )
 def admin_list_providers(cfg):
     pm = cfg.providers
@@ -154,6 +155,7 @@ def admin_list_providers(cfg):
     "admin_test_key",
     "Send a tiny real request to a key (or one key of a pool) and report the result. Read-only.",
     {"name": {"type": "string"}},
+    [],
 )
 def admin_test_key(cfg, name=""):
     from .. import llm
@@ -260,6 +262,7 @@ def admin_remove_mcp_server(cfg, name):
     "admin_list_mcp_servers",
     "List every configured MCP server with its status. Read-only.",
     {},
+    [],
 )
 def admin_list_mcp_servers(cfg):
     reg = getattr(cfg, "mcp", None)

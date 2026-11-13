@@ -73,10 +73,19 @@ class AgentLoop(unittest.TestCase):
             safety.set_approver(None)
         self.assertIn("denied", out.lower())
 
-    def test_tool_schemas_have_no_empty_required(self):
+    def test_tool_schemas_have_required_key_when_props_exist(self):
+        """Gemini requires `required` to be present whenever `properties`
+        is non-empty. An empty list is the correct way to say 'all
+        optional'. Absent `required` is what gets rejected."""
         from agent.tools import schemas
         for s in schemas():
-            self.assertNotEqual(s["function"]["parameters"].get("required"), [], s["function"]["name"])
+            p = s["function"]["parameters"]
+            if p.get("properties"):
+                self.assertIn("required", p, s["function"]["name"])
+            # every array property must declare items
+            for k, v in (p.get("properties") or {}).items():
+                if v.get("type") == "array":
+                    self.assertIn("items", v, f"{s['function']['name']}.{k}")
 
 
 if __name__ == "__main__":

@@ -462,13 +462,24 @@ textarea.keysbox{width:100%;height:76px;font:12px var(--font-mono);line-height:1
         <label class="tog auto" id="autoTog" title="When on, the agent runs shell commands and writes outside the workspace without asking"><input type="checkbox" id="autoBox"> auto-approve</label>
         <label class="tog bg" id="bgTog" title="When on, every run_shell call executes in the background (survives Stop)"><input type="checkbox" id="bgBox"> bg-shell</label>
       </div>
+      <button id="diagBtn" class="ghost" title="Show backend diagnostics (logs)" aria-label="Diagnostics">🩺</button>
       <button id="keysBtn" class="primary">Keys &amp; models</button>
     </header>
     <div id="autoBanner">⚠ auto-approve is ON — the agent runs shell commands and writes files without asking. Turn it off in the header.</div>
     <div id="log"><div class="col" id="msgs"></div></div>
     <button id="scrollDown" title="Jump to latest message">↓ new messages</button>
     <div id="composer"><div class="col">
-      <div id="working"></div>
+        <div id="working"></div>
+        <div id="liveTimer" style="display:none;align-items:center;gap:10px;margin:0 0 8px;
+             padding:6px 12px;border:1px solid var(--line);border-radius:999px;
+             background:var(--panel);font-size:12.5px;color:var(--muted);
+             font-variant-numeric:tabular-nums">
+          <span class="spin" style="width:8px;height:8px;border-radius:50%;
+                background:var(--accent);animation:pulse 1.2s infinite;display:inline-block"></span>
+          <span id="liveStage" style="color:var(--ink);font-weight:600">Working…</span>
+          <span style="flex:1"></span>
+          <span id="liveElapsed" style="color:var(--accent);font-weight:600">0s</span>
+        </div>
       <div class="box">
         <button class="ghost" id="micBtn" title="Dictate (local STT — requires sherpa-onnx + a microphone)" aria-label="Dictate">🎤</button>
         <button class="ghost" id="attach" title="Upload a file into the workspace" aria-label="Upload a file">📎</button>
@@ -742,12 +753,32 @@ function renderStatus() {
   w.replaceChildren(card);
 }
 function updateStatus(patch) { statusState = Object.assign({}, statusState, patch); renderStatus(); }
+let _liveTimer = null, _liveStart = 0;
+function _startLiveTimer() {
+  if (_liveTimer) return;
+  _liveStart = Date.now();
+  $("#liveTimer").style.display = "flex";
+  _liveTimer = setInterval(() => {
+    const s = Math.max(0, Math.floor((Date.now() - _liveStart) / 1000));
+    const el = $("#liveElapsed");
+    if (el) el.textContent = s + "s";
+  }, 500);
+}
+function _stopLiveTimer() {
+  if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+  $("#liveTimer").style.display = "none";
+}
+function _setLiveStage(s) {
+  const el = $("#liveStage");
+  if (el && s) el.textContent = s;
+}
 function setBusy(b, reset = true) {
   const hadFocus = document.activeElement === $("#stop") || document.activeElement === $("#send");
   busy = b;
   $("#send").style.display = b ? "none" : "";
   $("#stop").style.display = b ? "" : "none";
-  if (b) $("#stop").disabled = false;
+  if (b) { $("#stop").disabled = false; _startLiveTimer(); }
+  else { _stopLiveTimer(); }
   if (reset) statusState = {};
   renderStatus();
   maybeShowScrollDown();
@@ -837,7 +868,16 @@ function render(ev) {
       return;
     }
     case "notice": return add(h("div", { class: "note", text: "↪ " + ev.text }));
-    case "progress": updateStatus({ title: ev.title || "Working", detail: ev.detail, recent: ev.recent, route: ev.route }); return;
+    case "progress": {
+      updateStatus({ title: ev.title || "Working", detail: ev.detail,
+                     recent: ev.recent, route: ev.route });
+      if (ev.title) _setLiveStage(ev.title);
+      if (typeof ev.elapsed === "number") {
+        const el = $("#liveElapsed");
+        if (el) el.textContent = ev.elapsed + "s";
+      }
+      return;
+    }
     case "verify": return add(h("div", { class: "note verify", text: ev.text }));
     case "route": {
       lastRoute = ev;
@@ -848,9 +888,13 @@ function render(ev) {
       return;
     }
     case "error": {
+      // Soft message only. Full diagnostics are in the terminal / log file
+      // (openable via the "Diagnostics" link below).
       const el = add(h("div", { class: "note err" },
-        h("div", { text: ev.text }),
-        h("div", { style: "margin-top:6px" }, h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }))));
+        h("div", { text: ev.text || "Something went wrong. Please try again." }),
+        h("div", { style: "margin-top:6px;display:flex;gap:8px;flex-wrap:wrap" },
+          h("button", { text: "Retry", onclick: (e) => retryMsg(e, {}) }),
+          h("button", { text: "Diagnostics", onclick: () => openDiagnostics() }))));
       requestAnimationFrame(() => { try { $("#inp").focus({ preventScroll: true }); } catch (_) {} });
       return el;
     }
@@ -998,7 +1042,14 @@ async function loadChat() {
     $("#autoBanner").classList.toggle("on", d.auto);
     if (typeof d.strict === "boolean") { $("#strictBox").checked = d.strict; $("#strictTog").classList.toggle("on", d.strict); }
     d.pending.forEach(p => askApproval({ id: p.id, text: p.action, tool: p.tool }));
-    if (d.busy) { setBusy(true, false); poll(); } else setBusy(false);
+    if (d.busy) {
+      setBusy(true, false);
+      if (d.stage) _setLiveStage(d.stage);
+      if (typeof d.elapsed === "number" && d.elapsed > 0) {
+        _liveStart = Date.now() - d.elapsed * 1000;
+      }
+      poll();
+    } else setBusy(false);
     if (stick) scrollToBottom();
   } catch (e) { showEmpty(); toast(e.message, 5000); }
 }
@@ -2190,6 +2241,34 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") _watchdogRefocus();
 });
 
+async function openDiagnostics() {
+  let lines = [];
+  try {
+    const d = await api("/api/logs/tail?n=400");
+    lines = d.lines || [];
+  } catch (e) {
+    return toast("Could not load diagnostics: " + e.message);
+  }
+  document.getElementById("diag")?.remove();
+  const overlay = h("div", { id: "diag", style:
+    "position:fixed;inset:0;background:rgba(20,17,14,.55);backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;z-index:55;padding:20px" });
+  const dlg = h("div", { class: "dlg", style:
+    "background:var(--panel);border:1px solid var(--line);border-radius:18px;" +
+    "padding:22px;width:min(900px,96vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:var(--e4)" },
+    h("h3", { style: "margin:0 0 12px !important;font-size:16px", text: "Backend diagnostics (last 400 lines)" }),
+    h("pre", { style:
+      "flex:1;overflow:auto;background:var(--code);color:var(--code-ink);" +
+      "padding:14px;border-radius:12px;font:12px/1.5 var(--font-mono);" +
+      "white-space:pre-wrap;word-break:break-word;margin:0",
+      text: lines.join("\n") || "(empty)" }),
+    h("div", { style: "display:flex;justify-content:flex-end;gap:8px;margin-top:12px" },
+      h("button", { text: "Close", onclick: () => overlay.remove() })));
+  overlay.append(dlg);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+}
+
 function openRight(tab) {
   $("#app").classList.add("rightopen");
   store.set("omni_tab", tab);
@@ -2201,6 +2280,7 @@ function openRight(tab) {
   else if (tab === "skills") { loadSkills(); }
   else refreshKeys(true);
 }
+$("#diagBtn").onclick = () => openDiagnostics();
 $("#keysBtn").onclick = () => $("#app").classList.contains("rightopen") ? $("#app").classList.remove("rightopen") : openRight("keys");
 $("#closeRight").onclick = () => $("#app").classList.remove("rightopen");
 document.querySelectorAll(".tabs [data-tab]").forEach(b => b.onclick = () => openRight(b.dataset.tab));

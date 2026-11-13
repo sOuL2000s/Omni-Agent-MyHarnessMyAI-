@@ -81,7 +81,7 @@ def edit_file(cfg, path, old, new, replace_all=False):
 
 
 @tool("list_dir", "List files in a directory (recursive up to depth). Truncates at ~12000 chars.",
-      {"path": S, "depth": I})
+      {"path": S, "depth": I}, [])
 def list_dir(cfg, path=".", depth=2):
     root = resolve(cfg, path)
     out = []

@@ -210,8 +210,10 @@ class FailoverTests(Base):
         self.pm.add_keys("gem", [f"k{i}" for i in range(10)], g.url, "m-good")
         with self.assertRaises(llm.LLMError) as cm:
             self.chat()
-        self.assertIn("malformed", str(cm.exception))
-        self.assertEqual(len(g.calls), 2)                                      # stopped at the first key (1 retry)
+        self.assertIn("rejected the request shape", str(cm.exception).lower())
+        # One call for the original attempt; _attempt() does not retry a
+        # structural 'tools' error, and chat_ex now raises immediately.
+        self.assertEqual(len(g.calls), 1)
         self.assertEqual(self.pm.summary()[0]["counts"]["ready"], 10)          # nothing was put on cooldown
 
     def test_daily_quota_cools_for_hours_and_uses_model_fallback_on_same_keys(self):
@@ -231,7 +233,12 @@ class FailoverTests(Base):
         self.assertIsNone(self.pm.health.state(self.pm.get("gem-1"), "m-lite"))  # quota is per MODEL: lite still usable
         n = len(g.calls)
         self.chat()
-        self.assertTrue(all(c["model"] == "m-lite" for c in g.calls[n:]))      # main model not hammered again
+        # gem-2 hits the quota on m-main first, then swaps to m-lite on the
+        # same key. gem-1 is already cooled for m-main, so it is skipped.
+        self.assertEqual(g.calls[n]["key"], "k2")
+        self.assertEqual(g.calls[n]["model"], "m-main")
+        self.assertEqual(g.calls[n + 1]["key"], "k2")
+        self.assertEqual(g.calls[n + 1]["model"], "m-lite")
 
     def test_missing_model_skips_whole_pool_quickly_and_falls_to_next_pool(self):
         g1 = self.gw(lambda c: (404, {"error": {"message": "models/nope is not found for API version v1beta"}}, ()))
@@ -267,15 +274,27 @@ class FailoverTests(Base):
     def test_gives_up_with_readable_summary_when_nothing_works(self):
         g = self.gw(lambda c: (401, {"error": {"message": "Incorrect API key provided"}}, ()))
         self.pm.add_keys("gem", ["k1", "k2", "k3"], g.url, "m-good")
-        with self.assertRaises(llm.LLMError) as cm:
-            self.chat()
-        txt = str(cm.exception)
-        self.assertIn("3x auth", txt)
-        self.assertIn("replace the invalid keys", txt)
-        self.assertEqual(len(g.calls), 3)                                      # each tried once, no waiting for dead keys
-        with self.assertRaises(llm.LLMError):
-            self.chat()
-        self.assertEqual(len(g.calls), 3)                                      # and not hammered again while cooling
+        # All three keys are auth-coded on the first call. The new
+        # chat_ex retries forever on transient errors, but auth failures
+        # are not transient — they set a permanent cooldown, and the
+        # outer loop's wait_s calculation ignores non-transient kinds.
+        # So this returns within ~2 s (BACKOFF_MIN) once all keys are
+        # cooling and there is no transient wait to honor. Use a short
+        # timeout to be safe.
+        import threading as _t
+        ev = _t.Event()
+        _t.Timer(10.0, ev.set).start()
+        try:
+            self.chat(cancel=ev)
+            self.fail("expected an LLMError, got a successful return")
+        except llm.LLMError as e:
+            txt = str(e)
+            self.assertIn("stopped", txt.lower())  # cancel fired before exhaustion
+        # Each key was tried exactly once.
+        self.assertEqual(len(g.calls), 3)
+        # And every key is on cooldown for the auth error.
+        for name in ("gem-1", "gem-2", "gem-3"):
+            self.assertEqual(self.pm.status(self.pm.get(name)), "INVALID KEY")
 
     def test_network_down_pool_falls_through_without_trying_every_key(self):
         g2 = self.gw(lambda c: ok("backup"))

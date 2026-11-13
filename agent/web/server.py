@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote
 
-from .. import loop, llm, safety, commands
+from .. import loop, llm, safety, commands, logs, learning, scheduler
 from ..providers import PRESETS, STRATEGIES
 from ..tools import shell as _shell
 from .. import stt as _stt
@@ -95,6 +95,8 @@ class Session:
         self._seq = 0
         self.cond = threading.Condition()
         self.busy = False
+        self.started_at = 0.0
+        self.stage = "idle"
         self.cancel = threading.Event()
         self.auto = bool(getattr(cfg, "auto_approve", False))
         self.approvals = {}
@@ -312,6 +314,18 @@ class App:
             sess.emit("approval_done", "", id=aid, allow=bool(rec["allow"]))
             return bool(rec["allow"])
 
+        sess.started_at = time.time()
+        sess.stage = "Thinking"
+
+        def _emit_and_track(kind, text="", **extra):
+            if kind == "progress":
+                sess.stage = extra.get("title") or text or "Working"
+            elif kind == "tool":
+                sess.stage = f"Running {extra.get('name', 'tool')}"
+            elif kind == "assistant":
+                sess.stage = "Composing answer"
+            sess.emit(kind, text, **extra)
+
         def work():
             try:
                 try:
@@ -320,20 +334,25 @@ class App:
                     safety.set_approver(ask)
                 try:
                     final = loop.run(self.cfg, sess.history, text,
-                                     on_event=sess.emit, cancel=sess.cancel)
+                                     on_event=_emit_and_track, cancel=sess.cancel)
                     final_idx = len(sess.history) - 1 if sess.history else None
                     try:
                         sess.emit("final", final, idx=final_idx)
                     except Exception:
                         pass
                 except llm.LLMError as e:
+                    # Soft, non-technical message. Details are already in the log.
                     try:
                         sess.emit("error", str(e))
                     except Exception:
                         pass
                 except Exception as e:
+                    # Log the traceback, show the user something kind.
+                    logs.error(f"chat run crashed: {type(e).__name__}: {e}")
                     try:
-                        sess.emit("error", f"{type(e).__name__}: {e}")
+                        sess.emit("error",
+                                  "Something went wrong while handling this request. "
+                                  "Please try again.")
                     except Exception:
                         pass
             finally:
@@ -342,6 +361,7 @@ class App:
                 except Exception:
                     pass
                 sess.busy = False
+                sess.stage = "idle"
                 sess.save()
                 try:
                     sess.emit("done")
@@ -703,11 +723,14 @@ def make_handler(app):
             s = app.session(q.get("session", ""))
             pending = [{"id": k, "action": v["action"], "tool": v.get("tool")}
                        for k, v in s.approvals.items()]
+            elapsed = int(time.time() - s.started_at) if (s.busy and s.started_at) else 0
             self._send(200, {"items": s.render(), "cursor": s._seq,
                              "busy": s.busy, "pending": pending,
                              "auto": s.auto, "strict": app.cfg.strict,
                              "allowed_tools": sorted(s.allowed_tools),
-                             "title": s.title()})
+                             "title": s.title(),
+                             "elapsed": elapsed,
+                             "stage": s.stage})
         api_history.method = "GET"
 
         def api_tool_result(self, q):
@@ -819,7 +842,9 @@ def make_handler(app):
             self._send(200, {"ok": True, "cursor": s._seq})
 
         def api_stop(self, q):
-            app.session(self._json_body().get("session", "")).stop()
+            s = app.session(self._json_body().get("session", ""))
+            s.stop()
+            logs.notice(f"session {s.id}: stop requested by user")
             self._send(200, {"ok": True})
 
         def api_approve(self, q):
@@ -1479,6 +1504,61 @@ def make_handler(app):
             except Exception as e:
                 self._send(200, {"servers": [], "error": str(e)})
         api_mcp_registry.method = "GET"
+
+        # ---- logs (backend diagnostics, opt-in)
+        def api_logs_tail(self, q):
+            try:
+                n = min(max(1, int(q.get("n", 200))), 2000)
+            except ValueError:
+                n = 200
+            self._send(200, {"lines": logs.recent(n)})
+        api_logs_tail.method = "GET"
+
+        # ---- learning (read-only stats for the UI)
+        def api_learning(self, q):
+            self._send(200, {
+                "shapes": dict(learning._SHAPE_STATS),
+                "tools": dict(learning._TOOL_STATS),
+                "models": dict(learning._MODEL_STATS),
+                "corrections": list(learning._CORRECTIONS)[-20:],
+            })
+        api_learning.method = "GET"
+
+        # ---- schedules
+        def api_schedules(self, q):
+            self._send(200, {"jobs": scheduler.list_jobs()})
+        api_schedules.method = "GET"
+
+        def api_schedules_add(self, q):
+            b = self._json_body()
+            job = scheduler.add(b.get("name", "job"), b.get("prompt", ""),
+                                int(b.get("every", 3600)),
+                                int(b.get("first_delay", 0)))
+            self._send(200, job)
+
+        def api_schedules_cancel(self, q):
+            b = self._json_body()
+            self._send(200, {"ok": True, "result": scheduler.remove(b.get("id", ""))})
+
+        # ---- parallel (manual fan-out from the UI, same engine as the tool)
+        def api_parallel(self, q):
+            b = self._json_body()
+            tasks = b.get("tasks") or []
+            if not isinstance(tasks, list) or not tasks:
+                return self._err(400, "tasks must be a non-empty list")
+            from ..concurrency import Task, run_graph
+            from ..tools.registry import call as _call
+            parsed = [Task(id=str(t.get("id") or f"t{i+1}"),
+                           tool=str(t.get("tool") or ""),
+                           args=t.get("args") or {},
+                           needs=[str(x) for x in (t.get("needs") or [])],
+                           retries=int(t.get("retries") or 1))
+                      for i, t in enumerate(tasks) if isinstance(t, dict)]
+            results = run_graph(app.cfg, _call, parsed,
+                                cancel=None, max_workers=int(b.get("max_workers") or 4))
+            self._send(200, {"results": [
+                {"id": r.id, "ok": r.ok, "output": r.output, "ms": r.ms,
+                 "attempts": r.attempts} for r in results]})
 
     return H
 

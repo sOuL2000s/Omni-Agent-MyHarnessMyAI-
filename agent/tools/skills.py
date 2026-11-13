@@ -88,6 +88,7 @@ def _list_files(cfg):
     "BEFORE improvising a multi-step workflow — the user may have saved "
     "a skill that does exactly this.",
     {},
+    [],
 )
 def skill_list(cfg):
     rows = _list_files(cfg)

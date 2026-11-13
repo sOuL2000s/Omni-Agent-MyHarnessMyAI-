@@ -17,16 +17,6 @@ ROOT = _find_root()
 
 
 def _load_env():
-    """Load .env without letting a stale `KEY=` value silently win.
-
-    Precedence (highest to lowest):
-      1. A real shell export (`os.environ` already has the key).
-      2. The first .env file that has the key.
-      3. The code default in load().
-
-    A line that just says `AGENT_AUTO_APPROVE=` (no value) is treated as
-    "not set" so the code default applies.
-    """
     for p in (ROOT / ".env", Path.cwd() / ".env"):
         if not p.exists():
             continue
@@ -54,7 +44,7 @@ class Config:
     workspace: Path
     allow_outside: bool
     auto_approve: bool
-    max_turns: int          # 0 = unlimited
+    max_turns: int
     temperature: float
     timeout: int
     data_dir: Path
@@ -62,15 +52,9 @@ class Config:
     strict: bool = True
     home: Path = None
     mcp: object = None
-    # Runtime mode flags (see §6.2 / §7.3 in the README).
     shell_bg: bool = False
-    # Hard cap on total tool calls per task. 0 = unlimited.
     max_total_tool_calls: int = 0
-    # Model selection mode: "manual" (pool default + explicit fallbacks)
-    # or "auto" (probe the discovered model list and pick a working pair).
-    # Opt-in via AGENT_MODEL_MODE=auto.
     model_mode: str = "manual"
-    # Optional ordered preference list for auto mode (comma-separated).
     model_preference: list = None
 
 
@@ -91,8 +75,6 @@ def _is_fs_root(p: Path) -> bool:
 
 
 def _int_env(name: str, default: int) -> int:
-    """Read an int env var. Empty -> default. Negative/0 means 'use default'
-    for caps (we treat <=0 as unlimited in the consumers)."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
@@ -114,6 +96,13 @@ def load() -> Config:
     except OSError:
         pass
 
+    # ---- new: configure backend logging + self-learning + scheduler ----
+    from . import logs as _logs, learning as _learning, scheduler as _sched
+    _logs.configure(data)
+    _learning.configure(data)
+    _learning.start_worker()
+    _sched.configure(data)
+
     pref_raw = g("AGENT_MODEL_PREFERENCE", "").strip()
     preference = [x.strip() for x in re.split(r"[,\s]+", pref_raw) if x.strip()] if pref_raw else None
 
@@ -121,9 +110,6 @@ def load() -> Config:
     if mode not in ("manual", "auto"):
         mode = "manual"
 
-    # Unlimited-by-default caps. AGENT_MAX_TURNS=0 (or empty / negative) means
-    # unlimited; same for AGENT_MAX_TOOL_CALLS. The old defaults (60 / 200)
-    # made long agentic workflows die half-way through.
     max_turns = _int_env("AGENT_MAX_TURNS", 0)
     max_calls = _int_env("AGENT_MAX_TOOL_CALLS", 0)
 
@@ -157,6 +143,10 @@ def load() -> Config:
             pass
 
     if _is_fs_root(cfg.workspace):
+        _logs.error(
+            f"AGENT_WORKSPACE points at a filesystem root ({cfg.workspace}); "
+            f"refusing to start."
+        )
         print(
             f"ERROR: AGENT_WORKSPACE points at a filesystem root ({cfg.workspace}).\n"
             f"  That disables the outside-workspace approval guard.\n"
@@ -171,13 +161,11 @@ def load() -> Config:
                             state_path=data / "state.json",
                             settings_path=data / "settings.json")
     if cfg.providers.load_error and not cfg.providers.items:
-        print("WARNING:", cfg.providers.load_error, file=_sys.stderr)
-        print("  Fix or delete data/providers.json, then restart.", file=_sys.stderr)
+        _logs.warn(f"providers.json: {cfg.providers.load_error}")
     if g("AGENT_MAX_WAIT"):
         cfg.providers.settings["max_wait"] = int(g("AGENT_MAX_WAIT"))
     if g("AGENT_STRATEGY") in ("round_robin", "failover"):
         cfg.providers.settings["strategy"] = g("AGENT_STRATEGY")
-    # Propagate the auto-mode flag to the manager so model_chain can use it.
     cfg.providers.settings["model_mode"] = cfg.model_mode
     if cfg.model_preference:
         cfg.providers.settings["model_preference"] = list(cfg.model_preference)
@@ -192,11 +180,16 @@ def load() -> Config:
     except Exception:
         cfg.mcp = None
 
+    # ---- start the scheduler worker (idle until a job is added) ----
+    try:
+        _sched.start_worker(cfg)
+    except Exception as e:
+        _logs.warn(f"scheduler worker failed to start: {e}")
+
     return cfg
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    """Read a boolean env var. Missing or empty -> `default`."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default

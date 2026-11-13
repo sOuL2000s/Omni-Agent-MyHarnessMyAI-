@@ -47,7 +47,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "omni-agent/2.3"
+from . import logs
+
+UA = "omni-agent/2.4"
 
 
 class LLMError(Exception):
@@ -74,6 +76,8 @@ _VERIFY_CACHE_MAX = 64
 # user who left the agent overnight doesn't wake to a 4-hour sleep.
 BACKOFF_MIN = 2.0
 BACKOFF_MAX = 60.0
+
+# (removed) User-visible throttling was moved into the per-cycle notify.
 
 
 # ---------------------------------------------------------------- classification
@@ -394,12 +398,11 @@ def _headers(p):
 
 
 def _attempt(cfg, p, model, base, cancel=None):
-    drop_tools_next = False
     nudged = False
     stripped_tools = False
     for _ in range(5):
         body = dict(base, model=model)
-        if drop_tools_next or stripped_tools:
+        if stripped_tools:
             body.pop("tools", None)
             body.pop("tool_choice", None)
         with _NO_TEMP_LOCK:
@@ -464,9 +467,11 @@ def _attempt(cfg, p, model, base, cancel=None):
                         oldest = next(iter(NO_TEMP))
                         NO_TEMP.discard(oldest)
             continue
-        if f.kind == "tools" and not drop_tools_next:
-            drop_tools_next = True
-            continue
+        # Structural 'tools' errors are never retryable here. Every key
+        # will 400 identically, and the caller (chat_ex) has its own
+        # structural-error handling. Retrying without tools would
+        # silently strip the model's ability to call tools — worse
+        # than failing loudly.
         raise f
     raise Fail("fatal", "model keeps rejecting the request parameters", "none", 0)
 
@@ -528,9 +533,11 @@ def _progress_payload(pool, model, key_name, kind, remaining, log):
 def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=None):
     """Returns (assistant_message, route).
 
-    Retries forever (with capped backoff) until either the request
-    succeeds or `cancel` is set. A truly fatal 400 (bad request) still
-    raises so the loop can surface it as an error event.
+    Retries forever (with capped backoff) on transient failures (rate
+    limits, quotas, network errors) until either the request succeeds or
+    `cancel` is set. Structural failures — bad tool schemas, invalid
+    parameters, malformed responses — raise LLMError immediately so the
+    caller can surface them as a clear error event instead of looping.
     """
     pm = cfg.providers
     notify = notify or _stderr
@@ -544,7 +551,10 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
     waited_notice = False
     attempt_round = 0
 
-    while True:
+    # Structural errors set this and break out of BOTH loops.
+    structural_error: str | None = None
+
+    while structural_error is None:
         if cancel is not None and cancel.is_set():
             raise LLMError("stopped by user")
         attempt_round += 1
@@ -556,10 +566,20 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
         log = []
         attempted_model_refresh = set()
 
+        # Set by structural-error branches below to break out of the
+        # nested for-loops cleanly. `None` = keep trying.
+        broke_out = False
+
         for pi, (pool, _) in enumerate(pools):
+            if broke_out:
+                break
             chain = pm.model_chain(pool)
             for mi, model in enumerate(chain):
+                if broke_out:
+                    break
                 for p in pm.pick_order(pool, model):
+                    if broke_out:
+                        break
                     if cancel is not None and cancel.is_set():
                         raise LLMError("stopped by user")
                     st = pm.health.state(p, model)
@@ -571,6 +591,46 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                     try:
                         msg = _attempt(cfg, p, model, base, cancel=cancel)
                     except Fail as f:
+                        # --- Structural errors that no retry will fix ---
+                        # Set structural_error; the outer while loop checks
+                        # it and breaks. Do NOT raise inside the loop — an
+                        # LLMError raised here would be caught by nothing
+                        # and the outer `while True` would just start a new
+                        # cycle. That was the "stuck forever" bug.
+                        if f.kind == "tools":
+                            logs.error(
+                                f"structural tool-schema error from {p.name} "
+                                f"({model}): {f.msg}"
+                            )
+                            structural_error = (
+                                "The model rejected the request shape "
+                                "(tool definitions are invalid for this "
+                                "provider). The request was NOT retried."
+                            )
+                            broke_out = True
+                            break
+
+                        if f.kind == "fatal":
+                            logs.error(f"fatal request error on {p.name}/{model}: {f.msg}")
+                            structural_error = (
+                                "The model rejected the request. This usually means "
+                                "the prompt is too long or contains an unsupported "
+                                "field. Try shortening it or switching models."
+                            )
+                            broke_out = True
+                            break
+
+                        if f.kind == "empty_param":
+                            logs.error(f"empty_param from {p.name}/{model}: {f.msg}")
+                            structural_error = (
+                                "The model returned a malformed response. "
+                                "Try a different model or shorten the prompt."
+                            )
+                            broke_out = True
+                            break
+
+                        # --- Transient errors: try a model swap, then
+                        # cooldown this key+model and try the next key ---
                         if f.kind == "model" and pool not in attempted_model_refresh:
                             attempted_model_refresh.add(pool)
                             try:
@@ -615,20 +675,45 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                             except Fail as f2:
                                 f = f2
 
-                        if f.kind == "fatal":
-                            # A 400 that no retry will fix. Surface it.
-                            raise LLMError(f"{p.name} ({model}): {f.msg}")
-
                         pm.health.mark(p, model, f.scope, f.kind, f.cooldown, f.msg)
                         log.append((pool, model, p.name, f.kind, f.msg, f.cooldown))
-                        notify(f"{p.name} [{model}] {f.kind}: {f.msg[:110]}")
+                        # Backend only. The chat never sees key names or raw errors.
+                        logs.warn(f"{p.name} [{model}] {f.kind}: {f.msg[:180]}")
                         if f.scope == "pool_model":
-                            break
+                            break  # this model is bad for the whole pool; next model
                         if f.scope == "none":
-                            # Parameter error on this key/model, but another
-                            # key/model might work. Keep going.
-                            continue
+                            continue  # parameter error on this key/model; next key
+                        # ---- same-key model swap (rate/quota on this key
+                        # but a different model on the same key may work) ----
+                        if f.scope == "key_model" and f.kind in ("rate", "quota"):
+                            for alt in pm.fallbacks(pool):
+                                if alt == model:
+                                    continue
+                                st_alt = pm.health.state(p, alt)
+                                if st_alt:
+                                    continue
+                                try:
+                                    logs.notice(f"{p.name}: trying fallback '{alt}' on same key…")
+                                    msg = _attempt(cfg, p, alt, base, cancel=cancel)
+                                    pm.health.ok(p)
+                                    pm.note_used(pool, p.name)
+                                    notify("Using an alternate model on the same key…")
+                                    return msg, {"provider": p.name, "pool": pool,
+                                                 "model": alt, "fallback": True,
+                                                 "reason": "same-key-model-swap"}
+                                except Fail as f2:
+                                    logs.warn(f"{p.name} [{alt}] swap failed: {f2.kind}: {f2.msg[:120]}")
+                                    pm.health.mark(p, alt, f2.scope, f2.kind, f2.cooldown, f2.msg)
+                                    continue
+                        if broke_out:
+                            break
                         continue
+                    # Also catch broke_out on the success path (only hit
+                    # when the previous iteration set it but the next
+                    # model/key succeeded — we still want to bail because
+                    # a structural error is unrecoverable).
+                    if broke_out:
+                        break
                     pm.health.ok(p)
                     pm.note_used(pool, p.name)
                     reason = "primary" if (pi == 0 and mi == 0) else \
@@ -639,15 +724,31 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
                         notify(f"using fallback {p.name} / {model}")
                     return msg, route
 
+        if broke_out:
+            # A structural error was detected. Skip the wait-and-retry
+            # block — we're about to raise it.
+            break
+
         # ---- nothing worked this round. Wait and try again (forever).
         waits = [e[5] for e in log if e[3] in pm.health.TRANSIENT and isinstance(e[5], (int, float)) and e[5] > 0]
         wait_s = min(waits) + 0.5 if waits else min(backoff, BACKOFF_MAX)
         wait_s = max(1.0, wait_s)
 
-        if not waited_notice:
-            notify(f"every key is busy - retrying (cycle {attempt_round}); "
-                   f"next check in {int(wait_s)}s (press Stop to cancel)")
-            waited_notice = True
+        # Backend log gets the details. The UI gets a single soft line
+        # via notify() at most once every SOFT_NOTIFY_INTERVAL seconds.
+        logs.warn(f"chat_ex cycle {attempt_round}: all keys busy, "
+                  f"waiting {int(wait_s)}s. Recent: "
+                  + "; ".join(f"{e[2]}[{e[1]}]={e[3]}" for e in log[-3:]))
+        # Always emit a short, human-readable status. The UI uses this to
+        # show "Trying an alternative route…" in the live pill; the
+        # terminal REPL prints it as a dim status line. If you need to
+        # suppress the noise, lower the log level — do NOT gate this on
+        # _LAST_SOFT_NOTIFY. Tests and the diagnostics panel rely on
+        # seeing at least one notify per cycle.
+        try:
+            notify(f"waiting {int(wait_s)}s for an available key")
+        except Exception:
+            pass
 
         last_pool = log[-1][0] if log else "?"
         last_model = log[-1][1] if log else "?"
@@ -670,6 +771,12 @@ def chat_ex(cfg, messages, tools=None, notify=None, cancel=None, on_progress=Non
         # Grow the backoff for the next all-fail cycle.
         backoff = min(backoff * 1.6, BACKOFF_MAX)
         waited_notice = False
+
+    # A structural error was set inside the loop — raise it now that we've
+    # broken out. This is the ONLY place chat_ex raises for a structural
+    # failure, so the loop (which calls chat_ex) sees it as a normal error.
+    if structural_error is not None:
+        raise LLMError(structural_error)
 
 
 def _summary(log):
